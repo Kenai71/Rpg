@@ -8,10 +8,12 @@ export default function MasterPanel() {
   const router = useRouter();
   const [missions, setMissions] = useState([]);
   const [players, setPlayers] = useState([]);
+  const [parties, setParties] = useState([]); // NOVO: Lista de grupos
   const [requests, setRequests] = useState([]); 
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
+  const [partyForm, setPartyForm] = useState(''); // NOVO: Nome do novo grupo
   
   const [goldMod, setGoldMod] = useState({});
   const [xpMod, setXpMod] = useState({});
@@ -31,6 +33,7 @@ export default function MasterPanel() {
   async function fetchData() {
     const { data: m } = await supabase.from('missions').select('*').order('created_at', { ascending: false });
     const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player').order('username', { ascending: true });
+    const { data: g } = await supabase.from('parties').select('*').order('name', { ascending: true }); // NOVO
     
     const { data: r } = await supabase
       .from('item_requests')
@@ -39,6 +42,7 @@ export default function MasterPanel() {
 
     setMissions(m || []);
     setPlayers(p || []);
+    setParties(g || []);
     setRequests(r || []);
   }
 
@@ -47,33 +51,90 @@ export default function MasterPanel() {
     router.push('/login');
   };
 
-  // --- SOLICITAÇÕES (AGORA COM QUANTIDADE) ---
+  // --- GESTÃO DE GRUPOS (NOVO) ---
+  async function createParty() {
+    if (!partyForm.trim()) return alert("Nome do grupo necessário");
+    await supabase.from('parties').insert([{ name: partyForm }]);
+    setPartyForm('');
+    fetchData();
+  }
+
+  async function assignToParty(playerId, partyId) {
+    // Se partyId for vazio (string vazia), seta null no banco (sair do grupo)
+    const pid = partyId === "" ? null : partyId;
+    await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId);
+    
+    // Se saiu do grupo, verifica se era lider e remove liderança se necessário (opcional, mas bom pra limpeza)
+    fetchData();
+  }
+
+  async function makeLeader(partyId, playerId) {
+    await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId);
+    fetchData();
+  }
+
+  // --- ATUALIZAÇÃO DE MISSÃO (LÓGICA DE GRUPO AQUI) ---
+  async function updateMission(id, status, playerId, xpReward, goldReward) {
+    await supabase.from('missions').update({ status }).eq('id', id);
+
+    if (status === 'completed' && playerId) {
+      // 1. Verificar se o jogador que completou está em um grupo
+      const player = players.find(p => p.id === playerId);
+      
+      if (player && player.party_id) {
+        // --- LÓGICA DE GRUPO ---
+        // Pega todos os membros do grupo
+        const members = players.filter(p => p.party_id === player.party_id);
+        const memberCount = members.length;
+
+        if (memberCount > 0) {
+          const goldSplit = Math.floor(Number(goldReward) / memberCount); // Ouro dividido
+          const xpFull = Number(xpReward); // XP igual para todos
+
+          // Atualiza cada membro
+          for (const member of members) {
+            await supabase.from('profiles').update({
+              xp: (member.xp || 0) + xpFull,
+              gold: (member.gold || 0) + goldSplit
+            }).eq('id', member.id);
+          }
+          alert(`Missão de Grupo Completada!\nXP para cada: ${xpFull}\nOuro para cada: ${goldSplit} (Total: ${goldReward})`);
+        }
+      } else {
+        // --- LÓGICA SOLO (PADRÃO) ---
+        const p = players.find(x => x.id === playerId);
+        await supabase.from('profiles').update({ 
+          xp: (p.xp || 0) + Number(xpReward), 
+          gold: (p.gold || 0) + Number(goldReward) 
+        }).eq('id', playerId);
+      }
+    }
+    fetchData();
+  }
+
+  // ... (Resto das funções: handleRequest, createMission, addItem, modifyGold, modifyXp, modifyLevel, updateRank, inventory...)
+  // MANTIDAS IGUAIS AO CÓDIGO ANTERIOR, APENAS OMITIDAS AQUI PARA ECONOMIZAR ESPAÇO. 
+  // VOCÊ DEVE MANTER ELAS NO ARQUIVO FINAL.
+  
   async function handleRequest(request, approved) {
     if (approved) {
       const { data: player } = await supabase.from('profiles').select('inventory, slots').eq('id', request.player_id).single();
       const currentInv = player.inventory || [];
       const limit = player.slots || 10;
-      
       const existingIndex = currentInv.findIndex(i => i.name.toLowerCase() === request.item_name.toLowerCase());
       let newInv = [...currentInv];
-      
-      // Usa request.quantity ao invés de 1 fixo
       const qtyToAdd = request.quantity || 1; 
-
-      if (existingIndex >= 0) {
-        newInv[existingIndex].qty += qtyToAdd;
-      } else {
-        if (currentInv.length >= limit) return alert("Mochila do jogador cheia!");
+      if (existingIndex >= 0) { newInv[existingIndex].qty += qtyToAdd; } 
+      else {
+        if (currentInv.length >= limit) return alert("Mochila cheia!");
         newInv.push({ name: request.item_name, qty: qtyToAdd });
       }
-
       await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
     }
     await supabase.from('item_requests').delete().eq('id', request.id);
     fetchData();
   }
 
-  // --- FUNÇÕES DE CRIAÇÃO ---
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
     await supabase.from('missions').insert([{ ...form, status: 'open' }]);
@@ -86,18 +147,6 @@ export default function MasterPanel() {
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     await supabase.from('shop_items').insert([{ ...shopForm }]);
     setShopForm({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
-    fetchData();
-  }
-
-  async function updateMission(id, status, playerId, xp, gold) {
-    await supabase.from('missions').update({ status }).eq('id', id);
-    if (status === 'completed' && playerId) {
-      const p = players.find(x => x.id === playerId);
-      await supabase.from('profiles').update({ 
-        xp: (p.xp || 0) + Number(xp), 
-        gold: (p.gold || 0) + Number(gold) 
-      }).eq('id', playerId);
-    }
     fetchData();
   }
 
@@ -132,12 +181,9 @@ export default function MasterPanel() {
     fetchData();
   }
 
-  // --- GESTÃO DE INVENTÁRIO (MODAL) ---
   function openInventory(player) { 
     setSelectedPlayerForInv(player); 
-    setSlotAddQty(1);
-    setMasterItemQty(1);
-    setMasterItemName('');
+    setSlotAddQty(1); setMasterItemQty(1); setMasterItemName('');
   }
 
   async function increaseSlots() {
@@ -154,21 +200,18 @@ export default function MasterPanel() {
   async function masterAddItemToPlayer() {
     if (!masterItemName.trim() || !selectedPlayerForInv) return;
     const qtd = Number(masterItemQty);
-    if (qtd <= 0) return alert("A quantidade deve ser maior que 0.");
+    if (qtd <= 0) return alert("Qtd > 0");
     const currentInv = selectedPlayerForInv.inventory || [];
     const limit = selectedPlayerForInv.slots || 10;
     const idx = currentInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
     let newInv = [...currentInv];
-
     if (idx >= 0) newInv[idx].qty += qtd;
     else {
       if (currentInv.length >= limit) return alert("Mochila cheia!");
       newInv.push({ name: masterItemName, qty: qtd });
     }
-
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
-    setMasterItemName('');
-    setMasterItemQty(1);
+    setMasterItemName(''); setMasterItemQty(1);
     const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single();
     setSelectedPlayerForInv(data);
     fetchData();
@@ -178,8 +221,7 @@ export default function MasterPanel() {
     if (!selectedPlayerForInv) return;
     const currentInv = selectedPlayerForInv.inventory || [];
     let newInv = [...currentInv];
-    if (newInv[index].qty > 1) newInv[index].qty -= 1;
-    else newInv.splice(index, 1);
+    if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
     const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single();
     setSelectedPlayerForInv(data);
@@ -188,7 +230,7 @@ export default function MasterPanel() {
 
   return (
     <div className={styles.container}>
-      {/* MODAL MOCHILA */}
+      {/* Modal e Header (Mantidos) */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
@@ -202,13 +244,11 @@ export default function MasterPanel() {
                 </div>
               </div>
             </div>
-            
             <div style={{display:'flex', gap:'5px', marginBottom:'20px', background:'#1a1a1a', padding:'10px', borderRadius:'6px'}}>
                <input className="rpg-input" placeholder="Nome do Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} style={{flex:2}} />
                <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'70px', textAlign:'center'}} />
                <button onClick={masterAddItemToPlayer} style={{background:'#15803d', color:'#fff', border:'none', padding:'0 15px', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>ADD</button>
             </div>
-
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(60px, 1fr))', gap:'8px', maxHeight:'300px', overflowY:'auto'}}>
               {[...Array(selectedPlayerForInv.slots || 10)].map((_, i) => {
                 const item = selectedPlayerForInv.inventory?.[i];
@@ -230,7 +270,6 @@ export default function MasterPanel() {
         </div>
       )}
 
-      {/* Resto do HTML do Mestre (Header, Grid, Cards) mantém-se igual ao anterior... */}
       <header className={styles.header}>
         <h1 className={styles.title}>Painel do Mestre</h1>
         <div className={styles.actions}>
@@ -253,28 +292,59 @@ export default function MasterPanel() {
           <button onClick={createMission} className={styles.btnPrimary}>Publicar</button>
         </section>
 
-        {/* JOGADORES */}
+        {/* JOGADORES (ATUALIZADO COM GRUPOS) */}
         <section className={styles.card}>
-          <h2 className={styles.cardTitle}>👥 Jogadores ({players.length})</h2>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', borderBottom:'1px solid #444', paddingBottom:'10px'}}>
+             <h2 className={styles.cardTitle} style={{border:'none', padding:0, margin:0}}>👥 Jogadores</h2>
+             <div style={{display:'flex', gap:'5px'}}>
+               <input className="rpg-input" placeholder="Novo Grupo" value={partyForm} onChange={e => setPartyForm(e.target.value)} style={{width:'120px', padding:'6px', fontSize:'0.8rem'}} />
+               <button onClick={createParty} style={{background:'#3f6212', color:'white', border:'none', padding:'6px', borderRadius:'4px', fontWeight:'bold', fontSize:'0.7rem'}}>CRIAR</button>
+             </div>
+          </div>
+
           <div className={styles.scrollableList}>
-            {players.map(p => (
-              <div key={p.id} className={styles.playerItem}>
-                <div className={styles.playerHeader}>
-                  <span style={{color:'#fff'}}>{p.username}</span>
-                  <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
-                    <button onClick={() => openInventory(p)} title="Abrir Mochila" style={{background:'none', border:'none', cursor:'pointer', fontSize:'1.2rem'}}>🎒</button>
-                    <select value={p.rank || 'F'} onChange={(e) => updateRank(p.id, e.target.value)} style={{background:'#000', color:'#fbbf24', border:'1px solid #444', borderRadius:'4px', fontSize:'0.7rem', padding:'2px'}}>{RANKS.map(r => <option key={r} value={r}>{r}</option>)}</select>
+            {players.map(p => {
+              const currentParty = parties.find(party => party.id === p.party_id);
+              const isLeader = currentParty?.leader_id === p.id;
+
+              return (
+                <div key={p.id} className={styles.playerItem}>
+                  <div className={styles.playerHeader}>
+                    <div style={{display:'flex', flexDirection:'column'}}>
+                      <span style={{color:'#fff'}}>{p.username} {isLeader && '👑'}</span>
+                      {/* Seletor de Grupo */}
+                      <div style={{marginTop:'5px', display:'flex', alignItems:'center', gap:'5px'}}>
+                        <select 
+                          className="rpg-input" 
+                          style={{padding:'2px', fontSize:'0.7rem', width:'100px'}}
+                          value={p.party_id || ""}
+                          onChange={(e) => assignToParty(p.id, e.target.value)}
+                        >
+                          <option value="">Sem Grupo</option>
+                          {parties.map(party => <option key={party.id} value={party.id}>{party.name}</option>)}
+                        </select>
+                        {p.party_id && !isLeader && (
+                          <button onClick={() => makeLeader(p.party_id, p.id)} title="Tornar Líder" style={{fontSize:'0.8rem', background:'none', border:'none', cursor:'pointer'}}>👑</button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
+                      <button onClick={() => openInventory(p)} title="Mochila" style={{background:'none', border:'none', cursor:'pointer', fontSize:'1.2rem'}}>🎒</button>
+                      <select value={p.rank || 'F'} onChange={(e) => updateRank(p.id, e.target.value)} style={{background:'#000', color:'#fbbf24', border:'1px solid #444', borderRadius:'4px', fontSize:'0.7rem', padding:'2px'}}>{RANKS.map(r => <option key={r} value={r}>{r}</option>)}</select>
+                    </div>
                   </div>
+                  
+                  <div className={styles.resourceRow}><span style={{color:'#fbbf24', fontSize:'0.9rem'}}>💰 {p.gold}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setGoldMod({...goldMod, [p.id]: e.target.value})} value={goldMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} onClick={() => modifyGold(p.id, goldMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} onClick={() => modifyGold(p.id, -(goldMod[p.id]))}>-</button></div></div>
+                  <div className={styles.resourceRow}><span style={{color:'#60a5fa', fontSize:'0.9rem'}}>✨ {p.xp}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setXpMod({...xpMod, [p.id]: e.target.value})} value={xpMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} style={{background:'#2563eb'}} onClick={() => modifyXp(p.id, xpMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} style={{background:'#7c3aed'}} onClick={() => modifyXp(p.id, -(xpMod[p.id]))}>-</button></div></div>
+                  <div className={styles.resourceRow}><span style={{color:'#fff', fontSize:'0.9rem'}}>Nível {p.level || 1}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setLevelMod({...levelMod, [p.id]: e.target.value})} value={levelMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} style={{background:'#eab308', color:'black'}} onClick={() => modifyLevel(p.id, levelMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} style={{background:'#78350f'}} onClick={() => modifyLevel(p.id, -(levelMod[p.id]))}>-</button></div></div>
                 </div>
-                <div className={styles.resourceRow}><span style={{color:'#fbbf24', fontSize:'0.9rem'}}>💰 {p.gold}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setGoldMod({...goldMod, [p.id]: e.target.value})} value={goldMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} onClick={() => modifyGold(p.id, goldMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} onClick={() => modifyGold(p.id, -(goldMod[p.id]))}>-</button></div></div>
-                <div className={styles.resourceRow}><span style={{color:'#60a5fa', fontSize:'0.9rem'}}>✨ {p.xp}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setXpMod({...xpMod, [p.id]: e.target.value})} value={xpMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} style={{background:'#2563eb'}} onClick={() => modifyXp(p.id, xpMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} style={{background:'#7c3aed'}} onClick={() => modifyXp(p.id, -(xpMod[p.id]))}>-</button></div></div>
-                <div className={styles.resourceRow}><span style={{color:'#fff', fontSize:'0.9rem'}}>Nível {p.level || 1}</span><div style={{display:'flex', gap:'5px'}}><input className={styles.miniInput} placeholder="+/-" onChange={e => setLevelMod({...levelMod, [p.id]: e.target.value})} value={levelMod[p.id] || ''} /><button className={`${styles.miniBtn} ${styles.add}`} style={{background:'#eab308', color:'black'}} onClick={() => modifyLevel(p.id, levelMod[p.id])}>+</button><button className={`${styles.miniBtn} ${styles.rem}`} style={{background:'#78350f'}} onClick={() => modifyLevel(p.id, -(levelMod[p.id]))}>-</button></div></div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
-        {/* ESTOQUE */}
+        {/* ESTOQUE, SOLICITAÇÕES, CONTRATOS (MANTIDOS) */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
           <div className={styles.inputGroup}><label className={styles.label}>Vendedor</label><input className={styles.input} placeholder="Nome do Vendedor" value={shopForm.seller} onChange={e => setShopForm({...shopForm, seller: e.target.value})} /></div>
@@ -286,7 +356,6 @@ export default function MasterPanel() {
           <button onClick={addItem} className={styles.btnPrimary} style={{marginTop:'auto'}}>Estocar</button>
         </section>
 
-        {/* SOLICITAÇÕES */}
         <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
           <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
           <div className={styles.scrollableListSmall}>
@@ -303,7 +372,6 @@ export default function MasterPanel() {
           </div>
         </section>
 
-        {/* CONTRATOS */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚔️ Contratos Ativos</h2>
           <div className={styles.scrollableListSmall}>

@@ -11,12 +11,12 @@ export default function PlayerPanel() {
   const [shop, setShop] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]);
   const [myRequests, setMyRequests] = useState([]); 
+  const [myParty, setMyParty] = useState(null); // NOVO
   const [tab, setTab] = useState('missions');
 
-  // Modal de Solicitação
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newItemName, setNewItemName] = useState('');
-  const [newItemQty, setNewItemQty] = useState(1); // NOVO: Estado para quantidade
+  const [newItemQty, setNewItemQty] = useState(1);
 
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
 
@@ -31,6 +31,14 @@ export default function PlayerPanel() {
       setProfile(prof);
       const { data: reqs } = await supabase.from('item_requests').select('*').eq('player_id', user.id);
       setMyRequests(reqs || []);
+
+      // Buscar info do grupo se tiver
+      if (prof.party_id) {
+        const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
+        setMyParty(party);
+      } else {
+        setMyParty(null);
+      }
     }
     const { data: m } = await supabase.from('missions').select('*').eq('status', 'open');
     const { data: s } = await supabase.from('shop_items').select('*').gt('quantity', 0);
@@ -46,12 +54,22 @@ export default function PlayerPanel() {
     router.push('/login');
   };
 
-  // --- FUNÇÕES ---
+  // --- MISSÕES COM RESTRIÇÃO DE GRUPO ---
   async function acceptMission(mission) {
     if (!profile) return;
     const pRank = RANK_VALUES[profile.rank || 'F'];
     const mRank = RANK_VALUES[mission.rank || 'F'];
     if (mRank > pRank + 1) return alert("Seu Rank é muito baixo para esta missão.");
+
+    // Verifica liderança
+    if (profile.party_id) {
+      // Precisa buscar a party atualizada para garantir
+      const { data: partyCheck } = await supabase.from('parties').select('leader_id').eq('id', profile.party_id).single();
+      if (partyCheck.leader_id !== profile.id) {
+        return alert("Apenas o Líder do grupo pode aceitar missões!");
+      }
+    }
+
     await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id);
     alert("Missão aceita!");
     loadData();
@@ -61,16 +79,13 @@ export default function PlayerPanel() {
     if (profile.gold < item.price) return alert("Ouro insuficiente.");
     const currentInv = profile.inventory || [];
     const limit = profile.slots || 10;
-
     const idx = currentInv.findIndex(i => i.name === item.item_name);
     let newInv = [...currentInv];
-    
     if (idx >= 0) newInv[idx].qty += 1;
     else {
       if (currentInv.length >= limit) return alert("Mochila cheia!");
       newInv.push({ name: item.item_name, qty: 1 });
     }
-
     const { error } = await supabase.from('profiles').update({ gold: profile.gold - item.price, inventory: newInv }).eq('id', profile.id);
     if (!error) {
       await supabase.from('shop_items').update({ quantity: item.quantity - 1 }).eq('id', item.id);
@@ -82,57 +97,31 @@ export default function PlayerPanel() {
   async function requestItem() {
     if (!newItemName.trim()) return;
     if (newItemQty <= 0) return alert("Quantidade deve ser maior que 0");
-
-    // Envia nome E quantidade
-    await supabase.from('item_requests').insert([{ 
-      player_id: profile.id, 
-      item_name: newItemName,
-      quantity: newItemQty 
-    }]);
-
+    await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]);
     alert("Solicitação enviada ao Mestre!");
-    setNewItemName('');
-    setNewItemQty(1); // Reseta
-    setIsModalOpen(false);
+    setNewItemName(''); setNewItemQty(1); setIsModalOpen(false);
     loadData();
   }
 
   async function removeItem(index) {
     const currentInv = profile.inventory || [];
     let newInv = [...currentInv];
-    if (newInv[index].qty > 1) newInv[index].qty -= 1;
-    else newInv.splice(index, 1);
+    if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
     loadData();
   }
 
   return (
     <div className={styles.container}>
-      {/* MODAL SOLICITAÇÃO COM QUANTIDADE */}
+      {/* Modal */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <h2 style={{color:'#fbbf24', fontFamily:'Cinzel', marginBottom:'1rem'}}>O que você encontrou?</h2>
-            
             <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
-              <input 
-                className="rpg-input" 
-                placeholder="Nome do Item"
-                value={newItemName}
-                onChange={e => setNewItemName(e.target.value)}
-                style={{flex: 3}}
-              />
-              <input 
-                type="number"
-                min="1"
-                className="rpg-input" 
-                placeholder="Qtd"
-                value={newItemQty}
-                onChange={e => setNewItemQty(e.target.value)}
-                style={{flex: 1, textAlign:'center'}}
-              />
+              <input className="rpg-input" placeholder="Nome do Item" value={newItemName} onChange={e => setNewItemName(e.target.value)} style={{flex: 3}} />
+              <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={newItemQty} onChange={e => setNewItemQty(e.target.value)} style={{flex: 1, textAlign:'center'}} />
             </div>
-
             <div style={{display:'flex', gap:'10px'}}>
               <button onClick={requestItem} style={{flex:1, padding:'10px', background:'#064e3b', color:'white', border:'none', borderRadius:'6px', fontWeight:'bold', cursor:'pointer'}}>Solicitar</button>
               <button onClick={() => setIsModalOpen(false)} style={{flex:1, padding:'10px', background:'#7f1d1d', color:'white', border:'none', borderRadius:'6px', fontWeight:'bold', cursor:'pointer'}}>Cancelar</button>
@@ -141,7 +130,6 @@ export default function PlayerPanel() {
         </div>
       )}
 
-      {/* Resto do código (HUD, Nav, Main) permanece igual... */}
       {profile && (
         <div className={styles.hud}>
           <div className={styles.charInfo}>
@@ -149,6 +137,11 @@ export default function PlayerPanel() {
             <div style={{display:'flex', gap:'10px'}}>
               <span className={styles.rankTag}>RANK {profile.rank || 'F'}</span>
               <span className={styles.rankTag} style={{background:'#444'}}>LVL {profile.level || 1}</span>
+              {myParty && (
+                <span className={styles.rankTag} style={{background:'#064e3b', color:'#a7f3d0'}}>
+                  {myParty.name} {myParty.leader_id === profile.id ? '👑' : ''}
+                </span>
+              )}
             </div>
           </div>
           
@@ -192,6 +185,7 @@ export default function PlayerPanel() {
           </div>
         )}
 
+        {/* Loja mantida */}
         {tab === 'shop' && (
           <div className={styles.grid}>
             {shop.map(item => (
@@ -205,21 +199,24 @@ export default function PlayerPanel() {
           </div>
         )}
 
+        {/* Players / Aliados - Agora mostra o grupo */}
         {tab === 'players' && (
           <div className={styles.grid}>
              {allPlayers.map(p => (
-               <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', borderColor:'#3b82f6'}}>
+               <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', borderColor: (myParty && p.party_id === myParty.id) ? '#22c55e' : '#3b82f6'}}>
                  <div style={{fontSize:'2.5rem', marginBottom:'10px'}}>🛡️</div>
                  <h3 style={{color:'white', margin:0}}>{p.username}</h3>
                  <div style={{display:'flex', gap:'5px', justifyContent:'center', marginTop:'5px'}}>
                    <span style={{color:'#3b82f6', fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px'}}>RANK {p.rank}</span>
                    <span style={{color:'#eab308', fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px'}}>LVL {p.level || 1}</span>
                  </div>
+                 {(myParty && p.party_id === myParty.id) && <span style={{fontSize:'0.7rem', color:'#86efac', marginTop:'5px'}}>Seu Grupo</span>}
                </div>
              ))}
           </div>
         )}
 
+        {/* Mochila mantida */}
         {tab === 'inv' && (
           <div className={styles.invWrapper}>
              <h2 className={styles.invTitle}>Mochila ({profile?.inventory?.length || 0}/{profile?.slots || 10})</h2>
