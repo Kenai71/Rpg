@@ -1,82 +1,163 @@
 .container {
   min-height: 100vh;
   padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 2rem;
 }
 
 .header {
-  width: 100%;
-  max-width: 1200px;
+  background: var(--bg-panel);
+  border-bottom: 2px solid #78350f;
+  padding: 1.5rem 2rem;
+  border-radius: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 2px solid rgba(120, 53, 15, 0.4);
-  padding-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 15px;
+  box-shadow: var(--glow-gold);
+  backdrop-filter: blur(10px);
 }
 
 .title {
-  font-family: 'Cinzel', serif;
+  font-family: var(--font-title);
   font-size: 2.5rem;
-  color: #d4af37;
+  color: var(--text-gold);
+  margin: 0;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+}
+
+.actions { display: flex; gap: 10px; }
+
+.btnHeader {
+  background: transparent;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-title);
   text-transform: uppercase;
+  transition: all 0.3s;
+  white-space: nowrap;
 }
+.btnHeader:hover { border-color: var(--text-gold); color: var(--text-gold); }
 
+/* GRID RESPONSIVO */
 .grid {
-  width: 100%;
-  max-width: 1200px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  display: grid; 
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
   gap: 2rem;
-  justify-items: center; /* Centraliza os itens dentro da grid */
+  align-items: start; /* Impede que cards estiquem para preencher altura vazia */
 }
 
-.panel {
-  background-color: rgba(28, 25, 23, 0.95);
-  border: 2px solid rgba(120, 53, 15, 0.5);
-  padding: 2rem;
-  border-radius: 0.75rem;
-  width: 100%;
+.card {
+  background: linear-gradient(180deg, rgba(25,25,25,0.95) 0%, rgba(15,15,15,0.98) 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 1.2rem;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  position: relative;
 }
 
-.form {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  align-items: center;
-}
-
-.inputField {
-  background-color: rgba(12, 10, 9, 0.6);
-  border: 1px solid rgba(120, 53, 15, 0.3);
-  padding: 0.8rem;
-  border-radius: 0.375rem;
-  color: #e7e5e4;
-  width: 100%;
-  text-align: center;
-}
-
-.playerList {
-  width: 100%;
-  max-height: 400px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.playerItem {
-  background: rgba(0,0,0,0.3);
-  padding: 1rem;
-  border-radius: 0.5rem;
+.cardTitle {
+  color: var(--text-gold);
+  font-family: var(--font-title);
+  font-size: 1.4rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 10px;
+  margin: 0;
   display: flex;
   justify-content: space-between;
-  width: 100%;
+  align-items: center;
 }
+
+/* ÁREAS DE SCROLL (NOVO) */
+/* Para Jogadores (Lista maior) */
+.scrollableList {
+  max-height: 400px; /* Altura máxima */
+  overflow-y: auto;  /* Scroll se passar disso */
+  padding-right: 5px; /* Espaço para scrollbar não cobrir texto */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Para Solicitações e Contratos (Listas menores) */
+.scrollableListSmall {
+  max-height: 200px; /* Altura reduzida conforme pedido */
+  overflow-y: auto;
+  padding-right: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Estilização da Scrollbar interna */
+.scrollableList::-webkit-scrollbar, .scrollableListSmall::-webkit-scrollbar { width: 4px; }
+.scrollableList::-webkit-scrollbar-thumb, .scrollableListSmall::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+
+/* INPUTS E LABELS */
+.inputGroup {
+  display: flex; flex-direction: column; width: 100%;
+}
+
+.label {
+  font-size: 0.7rem; color: #888; text-transform: uppercase; margin-bottom: 4px; display: block; font-weight: bold; letter-spacing: 1px;
+}
+
+.input {
+  width: 100%; padding: 12px; background: #0a0a0a; border: 1px solid #333; 
+  color: #fff; border-radius: 6px; outline: none; transition: border 0.3s;
+  box-sizing: border-box;
+}
+.input:focus { border-color: var(--text-gold); }
+
+.row { display: flex; gap: 10px; width: 100%; }
+
+.btnPrimary {
+  background: linear-gradient(180deg, #b45309 0%, #78350f 100%);
+  border: 1px solid #d97706; color: white; padding: 12px;
+  font-weight: bold; font-family: var(--font-title); text-transform: uppercase;
+  border-radius: 6px; cursor: pointer; margin-top: 10px; letter-spacing: 1px;
+}
+.btnPrimary:hover { filter: brightness(1.2); }
+
+/* ITENS DAS LISTAS */
+.requestItem {
+  background: #1c1c1c; border-left: 3px solid #3b82f6; padding: 10px;
+  border-radius: 0 6px 6px 0; display: flex; justify-content: space-between;
+  align-items: center;
+}
+.btnApprove { background: #15803d; color: white; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;}
+.btnReject { background: #991b1b; color: white; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;}
+
+.playerItem { background: #1a1a1a; padding: 12px; border-radius: 8px; border: 1px solid #333; }
+.playerHeader { display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: bold; align-items: center; }
+
+.resourceRow { 
+  display: flex; justify-content: space-between; background: #111; 
+  padding: 6px 10px; border-radius: 4px; margin-top: 5px; align-items: center; 
+}
+.miniInput { background: transparent; border: none; border-bottom: 1px solid #555; color: white; width: 40px; text-align: center; font-size: 0.8rem; }
+.miniBtn { width: 22px; height: 22px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; margin-left: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem;}
+.add { background: #166534; color: #fff; }
+.rem { background: #7f1d1d; color: #fff; }
+
+/* MODAL INVENTÁRIO */
+.invSlot {
+  background: #111; border: 1px solid #444; aspect-ratio: 1; 
+  display: flex; flex-direction: column; alignItems: center; justifyContent: center; position: relative; border-radius: 6px;
+}
+.invRemoveBtn {
+  position: absolute; top: -6px; right: -6px; background: #ef4444; width: 18px; height: 18px; 
+  border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; fontSize: 10px; font-weight: bold; color: white;
+}
+.invItemName { fontSize: 0.7rem; fontWeight: bold; color: #fbbf24; text-align: center; line-height: 1.1; padding: 0 2px;}
+.invItemQty { fontSize: 0.65rem; color: #888; margin-top: 2px;}

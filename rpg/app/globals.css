@@ -1,30 +1,83 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=MedievalSharp&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=MedievalSharp&family=Lato:wght@300;400;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* PALETA DE CORES (Baseada na imagem) */
+  --col-deep-void: #122324;   /* Fundo Principal */
+  --col-dark-moss: #2F3A32;   /* Fundo dos Painéis/Cards */
+  --col-olive-grey: #545748;  /* Bordas sutis / Textos secundários */
+  --col-parchment: #DB9F75;   /* Texto Principal / Títulos (Cor de pele/pergaminho) */
+  --col-copper: #804012;      /* Acentos / Botões / Bordas de destaque */
+  --col-dark-wood: #3E2411;   /* Sombras de botões / Detalhes escuros */
+
+  /* Variáveis Funcionais */
+  --bg-main: var(--col-deep-void);
+  --bg-card: rgba(47, 58, 50, 0.95); /* Moss com transparência */
+  --border-highlight: var(--col-copper);
+  --text-primary: var(--col-parchment);
+  --text-muted: #aab095;
+  
+  --font-title: 'Cinzel', serif;
+  --font-body: 'Lato', sans-serif;
+}
+
 body {
-  background-color: #0c0a09;
-  color: #e7e5e4;
-  font-family: 'MedievalSharp', cursive;
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  /* Textura de couro misturada com o verde profundo */
   background-image: url('https://www.transparenttextures.com/patterns/dark-leather.png');
-  background-attachment: fixed; /* Mantém a textura fixa ao rolar */
+  background-blend-mode: overlay;
+  background-attachment: fixed;
+  margin: 0;
+  overflow-x: hidden;
 }
 
-/* Painel centralizado com preenchimento interno adequado */
-.rpg-panel {
-  @apply bg-stone-900/95 border-2 border-amber-900/50 p-8 rounded-xl backdrop-blur-md shadow-2xl 
-         flex flex-col items-center text-center w-full max-w-lg mx-auto;
+/* Scrollbar Personalizada (Tema Terra) */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #0b1617; }
+::-webkit-scrollbar-thumb { background: var(--col-copper); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #a35d29; }
+
+/* Modal Global */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(18, 35, 36, 0.9); /* Verde escuro translúcido */
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.2s ease-out;
 }
 
-.rpg-btn {
-  @apply bg-gradient-to-b from-amber-700 to-amber-900 hover:from-amber-600 hover:to-amber-800 
-         text-stone-100 px-8 py-3 rounded-md border border-amber-600/50 active:scale-95 
-         transition-all font-bold uppercase tracking-widest text-sm shadow-lg w-full;
+.modal-content {
+  background: var(--col-dark-moss);
+  border: 2px solid var(--col-copper);
+  padding: 2rem;
+  border-radius: 12px;
+  width: 90%; max-width: 450px;
+  box-shadow: 0 0 50px rgba(0,0,0,0.6), inset 0 0 20px rgba(0,0,0,0.5);
+  text-align: center;
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Input Global Estilizado */
 .rpg-input {
-  @apply bg-stone-950/60 border border-amber-900/30 p-4 rounded-md focus:outline-none 
-         focus:ring-2 focus:ring-amber-700/50 text-stone-200 placeholder-stone-700 w-full text-center;
+  width: 100%;
+  padding: 12px;
+  background: rgba(18, 35, 36, 0.8);
+  border: 1px solid var(--col-olive-grey);
+  color: var(--col-parchment);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  outline: none;
+  transition: all 0.3s;
 }
+.rpg-input:focus { border-color: var(--col-copper); box-shadow: 0 0 10px rgba(219, 159, 117, 0.1); }
+.rpg-input::placeholder { color: var(--col-olive-grey); opacity: 0.7; }

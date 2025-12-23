@@ -1,67 +1,134 @@
 .container {
   min-height: 100vh;
   padding: 2rem;
+  max-width: 1400px; /* Aumentado para dar mais ar */
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2rem;
+  gap: 2.5rem;
 }
 
+/* HUD Melhorado */
 .hud {
-  width: 100%;
-  max-width: 1000px;
-  background: rgba(28, 25, 23, 0.9);
-  border: 2px solid #d4af37;
-  padding: 1.5rem;
-  border-radius: 1rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-gold);
+  border-radius: 16px;
+  padding: 1.5rem 2rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap; /* Importante para responsividade */
+  gap: 20px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  position: sticky;
+  top: 20px;
+  z-index: 50;
 }
 
-.stats {
-  display: flex;
-  gap: 2rem;
-  font-family: 'Cinzel', serif;
-}
+.charInfo { display: flex; flex-direction: column; }
+.charInfo h1 { font-family: var(--font-title); font-size: 2.2rem; margin: 0; color: #fff; text-transform: uppercase; letter-spacing: 2px; line-height: 1; }
+.rankTag { background: linear-gradient(45deg, #b45309, #d97706); color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; margin-top: 8px; display: inline-block; align-self: flex-start; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
 
-.nav {
-  display: flex;
-  gap: 1rem;
-  border-bottom: 1px solid rgba(212, 175, 55, 0.2);
-  padding-bottom: 1rem;
-  width: 100%;
-  max-width: 600px;
-  justify-content: center;
-}
+.hudRight { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
 
-.tabBtn {
-  background: none;
-  border: none;
-  color: #57534e;
-  text-transform: uppercase;
-  font-family: 'Cinzel', serif;
+.stats { display: flex; gap: 20px; }
+.statItem { text-align: center; min-width: 60px; }
+.statVal { font-size: 1.4rem; font-weight: bold; display: block; text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+.statLabel { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+.gold { color: var(--text-gold); }
+.xp { color: #60a5fa; }
+
+.actions { display: flex; gap: 10px; }
+
+/* Botões do Header */
+.btnHeader {
+  background: transparent;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 8px 16px;
+  border-radius: 6px;
   cursor: pointer;
-  padding: 0.5rem 1rem;
+  font-family: var(--font-title);
+  text-transform: uppercase;
+  font-size: 0.8rem;
   transition: all 0.3s;
+  white-space: nowrap;
+}
+.btnHeader:hover { border-color: var(--text-gold); color: var(--text-gold); }
+
+/* Navegação */
+.nav { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.navBtn {
+  background: rgba(30,30,30,0.6);
+  border: 1px solid #444;
+  color: #aaa;
+  padding: 10px 25px;
+  border-radius: 8px;
+  font-family: var(--font-title);
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-transform: uppercase;
+}
+.navBtn.active {
+  background: linear-gradient(180deg, #2a1b0a 0%, #451a03 100%);
+  border-color: var(--text-gold);
+  color: var(--text-gold);
+  box-shadow: 0 0 15px rgba(212, 175, 55, 0.2);
+  transform: translateY(-2px);
 }
 
-.tabBtnActive {
-  color: #d4af37;
-  border-bottom: 2px solid #d4af37;
+/* Grids e Cards */
+.grid { 
+  display: grid; 
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); /* Melhor que auto-fit para espaçamento */
+  gap: 2rem; 
 }
 
-.content {
-  width: 100%;
-  max-width: 1000px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.card {
+  background: rgba(20,20,20,0.95);
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s;
+  display: flex; flex-direction: column; justify-content: space-between;
+  height: 100%; /* Garante altura igual */
 }
+.card:hover { border-color: #666; transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
 
-.missionGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
-  width: 100%;
+.cardHeader h3 { margin: 0; color: var(--text-gold); font-family: var(--font-title); font-size: 1.3rem; }
+.cardDesc { color: #a3a3a3; font-size: 0.95rem; line-height: 1.5; margin: 15px 0; font-style: italic; }
+
+.btnAction { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: bold; font-family: var(--font-title); text-transform: uppercase; cursor: pointer; transition: filter 0.2s; }
+.accept { background: #78350f; color: white; }
+.buy { background: #064e3b; color: white; }
+.btnAction:hover { filter: brightness(1.2); }
+
+.emptyMsg { text-align: center; color: #666; font-style: italic; width: 100%; grid-column: 1 / -1; }
+
+/* Inventário */
+.invWrapper { 
+  background: rgba(10,10,10,0.8); 
+  border: 1px solid #78350f; 
+  padding: 2rem; 
+  border-radius: 16px; 
+  max-width: 600px; 
+  margin: 0 auto; 
+  box-shadow: inset 0 0 50px rgba(0,0,0,0.8); 
 }
+.invTitle { text-align: center; color: var(--text-gold); font-family: var(--font-title); font-size: 1.5rem; margin-bottom: 20px; }
+.invGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; }
+
+.slot {
+  aspect-ratio: 1; background: #050505; border: 2px solid #333; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; transition: border 0.2s;
+}
+.slot.filled { border-color: var(--text-gold); background: #161005; }
+.itemName { font-size: 0.7rem; color: #fff; font-weight: bold; text-align: center; line-height: 1.2; padding: 0 2px; }
+.itemQty { position: absolute; bottom: 2px; right: 4px; font-size: 0.7rem; color: var(--text-gold); }
+.addBtn { font-size: 2rem; color: #444; background: none; border: none; cursor: pointer; width: 100%; height: 100%; }
+.addBtn:hover { color: #22c55e; }
+.removeBtn {
+  position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; background: #ef4444; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; cursor: pointer; border: 1px solid #991b1b; opacity: 0; transition: opacity 0.2s; z-index: 10;
+}
+.slot:hover .removeBtn { opacity: 1; }

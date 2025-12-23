@@ -8,18 +8,37 @@ export default function PlayerPanel() {
   const router = useRouter();
   const [profile, setProfile] = useState(null);
   const [missions, setMissions] = useState([]);
+  const [shop, setShop] = useState([]);
+  const [allPlayers, setAllPlayers] = useState([]);
+  const [myRequests, setMyRequests] = useState([]); 
   const [tab, setTab] = useState('missions');
 
-  useEffect(() => { loadData(); }, []);
+  // Modal de Solicitação
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemQty, setNewItemQty] = useState(1); // NOVO: Estado para quantidade
+
+  const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
+
+  useEffect(() => {
+    loadData();
+  }, []);
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       setProfile(prof);
+      const { data: reqs } = await supabase.from('item_requests').select('*').eq('player_id', user.id);
+      setMyRequests(reqs || []);
     }
     const { data: m } = await supabase.from('missions').select('*').eq('status', 'open');
+    const { data: s } = await supabase.from('shop_items').select('*').gt('quantity', 0);
+    const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player');
+    
     setMissions(m || []);
+    setShop(s || []);
+    setAllPlayers(p || []);
   }
 
   const handleLogout = async () => {
@@ -27,59 +46,214 @@ export default function PlayerPanel() {
     router.push('/login');
   };
 
+  // --- FUNÇÕES ---
+  async function acceptMission(mission) {
+    if (!profile) return;
+    const pRank = RANK_VALUES[profile.rank || 'F'];
+    const mRank = RANK_VALUES[mission.rank || 'F'];
+    if (mRank > pRank + 1) return alert("Seu Rank é muito baixo para esta missão.");
+    await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id);
+    alert("Missão aceita!");
+    loadData();
+  }
+
+  async function buyItem(item) {
+    if (profile.gold < item.price) return alert("Ouro insuficiente.");
+    const currentInv = profile.inventory || [];
+    const limit = profile.slots || 10;
+
+    const idx = currentInv.findIndex(i => i.name === item.item_name);
+    let newInv = [...currentInv];
+    
+    if (idx >= 0) newInv[idx].qty += 1;
+    else {
+      if (currentInv.length >= limit) return alert("Mochila cheia!");
+      newInv.push({ name: item.item_name, qty: 1 });
+    }
+
+    const { error } = await supabase.from('profiles').update({ gold: profile.gold - item.price, inventory: newInv }).eq('id', profile.id);
+    if (!error) {
+      await supabase.from('shop_items').update({ quantity: item.quantity - 1 }).eq('id', item.id);
+      alert("Comprado!");
+      loadData();
+    }
+  }
+
+  async function requestItem() {
+    if (!newItemName.trim()) return;
+    if (newItemQty <= 0) return alert("Quantidade deve ser maior que 0");
+
+    // Envia nome E quantidade
+    await supabase.from('item_requests').insert([{ 
+      player_id: profile.id, 
+      item_name: newItemName,
+      quantity: newItemQty 
+    }]);
+
+    alert("Solicitação enviada ao Mestre!");
+    setNewItemName('');
+    setNewItemQty(1); // Reseta
+    setIsModalOpen(false);
+    loadData();
+  }
+
+  async function removeItem(index) {
+    const currentInv = profile.inventory || [];
+    let newInv = [...currentInv];
+    if (newInv[index].qty > 1) newInv[index].qty -= 1;
+    else newInv.splice(index, 1);
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
+    loadData();
+  }
+
   return (
     <div className={styles.container}>
+      {/* MODAL SOLICITAÇÃO COM QUANTIDADE */}
+      {isModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h2 style={{color:'#fbbf24', fontFamily:'Cinzel', marginBottom:'1rem'}}>O que você encontrou?</h2>
+            
+            <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+              <input 
+                className="rpg-input" 
+                placeholder="Nome do Item"
+                value={newItemName}
+                onChange={e => setNewItemName(e.target.value)}
+                style={{flex: 3}}
+              />
+              <input 
+                type="number"
+                min="1"
+                className="rpg-input" 
+                placeholder="Qtd"
+                value={newItemQty}
+                onChange={e => setNewItemQty(e.target.value)}
+                style={{flex: 1, textAlign:'center'}}
+              />
+            </div>
+
+            <div style={{display:'flex', gap:'10px'}}>
+              <button onClick={requestItem} style={{flex:1, padding:'10px', background:'#064e3b', color:'white', border:'none', borderRadius:'6px', fontWeight:'bold', cursor:'pointer'}}>Solicitar</button>
+              <button onClick={() => setIsModalOpen(false)} style={{flex:1, padding:'10px', background:'#7f1d1d', color:'white', border:'none', borderRadius:'6px', fontWeight:'bold', cursor:'pointer'}}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resto do código (HUD, Nav, Main) permanece igual... */}
       {profile && (
         <div className={styles.hud}>
-          <div>
-            <h2 className="text-2xl text-amber-500 font-serif uppercase">{profile.username}</h2>
-            <p className="text-xs text-stone-500">Aventureiro do Reino</p>
+          <div className={styles.charInfo}>
+            <h1>{profile.username}</h1>
+            <div style={{display:'flex', gap:'10px'}}>
+              <span className={styles.rankTag}>RANK {profile.rank || 'F'}</span>
+              <span className={styles.rankTag} style={{background:'#444'}}>LVL {profile.level || 1}</span>
+            </div>
           </div>
-          <div className={styles.stats}>
-            <div className="text-center">
-              <span className="block text-yellow-500 font-bold">💰 {profile.gold}</span>
-              <span className="text-[9px] uppercase">Ouro</span>
+          
+          <div className={styles.hudRight}>
+            <div className={styles.stats}>
+              <div className={styles.statItem}><span className={`${styles.statVal} ${styles.gold}`}>{profile.gold}</span><span className={styles.statLabel}>Ouro</span></div>
+              <div className={styles.statItem}><span className={`${styles.statVal} ${styles.xp}`}>{profile.xp}</span><span className={styles.statLabel}>XP</span></div>
             </div>
-            <div className="text-center">
-              <span className="block text-blue-400 font-bold">✨ {profile.xp}</span>
-              <span className="text-[9px] uppercase">XP</span>
+            <div className={styles.actions}>
+              <button onClick={loadData} className={styles.btnHeader}>↻ Atualizar</button>
+              <button onClick={handleLogout} className={styles.btnHeader} style={{borderColor:'#7f1d1d', color:'#fca5a5'}}>Sair</button>
             </div>
-            <button onClick={handleLogout} className="opacity-50 hover:opacity-100 transition-opacity">🚪</button>
           </div>
         </div>
       )}
 
       <nav className={styles.nav}>
-        <button onClick={() => setTab('missions')} className={`${styles.tabBtn} ${tab === 'missions' ? styles.tabBtnActive : ''}`}>Mural</button>
-        <button onClick={() => setTab('inv')} className={`${styles.tabBtn} ${tab === 'inv' ? styles.tabBtnActive : ''}`}>Mochila</button>
+        {['missions', 'shop', 'players', 'inv'].map(t => (
+          <button key={t} onClick={() => setTab(t)} className={`${styles.navBtn} ${tab === t ? styles.active : ''}`}>
+            {t === 'missions' && 'Mural'}
+            {t === 'shop' && 'Loja'}
+            {t === 'players' && 'Aliados'}
+            {t === 'inv' && 'Mochila'}
+          </button>
+        ))}
       </nav>
 
-      <main className={styles.content}>
+      <main className={styles.mainContent}>
         {tab === 'missions' && (
-          <div className={styles.missionGrid}>
+          <div className={styles.grid}>
             {missions.map(m => (
-              <div key={m.id} className="rpg-panel !max-w-none text-left items-start">
-                <h3 className="text-xl text-amber-200 font-serif mb-2">{m.title}</h3>
-                <p className="text-stone-400 italic text-sm mb-4">"{m.description}"</p>
-                <div className="flex justify-between w-full items-center mt-auto">
-                  <span className="text-xs font-bold text-amber-700">💰 {m.gold_reward} | ✨ {m.xp_reward}</span>
-                  <button className="rpg-btn !w-auto !py-1 !px-3 text-[10px]">Aceitar</button>
+              <div key={m.id} className={styles.card} style={{borderLeft:'4px solid #d97706'}}>
+                <div className={styles.cardHeader}><h3>{m.title}</h3><span style={{fontSize:'0.8rem', color:'#fbbf24'}}>RANK {m.rank}</span></div>
+                <p className={styles.cardDesc}>"{m.description}"</p>
+                <div style={{marginTop:'auto', borderTop:'1px solid #333', paddingTop:'10px'}}>
+                  <button onClick={() => acceptMission(m)} className={`${styles.btnAction} ${styles.accept}`}>Aceitar</button>
                 </div>
               </div>
             ))}
+            {missions.length === 0 && <p className={styles.emptyMsg}>Nenhuma missão disponível.</p>}
+          </div>
+        )}
+
+        {tab === 'shop' && (
+          <div className={styles.grid}>
+            {shop.map(item => (
+              <div key={item.id} className={styles.card}>
+                <div className={styles.cardHeader}><h3>{item.item_name}</h3><span style={{fontSize:'0.8rem', color: item.quantity<5?'#f87171':'#4ade80'}}>Estoque: {item.quantity}</span></div>
+                <p className={styles.cardDesc}>{item.description}</p>
+                <button onClick={() => buyItem(item)} className={`${styles.btnAction} ${styles.buy}`}>Comprar {item.price}g</button>
+              </div>
+            ))}
+            {shop.length === 0 && <p className={styles.emptyMsg}>Loja vazia.</p>}
+          </div>
+        )}
+
+        {tab === 'players' && (
+          <div className={styles.grid}>
+             {allPlayers.map(p => (
+               <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', borderColor:'#3b82f6'}}>
+                 <div style={{fontSize:'2.5rem', marginBottom:'10px'}}>🛡️</div>
+                 <h3 style={{color:'white', margin:0}}>{p.username}</h3>
+                 <div style={{display:'flex', gap:'5px', justifyContent:'center', marginTop:'5px'}}>
+                   <span style={{color:'#3b82f6', fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px'}}>RANK {p.rank}</span>
+                   <span style={{color:'#eab308', fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px'}}>LVL {p.level || 1}</span>
+                 </div>
+               </div>
+             ))}
           </div>
         )}
 
         {tab === 'inv' && (
-          <div className="rpg-panel">
-            <h2 className="text-xl text-amber-500 font-serif mb-6">Pertences</h2>
-            <div className="grid grid-cols-5 gap-3">
-              {[...Array(10)].map((_, i) => (
-                <div key={i} className="w-12 h-12 border-2 border-stone-800 rounded bg-stone-950 flex items-center justify-center">
-                  <span className="text-[8px] text-stone-800">VAZIO</span>
-                </div>
-              ))}
-            </div>
+          <div className={styles.invWrapper}>
+             <h2 className={styles.invTitle}>Mochila ({profile?.inventory?.length || 0}/{profile?.slots || 10})</h2>
+             <div className={styles.invGrid}>
+                {[...Array(profile?.slots || 10)].map((_, i) => {
+                  const item = profile?.inventory?.[i];
+                  return (
+                    <div key={i} className={`slot ${item ? 'filled' : ''} ${styles.slot}`}>
+                      {item ? (
+                        <>
+                           <div onClick={() => removeItem(i)} className={styles.removeBtn}>-</div>
+                           <span className={styles.itemName}>{item.name}</span>
+                           <span className={styles.itemQty}>x{item.qty}</span>
+                        </>
+                      ) : (
+                        <button className={styles.addBtn} onClick={() => setIsModalOpen(true)} title="Adicionar">+</button>
+                      )}
+                    </div>
+                  )
+                })}
+             </div>
+             
+             {myRequests.length > 0 && (
+               <div style={{marginTop:'20px', borderTop:'1px solid #333', paddingTop:'10px'}}>
+                 <h4 style={{color:'#888', fontSize:'0.8rem', textAlign:'center'}}>Aguardando Aprovação:</h4>
+                 <div style={{display:'flex', gap:'5px', flexWrap:'wrap', justifyContent:'center'}}>
+                   {myRequests.map(r => (
+                     <span key={r.id} style={{background:'#222', padding:'4px 8px', borderRadius:'4px', fontSize:'0.7rem', color:'#aaa', border:'1px solid #444'}}>
+                       ⏳ {r.quantity}x {r.item_name}
+                     </span>
+                   ))}
+                 </div>
+               </div>
+             )}
           </div>
         )}
       </main>
