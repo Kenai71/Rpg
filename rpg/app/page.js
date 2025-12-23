@@ -8,11 +8,11 @@ export default function Home() {
 
   useEffect(() => {
     const checkUser = async () => {
-      // Verifica se existe uma sessão ativa no Supabase
+      // Busca a sessão atual do navegador
       const { data: { session } } = await supabase.auth.getSession();
 
       if (session) {
-        // Se estiver logado, busca o perfil para saber se é mestre ou jogador
+        // Se houver sessão, busca o papel (role) no perfil
         const { data: profile } = await supabase
           .from('profiles')
           .select('role')
@@ -25,7 +25,7 @@ export default function Home() {
           router.push('/player');
         }
       } else {
-        // Se não estiver logado, vai direto para o login
+        // Se não houver sessão, manda para o login
         router.push('/login');
       }
     };
