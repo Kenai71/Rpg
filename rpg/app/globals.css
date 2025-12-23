@@ -1,0 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=MedievalSharp&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0c0a09;
+  color: #e7e5e4;
+  font-family: 'MedievalSharp', cursive;
+}
+
+.rpg-card {
+  @apply bg-stone-900 border-2 border-amber-900 p-4 rounded-lg shadow-lg relative;
+  background-image: url('https://www.transparenttextures.com/patterns/dark-matter.png');
+}
+
+.rpg-btn {
+  @apply bg-amber-800 hover:bg-amber-700 text-stone-100 px-4 py-2 rounded border-b-4 border-amber-950 active:border-b-0 transition-all font-bold;
+}
+
+.rpg-input {
+  @apply bg-stone-800 border border-stone-700 p-2 rounded focus:outline-none focus:border-amber-600;
+}
