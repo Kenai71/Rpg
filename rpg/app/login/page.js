@@ -1,7 +1,8 @@
 "use client"
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase'; // Caminho relativo para evitar erro de import
+import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
+import styles from './login.module.css'; // Importando o CSS individual
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -12,51 +13,72 @@ export default function LoginPage() {
   const router = useRouter();
 
   const handleAuth = async () => {
-    if (isSignUp) {
-      const { data } = await supabase.auth.signUp({ email, password });
-      if (data.user) {
-        await supabase.from('profiles').insert([
-          { id: data.user.id, username, role, gold: 100, xp: 0, inventory: [] }
-        ]);
-        alert("Herói registrado!");
+    try {
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        if (data.user) {
+          await supabase.from('profiles').insert([
+            { id: data.user.id, username, role, gold: 100, xp: 0, inventory: [] }
+          ]);
+          alert("Herói registrado com sucesso!");
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        if (data.user) {
+          const { data: prof } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
+          router.push(prof.role === 'master' ? '/master' : '/player');
+        }
       }
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return alert("Erro: " + error.message);
-      if (data.user) {
-        const { data: prof } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
-        router.push(prof.role === 'master' ? '/master' : '/player');
-      }
+    } catch (error) {
+      alert("Erro na jornada: " + error.message);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-black/20">
-      <div className="rpg-panel">
-        <h1 className="text-4xl text-amber-500 font-serif uppercase mb-2 tracking-tighter">Pórtico de Entrada</h1>
-        <div className="w-24 h-1 bg-amber-700/50 mb-8"></div>
+    <div className={styles.wrapper}>
+      <div className={styles.panel}>
+        <h1 className={styles.title}>Pórtico de Entrada</h1>
+        <div className={styles.divider}></div>
 
-        <div className="w-full space-y-5 flex flex-col items-center">
+        <div className={styles.form}>
           {isSignUp && (
-            <div className="w-full space-y-4 flex flex-col items-center">
-              <input className="rpg-input" placeholder="Nome do Personagem" onChange={e => setUsername(e.target.value)} />
-              <select className="rpg-input cursor-pointer" onChange={e => setRole(e.target.value)}>
-                <option value="player">Aventureiro (Jogador)</option>
-                <option value="master">Guardião (Mestre)</option>
+            <>
+              <input 
+                className={styles.inputField} 
+                placeholder="Nome do Personagem" 
+                onChange={e => setUsername(e.target.value)} 
+              />
+              <select 
+                className={styles.inputField} 
+                onChange={e => setRole(e.target.value)}
+              >
+                <option value="player">Sou um Jogador</option>
+                <option value="master">Sou o Mestre</option>
               </select>
-            </div>
+            </>
           )}
           
-          <input className="rpg-input" type="email" placeholder="E-mail" onChange={e => setEmail(e.target.value)} />
-          <input className="rpg-input" type="password" placeholder="Senha" onChange={e => setPassword(e.target.value)} />
+          <input 
+            className={styles.inputField} 
+            type="email" 
+            placeholder="Seu E-mail" 
+            onChange={e => setEmail(e.target.value)} 
+          />
+          <input 
+            className={styles.inputField} 
+            type="password" 
+            placeholder="Sua Senha" 
+            onChange={e => setPassword(e.target.value)} 
+          />
           
-          <button onClick={handleAuth} className="rpg-btn mt-4 py-4 text-base shadow-amber-900/40">
-            {isSignUp ? "Forjar Destino" : "Entrar no Reino"}
+          <button onClick={handleAuth} className={styles.button}>
+            {isSignUp ? "Criar Personagem" : "Entrar no Reino"}
           </button>
 
-          <p className="text-stone-500 text-[10px] uppercase tracking-widest cursor-pointer hover:text-amber-500 transition-colors" 
-             onClick={() => setIsSignUp(!isSignUp)}>
-            {isSignUp ? "Já possuo registro" : "Desejo me alistar agora"}
+          <p className={styles.toggleText} onClick={() => setIsSignUp(!isSignUp)}>
+            {isSignUp ? "Já possuo registro" : "Desejo me alistar"}
           </p>
         </div>
       </div>

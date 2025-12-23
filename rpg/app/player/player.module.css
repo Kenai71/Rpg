@@ -1,0 +1,67 @@
+.container {
+  min-height: 100vh;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+}
+
+.hud {
+  width: 100%;
+  max-width: 1000px;
+  background: rgba(28, 25, 23, 0.9);
+  border: 2px solid #d4af37;
+  padding: 1.5rem;
+  border-radius: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stats {
+  display: flex;
+  gap: 2rem;
+  font-family: 'Cinzel', serif;
+}
+
+.nav {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+  padding-bottom: 1rem;
+  width: 100%;
+  max-width: 600px;
+  justify-content: center;
+}
+
+.tabBtn {
+  background: none;
+  border: none;
+  color: #57534e;
+  text-transform: uppercase;
+  font-family: 'Cinzel', serif;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  transition: all 0.3s;
+}
+
+.tabBtnActive {
+  color: #d4af37;
+  border-bottom: 2px solid #d4af37;
+}
+
+.content {
+  width: 100%;
+  max-width: 1000px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.missionGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  width: 100%;
+}
