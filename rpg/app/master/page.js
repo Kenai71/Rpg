@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase'; // Caminho relativo ajustado
 import { useRouter } from 'next/navigation';
 
 export default function MasterPanel() {
@@ -24,6 +24,7 @@ export default function MasterPanel() {
     setShopItems(s || []);
   }
 
+  // Função para deslogar e limpar a sessão do navegador
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push('/login');
@@ -63,7 +64,9 @@ export default function MasterPanel() {
     <div className="p-8 max-w-7xl mx-auto space-y-8 bg-stone-950 min-h-screen">
       <div className="flex justify-between items-center border-b border-amber-900 pb-4">
         <h1 className="text-4xl text-amber-500 font-serif">Trono do Mestre</h1>
-        <button onClick={handleLogout} className="rpg-btn bg-red-900 border-red-950 text-xs py-1 px-4">Sair do Reino</button>
+        <button onClick={handleLogout} className="rpg-btn bg-red-900 border-red-950 text-xs py-1 px-4">
+          Sair do Reino
+        </button>
       </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -104,7 +107,7 @@ export default function MasterPanel() {
       </div>
 
       <div className="rpg-card">
-        <h2 className="text-2xl mb-4 text-amber-200 font-serif">Contratos Ativos</h2>
+        <h2 className="text-2xl mb-4 text-amber-200 font-serif text-center">Contratos em Progresso</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {missions.filter(m => m.status === 'in_progress').map(m => (
             <div key={m.id} className="p-3 bg-stone-800/50 rounded border border-amber-900/30">

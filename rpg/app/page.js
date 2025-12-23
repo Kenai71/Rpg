@@ -1,18 +1,18 @@
 "use client"
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase'; // Caminho relativo ajustado
 
 export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
     const checkUser = async () => {
-      // Busca a sessão atual do navegador
+      // Verifica se existe uma sessão salva no navegador
       const { data: { session } } = await supabase.auth.getSession();
 
       if (session) {
-        // Se houver sessão, busca o papel (role) no perfil
+        // Se estiver logado, busca o perfil para saber se é mestre ou jogador
         const { data: profile } = await supabase
           .from('profiles')
           .select('role')
@@ -25,7 +25,7 @@ export default function Home() {
           router.push('/player');
         }
       } else {
-        // Se não houver sessão, manda para o login
+        // Se não houver login, manda para a tela de entrada
         router.push('/login');
       }
     };
