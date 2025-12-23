@@ -1,17 +1,42 @@
 "use client"
-import Link from 'next/link';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '../lib/supabase';
 
 export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const checkUser = async () => {
+      // Verifica se existe uma sessão ativa no Supabase
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session) {
+        // Se estiver logado, busca o perfil para saber se é mestre ou jogador
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .single();
+
+        if (profile?.role === 'master') {
+          router.push('/master');
+        } else {
+          router.push('/player');
+        }
+      } else {
+        // Se não estiver logado, vai direto para o login
+        router.push('/login');
+      }
+    };
+
+    checkUser();
+  }, [router]);
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-stone-950 p-4">
-      <div className="rpg-card text-center max-w-md">
-        <h1 className="text-5xl text-amber-500 mb-6 font-serif">Reino de RPG</h1>
-        <p className="text-stone-300 mb-8 italic">
-          "Bem-vindo, viajante. O mural de missões e as lojas da cidade o aguardam."
-        </p>
-        <Link href="/login" className="rpg-btn text-xl px-8 py-4 inline-block">
-          Entrar no Reino
-        </Link>
+    <div className="min-h-screen flex items-center justify-center bg-stone-950">
+      <div className="text-amber-500 animate-pulse font-serif text-2xl">
+        Carregando Reino...
       </div>
     </div>
   );
