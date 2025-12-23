@@ -8,17 +8,18 @@ body {
   background-color: #0c0a09;
   color: #e7e5e4;
   font-family: 'MedievalSharp', cursive;
+  background-image: url('https://www.transparenttextures.com/patterns/dark-leather.png');
 }
 
 .rpg-card {
   @apply bg-stone-900 border-2 border-amber-900 p-4 rounded-lg shadow-lg relative;
-  background-image: url('https://www.transparenttextures.com/patterns/dark-matter.png');
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
 }
 
 .rpg-btn {
-  @apply bg-amber-800 hover:bg-amber-700 text-stone-100 px-4 py-2 rounded border-b-4 border-amber-950 active:border-b-0 transition-all font-bold;
+  @apply bg-amber-800 hover:bg-amber-700 text-stone-100 px-4 py-2 rounded border-b-4 border-amber-950 active:border-b-0 active:translate-y-[2px] transition-all font-bold uppercase tracking-wider text-sm;
 }
 
 .rpg-input {
-  @apply bg-stone-800 border border-stone-700 p-2 rounded focus:outline-none focus:border-amber-600;
+  @apply bg-stone-800 border border-amber-900/50 p-2 rounded focus:outline-none focus:border-amber-500 text-stone-100 placeholder-stone-600;
 }

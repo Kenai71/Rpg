@@ -5,7 +5,9 @@ import { supabase } from '@/lib/supabase';
 export default function MasterPanel() {
   const [missions, setMissions] = useState([]);
   const [players, setPlayers] = useState([]);
+  const [shopItems, setShopItems] = useState([]);
   const [form, setForm] = useState({ title: '', desc: '', rank: 'E', xp: 0, gold: 0 });
+  const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, desc: '' });
 
   useEffect(() => {
     fetchData();
@@ -14,59 +16,103 @@ export default function MasterPanel() {
   async function fetchData() {
     const { data: m } = await supabase.from('missions').select('*');
     const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player');
+    const { data: s } = await supabase.from('shop_items').select('*');
     setMissions(m || []);
     setPlayers(p || []);
+    setShopItems(s || []);
   }
 
   async function createMission() {
     await supabase.from('missions').insert([{
       title: form.title, description: form.desc, rank: form.rank, 
-      xp_reward: form.xp, gold_reward: form.gold
+      xp_reward: form.xp, gold_reward: form.gold, status: 'open'
     }]);
+    setForm({ title: '', desc: '', rank: 'E', xp: 0, gold: 0 });
     fetchData();
+    alert("Missão publicada!");
+  }
+
+  async function addShopItem() {
+    await supabase.from('shop_items').insert([{
+      seller_name: shopForm.seller, item_name: shopForm.name,
+      price: shopForm.price, description: shopForm.desc
+    }]);
+    setShopForm({ seller: '', name: '', price: 0, desc: '' });
+    fetchData();
+    alert("Item adicionado à loja!");
   }
 
   async function updateMission(id, status, playerId, xp, gold) {
     await supabase.from('missions').update({ status }).eq('id', id);
-    if (status === 'completed') {
+    if (status === 'completed' && playerId) {
       const player = players.find(p => p.id === playerId);
       await supabase.from('profiles').update({ 
-        xp: player.xp + parseInt(xp), 
-        gold: player.gold + parseInt(gold) 
+        xp: (player?.xp || 0) + parseInt(xp), 
+        gold: (player?.gold || 0) + parseInt(gold) 
       }).eq('id', playerId);
     }
     fetchData();
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <h1 className="text-4xl text-amber-500 mb-8 font-serif">Trono do Mestre</h1>
+    <div className="p-8 max-w-7xl mx-auto space-y-8 bg-stone-950 min-h-screen">
+      <h1 className="text-4xl text-amber-500 font-serif border-b border-amber-900 pb-4 text-center">Trono do Mestre</h1>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Criar Missão */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Painel de Missões */}
         <div className="rpg-card">
-          <h2 className="text-2xl mb-4 text-amber-200">Criar Nova Missão</h2>
-          <div className="flex flex-col gap-2 text-black">
-            <input className="rpg-input text-white" placeholder="Título" onChange={e => setForm({...form, title: e.target.value})} />
-            <textarea className="rpg-input text-white" placeholder="Descrição" onChange={e => setForm({...form, desc: e.target.value})} />
+          <h2 className="text-2xl mb-4 text-amber-200">Nova Missão</h2>
+          <div className="flex flex-col gap-2">
+            <input value={form.title} className="rpg-input" placeholder="Título" onChange={e => setForm({...form, title: e.target.value})} />
+            <textarea value={form.desc} className="rpg-input" placeholder="Descrição" onChange={e => setForm({...form, desc: e.target.value})} />
             <div className="flex gap-2">
-              <input type="number" className="rpg-input w-full text-white" placeholder="XP" onChange={e => setForm({...form, xp: e.target.value})} />
-              <input type="number" className="rpg-input w-full text-white" placeholder="Ouro" onChange={e => setForm({...form, gold: e.target.value})} />
+              <input value={form.xp} type="number" className="rpg-input w-1/2" placeholder="XP" onChange={e => setForm({...form, xp: e.target.value})} />
+              <input value={form.gold} type="number" className="rpg-input w-1/2" placeholder="Ouro" onChange={e => setForm({...form, gold: e.target.value})} />
             </div>
-            <button onClick={createMission} className="rpg-btn mt-2">Postar no Mural</button>
+            <button onClick={createMission} className="rpg-btn mt-2">Postar Missão</button>
           </div>
         </div>
 
-        {/* Gerenciar Missões Ativas */}
+        {/* Painel de Vendedores */}
         <div className="rpg-card">
-          <h2 className="text-2xl mb-4 text-amber-200">Missões em Andamento</h2>
-          {missions.filter(m => m.status === 'in_progress').map(m => (
-            <div key={m.id} className="border-b border-stone-700 py-2">
-              <p className="font-bold">{m.title} (Para: {m.assigned_to})</p>
-              <div className="flex gap-2 mt-2">
-                <button onClick={() => updateMission(m.id, 'completed', m.assigned_to, m.xp_reward, m.gold_reward)} className="bg-green-700 text-xs px-2 py-1 rounded">Sucesso</button>
-                <button onClick={() => updateMission(m.id, 'failed', m.assigned_to, 0, 0)} className="bg-red-700 text-xs px-2 py-1 rounded">Falha</button>
+          <h2 className="text-2xl mb-4 text-amber-200">Configurar Loja</h2>
+          <div className="flex flex-col gap-2">
+            <input value={shopForm.seller} className="rpg-input" placeholder="Nome do Vendedor" onChange={e => setShopForm({...shopForm, seller: e.target.value})} />
+            <input value={shopForm.name} className="rpg-input" placeholder="Nome do Item" onChange={e => setShopForm({...shopForm, name: e.target.value})} />
+            <input value={shopForm.price} type="number" className="rpg-input" placeholder="Preço (Ouro)" onChange={e => setShopForm({...shopForm, price: e.target.value})} />
+            <textarea value={shopForm.desc} className="rpg-input" placeholder="Descrição do Item" onChange={e => setShopForm({...shopForm, desc: e.target.value})} />
+            <button onClick={addShopItem} className="rpg-btn mt-2">Adicionar Item</button>
+          </div>
+        </div>
+
+        {/* Lista de Jogadores */}
+        <div className="rpg-card">
+          <h2 className="text-2xl mb-4 text-amber-200">Jogadores no Reino</h2>
+          <div className="space-y-2 overflow-y-auto max-h-64">
+            {players.map(p => (
+              <div key={p.id} className="text-sm border-b border-stone-800 pb-1 flex justify-between">
+                <span className="text-amber-500 font-bold">{p.username}</span>
+                <span className="text-stone-300">💰{p.gold} | ✨{p.xp}</span>
               </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Gerenciar Missões Ativas */}
+      <div className="rpg-card">
+        <h2 className="text-2xl mb-4 text-amber-200 font-serif">Contratos em Aberto e Progresso</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {missions.filter(m => m.status === 'in_progress' || m.status === 'open').map(m => (
+            <div key={m.id} className="p-3 bg-stone-800/50 rounded border border-amber-900/30">
+              <p className="font-bold text-amber-100">{m.title} ({m.status})</p>
+              <p className="text-xs text-stone-400 mb-2">Aventureiro: {players.find(p => p.id === m.assigned_to)?.username || 'Ninguém'}</p>
+              {m.status === 'in_progress' && (
+                <div className="flex gap-2">
+                  <button onClick={() => updateMission(m.id, 'completed', m.assigned_to, m.xp_reward, m.gold_reward)} className="bg-green-800 hover:bg-green-700 text-white text-[10px] px-3 py-1 rounded">MISSÃO COMPLETA</button>
+                  <button onClick={() => updateMission(m.id, 'failed', m.assigned_to, 0, 0)} className="bg-red-800 hover:bg-red-700 text-white text-[10px] px-3 py-1 rounded">FALHA</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
