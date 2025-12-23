@@ -1,6 +1,6 @@
 "use client"
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase'; // Caminho relativo ajustado
+import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
@@ -13,19 +13,16 @@ export default function LoginPage() {
 
   const handleAuth = async () => {
     if (isSignUp) {
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      const { data } = await supabase.auth.signUp({ email, password });
       if (data.user) {
         await supabase.from('profiles').insert([
           { id: data.user.id, username, role, gold: 100, xp: 0, inventory: [] }
         ]);
-        alert("Conta criada! Verifique seu email para confirmar.");
+        alert("Personagem criado!");
       }
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-         alert("Erro: " + error.message);
-         return;
-      }
+      if (error) return alert("Erro no acesso: " + error.message);
       if (data.user) {
         const { data: prof } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
         router.push(prof.role === 'master' ? '/master' : '/player');
@@ -34,26 +31,44 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-950 p-4">
-      <div className="rpg-card w-full max-w-md">
-        <h1 className="text-3xl text-amber-500 text-center mb-6 font-serif tracking-widest uppercase">Pórtico de Entrada</h1>
-        <div className="space-y-4">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-black/40">
+      <div className="rpg-panel w-full max-w-md border-amber-700/40">
+        <div className="text-center mb-8">
+          <h1 className="text-4xl text-amber-500 font-serif tracking-tighter uppercase">Pórtico de Entrada</h1>
+          <div className="h-1 w-24 bg-gradient-to-r from-transparent via-amber-700 to-transparent mx-auto mt-2"></div>
+        </div>
+
+        <div className="space-y-5">
           {isSignUp && (
-            <>
-              <input className="rpg-input w-full" placeholder="Nome do Personagem" onChange={e => setUsername(e.target.value)} />
-              <select className="rpg-input w-full bg-stone-800" onChange={e => setRole(e.target.value)}>
-                <option value="player">Sou um Jogador</option>
-                <option value="master">Sou o Mestre</option>
+            <div className="animate-in fade-in duration-500">
+              <label className="text-xs uppercase text-amber-700 font-bold ml-1">Nome do Herói</label>
+              <input className="rpg-input" placeholder="Ex: Garen do Norte" onChange={e => setUsername(e.target.value)} />
+              
+              <label className="text-xs uppercase text-amber-700 font-bold ml-1 mt-4 block">Sua Vocação</label>
+              <select className="rpg-input" onChange={e => setRole(e.target.value)}>
+                <option value="player">🛡️ Jogador</option>
+                <option value="master">🧙 Mestre</option>
               </select>
-            </>
+            </div>
           )}
-          <input className="rpg-input w-full" type="email" placeholder="Email" onChange={e => setEmail(e.target.value)} />
-          <input className="rpg-input w-full" type="password" placeholder="Senha" onChange={e => setPassword(e.target.value)} />
-          <button onClick={handleAuth} className="rpg-btn w-full uppercase tracking-tighter">
-            {isSignUp ? "Criar Personagem" : "Entrar no Reino"}
+
+          <div>
+            <label className="text-xs uppercase text-stone-500 font-bold ml-1">Correio Eletrônico</label>
+            <input className="rpg-input" type="email" placeholder="seu@email.com" onChange={e => setEmail(e.target.value)} />
+          </div>
+
+          <div>
+            <label className="text-xs uppercase text-stone-500 font-bold ml-1">Palavra-Passe</label>
+            <input className="rpg-input" type="password" placeholder="********" onChange={e => setPassword(e.target.value)} />
+          </div>
+
+          <button onClick={handleAuth} className="rpg-btn w-full py-4 mt-4 shadow-amber-900/40">
+            {isSignUp ? "Forjar Destino" : "Entrar no Reino"}
           </button>
-          <p className="text-center text-[10px] text-stone-500 cursor-pointer hover:text-amber-500 transition-colors" onClick={() => setIsSignUp(!isSignUp)}>
-            {isSignUp ? "Já possuo um herói cadastrado" : "Sou novo nestas terras (Novo Cadastro)"}
+
+          <p className="text-center text-[10px] text-stone-600 uppercase tracking-widest cursor-pointer hover:text-amber-500 transition-colors" 
+             onClick={() => setIsSignUp(!isSignUp)}>
+            {isSignUp ? "Já possuo um registro" : "Desejo me alistar no exército"}
           </p>
         </div>
       </div>
