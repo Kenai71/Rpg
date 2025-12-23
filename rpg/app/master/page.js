@@ -8,12 +8,16 @@ export default function MasterPanel() {
   const router = useRouter();
   const [missions, setMissions] = useState([]);
   const [players, setPlayers] = useState([]);
-  const [parties, setParties] = useState([]); // NOVO: Lista de grupos
+  const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   
-  const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
-  const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
-  const [partyForm, setPartyForm] = useState(''); // NOVO: Nome do novo grupo
+  // CORREÇÃO 1: Nomes dos campos ajustados para bater com o banco de dados (description, xp_reward, gold_reward)
+  const [form, setForm] = useState({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
+  
+  // CORREÇÃO 2: Nomes dos campos ajustados para a loja (item_name, description)
+  const [shopForm, setShopForm] = useState({ seller: '', item_name: '', price: 0, quantity: 1, description: '' });
+  
+  const [partyForm, setPartyForm] = useState('');
   
   const [goldMod, setGoldMod] = useState({});
   const [xpMod, setXpMod] = useState({});
@@ -33,7 +37,7 @@ export default function MasterPanel() {
   async function fetchData() {
     const { data: m } = await supabase.from('missions').select('*').order('created_at', { ascending: false });
     const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player').order('username', { ascending: true });
-    const { data: g } = await supabase.from('parties').select('*').order('name', { ascending: true }); // NOVO
+    const { data: g } = await supabase.from('parties').select('*').order('name', { ascending: true });
     
     const { data: r } = await supabase
       .from('item_requests')
@@ -51,7 +55,7 @@ export default function MasterPanel() {
     router.push('/login');
   };
 
-  // --- GESTÃO DE GRUPOS (NOVO) ---
+  // --- GESTÃO DE GRUPOS ---
   async function createParty() {
     if (!partyForm.trim()) return alert("Nome do grupo necessário");
     await supabase.from('parties').insert([{ name: partyForm }]);
@@ -60,11 +64,8 @@ export default function MasterPanel() {
   }
 
   async function assignToParty(playerId, partyId) {
-    // Se partyId for vazio (string vazia), seta null no banco (sair do grupo)
     const pid = partyId === "" ? null : partyId;
     await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId);
-    
-    // Se saiu do grupo, verifica se era lider e remove liderança se necessário (opcional, mas bom pra limpeza)
     fetchData();
   }
 
@@ -73,25 +74,21 @@ export default function MasterPanel() {
     fetchData();
   }
 
-  // --- ATUALIZAÇÃO DE MISSÃO (LÓGICA DE GRUPO AQUI) ---
+  // --- ATUALIZAÇÃO DE MISSÃO ---
   async function updateMission(id, status, playerId, xpReward, goldReward) {
     await supabase.from('missions').update({ status }).eq('id', id);
 
     if (status === 'completed' && playerId) {
-      // 1. Verificar se o jogador que completou está em um grupo
       const player = players.find(p => p.id === playerId);
       
       if (player && player.party_id) {
-        // --- LÓGICA DE GRUPO ---
-        // Pega todos os membros do grupo
         const members = players.filter(p => p.party_id === player.party_id);
         const memberCount = members.length;
 
         if (memberCount > 0) {
-          const goldSplit = Math.floor(Number(goldReward) / memberCount); // Ouro dividido
-          const xpFull = Number(xpReward); // XP igual para todos
+          const goldSplit = Math.floor(Number(goldReward) / memberCount); 
+          const xpFull = Number(xpReward); 
 
-          // Atualiza cada membro
           for (const member of members) {
             await supabase.from('profiles').update({
               xp: (member.xp || 0) + xpFull,
@@ -101,7 +98,6 @@ export default function MasterPanel() {
           alert(`Missão de Grupo Completada!\nXP para cada: ${xpFull}\nOuro para cada: ${goldSplit} (Total: ${goldReward})`);
         }
       } else {
-        // --- LÓGICA SOLO (PADRÃO) ---
         const p = players.find(x => x.id === playerId);
         await supabase.from('profiles').update({ 
           xp: (p.xp || 0) + Number(xpReward), 
@@ -111,10 +107,6 @@ export default function MasterPanel() {
     }
     fetchData();
   }
-
-  // ... (Resto das funções: handleRequest, createMission, addItem, modifyGold, modifyXp, modifyLevel, updateRank, inventory...)
-  // MANTIDAS IGUAIS AO CÓDIGO ANTERIOR, APENAS OMITIDAS AQUI PARA ECONOMIZAR ESPAÇO. 
-  // VOCÊ DEVE MANTER ELAS NO ARQUIVO FINAL.
   
   async function handleRequest(request, approved) {
     if (approved) {
@@ -137,16 +129,19 @@ export default function MasterPanel() {
 
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
+    // CORREÇÃO: Os campos já estão corretos no state form (description, xp_reward, gold_reward)
     await supabase.from('missions').insert([{ ...form, status: 'open' }]);
-    setForm({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
+    setForm({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
     fetchData();
   }
 
   async function addItem() {
-    if (!shopForm.name) return;
+    if (!shopForm.item_name) return alert("Nome do item necessário!");
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
+    
+    // CORREÇÃO: Insere item com as chaves corretas (item_name, description, etc)
     await supabase.from('shop_items').insert([{ ...shopForm }]);
-    setShopForm({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
+    setShopForm({ seller: '', item_name: '', price: 0, quantity: 1, description: '' });
     fetchData();
   }
 
@@ -230,7 +225,7 @@ export default function MasterPanel() {
 
   return (
     <div className={styles.container}>
-      {/* Modal e Header (Mantidos) */}
+      {/* Modal e Header */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
@@ -282,17 +277,25 @@ export default function MasterPanel() {
         {/* NOVA MISSÃO */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>📜 Nova Missão</h2>
-          <div className={styles.inputGroup}><label className={styles.label}>Título</label><input className={styles.input} placeholder="Título da Missão" value={form.title} onChange={e => setForm({...form, title: e.target.value})} /></div>
-          <div className={styles.inputGroup}><label className={styles.label}>Descrição</label><textarea className={styles.input} placeholder="Detalhes..." value={form.desc} onChange={e => setForm({...form, desc: e.target.value})} rows={3} /></div>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Título</label>
+            <input className={styles.input} placeholder="Título da Missão" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+          </div>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Descrição</label>
+            {/* CORREÇÃO: Usando form.description */}
+            <textarea className={styles.input} placeholder="Detalhes..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} rows={3} />
+          </div>
           <div className={styles.row}>
-            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#60a5fa'}}>XP</label><input className={styles.input} type="number" value={form.xp} onChange={e => setForm({...form, xp: e.target.value})} /></div>
-            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#fbbf24'}}>Ouro</label><input className={styles.input} type="number" value={form.gold} onChange={e => setForm({...form, gold: e.target.value})} /></div>
+            {/* CORREÇÃO: Usando form.xp_reward e form.gold_reward */}
+            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#60a5fa'}}>XP</label><input className={styles.input} type="number" value={form.xp_reward} onChange={e => setForm({...form, xp_reward: e.target.value})} /></div>
+            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#fbbf24'}}>Ouro</label><input className={styles.input} type="number" value={form.gold_reward} onChange={e => setForm({...form, gold_reward: e.target.value})} /></div>
             <div className={styles.inputGroup}><label className={styles.label} style={{color:'#a8a29e'}}>Rank</label><select className={styles.input} value={form.rank} onChange={e => setForm({...form, rank: e.target.value})}>{RANKS.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
           </div>
           <button onClick={createMission} className={styles.btnPrimary}>Publicar</button>
         </section>
 
-        {/* JOGADORES (ATUALIZADO COM GRUPOS) */}
+        {/* JOGADORES */}
         <section className={styles.card}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', borderBottom:'1px solid #444', paddingBottom:'10px'}}>
              <h2 className={styles.cardTitle} style={{border:'none', padding:0, margin:0}}>👥 Jogadores</h2>
@@ -312,7 +315,6 @@ export default function MasterPanel() {
                   <div className={styles.playerHeader}>
                     <div style={{display:'flex', flexDirection:'column'}}>
                       <span style={{color:'#fff'}}>{p.username} {isLeader && '👑'}</span>
-                      {/* Seletor de Grupo */}
                       <div style={{marginTop:'5px', display:'flex', alignItems:'center', gap:'5px'}}>
                         <select 
                           className="rpg-input" 
@@ -344,11 +346,23 @@ export default function MasterPanel() {
           </div>
         </section>
 
-        {/* ESTOQUE, SOLICITAÇÕES, CONTRATOS (MANTIDOS) */}
+        {/* ESTOQUE DA LOJA */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
-          <div className={styles.inputGroup}><label className={styles.label}>Vendedor</label><input className={styles.input} placeholder="Nome do Vendedor" value={shopForm.seller} onChange={e => setShopForm({...shopForm, seller: e.target.value})} /></div>
-          <div className={styles.inputGroup}><label className={styles.label}>Item</label><input className={styles.input} placeholder="Nome do Item" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} /></div>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Vendedor</label>
+            <input className={styles.input} placeholder="Nome do Vendedor" value={shopForm.seller} onChange={e => setShopForm({...shopForm, seller: e.target.value})} />
+          </div>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Item</label>
+            {/* CORREÇÃO: Usando shopForm.item_name */}
+            <input className={styles.input} placeholder="Nome do Item" value={shopForm.item_name} onChange={e => setShopForm({...shopForm, item_name: e.target.value})} />
+          </div>
+          {/* ADICIONADO: Campo de Descrição do Item que faltava */}
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Descrição</label>
+            <textarea className={styles.input} placeholder="Efeitos do item..." rows={2} value={shopForm.description} onChange={e => setShopForm({...shopForm, description: e.target.value})} />
+          </div>
           <div className={styles.row}>
              <div className={styles.inputGroup}><label className={styles.label}>Valor (Ouro)</label><input className={styles.input} type="number" min="1" value={shopForm.price} onChange={e => setShopForm({...shopForm, price: e.target.value})} /></div>
              <div className={styles.inputGroup}><label className={styles.label}>Qtd</label><input className={styles.input} type="number" min="1" value={shopForm.quantity} onChange={e => setShopForm({...shopForm, quantity: e.target.value})} /></div>
@@ -356,6 +370,7 @@ export default function MasterPanel() {
           <button onClick={addItem} className={styles.btnPrimary} style={{marginTop:'auto'}}>Estocar</button>
         </section>
 
+        {/* SOLICITAÇÕES */}
         <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
           <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
           <div className={styles.scrollableListSmall}>
@@ -372,6 +387,7 @@ export default function MasterPanel() {
           </div>
         </section>
 
+        {/* CONTRATOS ATIVOS */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚔️ Contratos Ativos</h2>
           <div className={styles.scrollableListSmall}>
@@ -380,6 +396,7 @@ export default function MasterPanel() {
               <div key={m.id} className={styles.requestItem} style={{borderLeftColor:'#fbbf24'}}>
                 <div><strong style={{color:'#fff'}}>{m.title}</strong><span style={{fontSize:'0.8rem', color:'#aaa'}}>Herói: {players.find(p => p.id === m.assigned_to)?.username}</span></div>
                 <div style={{display:'flex', gap:'5px'}}>
+                  {/* Usa xp_reward e gold_reward do banco */}
                   <button onClick={() => updateMission(m.id, 'completed', m.assigned_to, m.xp_reward, m.gold_reward)} className={styles.btnApprove} title="Completar">✓</button>
                   <button onClick={() => updateMission(m.id, 'failed', m.assigned_to, 0, 0)} className={styles.btnReject} title="Falhar">✕</button>
                 </div>
