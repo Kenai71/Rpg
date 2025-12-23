@@ -1,5 +1,5 @@
 "use client"
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './login.module.css';
@@ -7,33 +7,47 @@ import styles from './login.module.css';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState(''); // NOVO: Estado para confirmação
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
-  // O estado 'role' foi removido pois agora é fixo
   const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(true); // Para evitar piscar o form
   const router = useRouter();
 
+  // --- NOVO: Verifica se já está logado ao abrir essa página ---
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        // Se já tem sessão, busca o perfil para saber para onde mandar
+        const { data: prof } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+        if (prof) {
+          router.push(prof.role === 'master' ? '/master' : '/player');
+        }
+      } else {
+        setLoading(false); // Libera o form se não tiver usuário
+      }
+    };
+    checkUser();
+  }, [router]);
+
   const handleAuth = async (e) => {
-    if (e) e.preventDefault(); // Evita recarregar a página ao dar Enter
+    if (e) e.preventDefault();
 
     try {
       if (isSignUp) {
-        // --- VALIDAÇÃO DE SENHA ---
         if (password !== confirmPassword) {
           return alert("As senhas não coincidem!");
         }
 
-        // --- CADASTRO ---
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         
         if (data.user) {
-          // Cria o perfil sempre como 'player'
           const { error: profileError } = await supabase.from('profiles').insert([
             { 
               id: data.user.id, 
               username, 
-              role: 'player', // Fixo
+              role: 'player',
               gold: 100, 
               xp: 0, 
               level: 1, 
@@ -48,7 +62,6 @@ export default function LoginPage() {
           setIsSignUp(false);
         }
       } else {
-        // --- LOGIN ---
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         
@@ -67,6 +80,9 @@ export default function LoginPage() {
       alert("Erro na autenticação: " + error.message);
     }
   };
+
+  // Enquanto verifica o login, mostra um carregando simples ou nada
+  if (loading) return null; 
 
   return (
     <div className={styles.container}>
@@ -104,7 +120,6 @@ export default function LoginPage() {
             required 
           />
 
-          {/* Campo de Confirmar Senha (Aparece apenas no cadastro) */}
           {isSignUp && (
             <input 
               className={styles.input} 
