@@ -4,6 +4,17 @@ import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './master.module.css';
 
+// Definição das cores por Rank
+const RANK_COLORS = {
+  'F': '#9ca3af', // Cinza
+  'E': '#4ade80', // Verde
+  'D': '#60a5fa', // Azul
+  'C': '#a78bfa', // Roxo
+  'B': '#f87171', // Vermelho
+  'A': '#fbbf24', // Dourado
+  'S': '#22d3ee'  // Ciano Neon
+};
+
 export default function MasterPanel() {
   const router = useRouter();
   const [missions, setMissions] = useState([]);
@@ -11,12 +22,8 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   
-  // Estado do formulário (mantendo nomes curtos internos)
-  const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
-  
-  // REMOVIDO: seller (pois o banco não tem essa coluna)
-  const [shopForm, setShopForm] = useState({ name: '', price: 0, quantity: 1, desc: '' });
-  
+  const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
+  const [shopForm, setShopForm] = useState({ name: '', price: '', quantity: 1, desc: '' });
   const [partyForm, setPartyForm] = useState('');
   
   const [goldMod, setGoldMod] = useState({});
@@ -109,6 +116,14 @@ export default function MasterPanel() {
     }
     fetchData();
   }
+
+  // NOVA FUNÇÃO: Deletar missão aberta (caso o mestre queira cancelar)
+  async function deleteMission(id) {
+    if (!confirm("Tem certeza que deseja apagar esta missão do mural?")) return;
+    const { error } = await supabase.from('missions').delete().eq('id', id);
+    if (error) alert("Erro ao deletar: " + error.message);
+    fetchData();
+  }
   
   async function handleRequest(request, approved) {
     if (approved) {
@@ -132,13 +147,12 @@ export default function MasterPanel() {
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
     
-    // Mapeamento CORRETO para as colunas do banco de dados
     const payload = {
       title: form.title,
-      description: form.desc,    // DB usa 'description'
+      description: form.desc,
       rank: form.rank,
-      xp_reward: form.xp,        // DB usa 'xp_reward'
-      gold_reward: form.gold,    // DB usa 'gold_reward'
+      xp_reward: Number(form.xp),
+      gold_reward: Number(form.gold),
       status: 'open'
     };
 
@@ -149,7 +163,7 @@ export default function MasterPanel() {
       return alert("Erro ao criar missão: " + error.message);
     }
 
-    setForm({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
+    setForm({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
     fetchData();
   }
 
@@ -157,12 +171,11 @@ export default function MasterPanel() {
     if (!shopForm.name) return alert("Nome do item necessário!");
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     
-    // Mapeamento CORRETO para as colunas do banco (SEM SELLER)
     const payload = {
-      item_name: shopForm.name,  // DB usa 'item_name'
-      price: shopForm.price,
+      item_name: shopForm.name,
+      price: Number(shopForm.price),
       quantity: shopForm.quantity,
-      description: shopForm.desc // DB usa 'description'
+      description: shopForm.desc
     };
 
     const { error } = await supabase.from('shop_items').insert([payload]);
@@ -172,7 +185,7 @@ export default function MasterPanel() {
       return alert("Erro ao adicionar item: " + error.message);
     }
 
-    setShopForm({ name: '', price: 0, quantity: 1, desc: '' });
+    setShopForm({ name: '', price: '', quantity: 1, desc: '' });
     fetchData();
   }
 
@@ -256,7 +269,7 @@ export default function MasterPanel() {
 
   return (
     <div className={styles.container}>
-      {/* Modal e Header */}
+      {/* Modal e Header (sem alterações significativas) */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
@@ -324,6 +337,28 @@ export default function MasterPanel() {
           <button onClick={createMission} className={styles.btnPrimary}>Publicar</button>
         </section>
 
+        {/* NOVA SEÇÃO: MURAL DE MISSÕES (ABERTAS) */}
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>📌 Mural (Abertas)</h2>
+          <div className={styles.scrollableListSmall}>
+            {missions.filter(m => m.status === 'open').length === 0 && <p style={{color:'#666', fontStyle:'italic', textAlign:'center'}}>Nenhuma missão publicada.</p>}
+            {missions.filter(m => m.status === 'open').map(m => (
+              <div key={m.id} className={styles.requestItem} style={{borderLeftColor: RANK_COLORS[m.rank] || '#ccc'}}>
+                <div>
+                  <strong style={{color:'#fff'}}>{m.title}</strong>
+                  <div style={{fontSize:'0.75rem', display:'flex', gap:'5px', marginTop:'2px'}}>
+                    <span style={{color: RANK_COLORS[m.rank] || '#ccc', fontWeight:'bold'}}>RANK {m.rank}</span>
+                    <span style={{color:'#aaa'}}>XP: {m.xp_reward} / Ouro: {m.gold_reward}</span>
+                  </div>
+                </div>
+                <div style={{display:'flex', gap:'5px'}}>
+                  <button onClick={() => deleteMission(m.id)} className={styles.btnReject} title="Apagar Missão" style={{padding:'4px 8px'}}>🗑️</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* JOGADORES */}
         <section className={styles.card}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', borderBottom:'1px solid #444', paddingBottom:'10px'}}>
@@ -338,6 +373,7 @@ export default function MasterPanel() {
             {players.map(p => {
               const currentParty = parties.find(party => party.id === p.party_id);
               const isLeader = currentParty?.leader_id === p.id;
+              const rankColor = RANK_COLORS[p.rank || 'F'];
 
               return (
                 <div key={p.id} className={styles.playerItem}>
@@ -362,7 +398,21 @@ export default function MasterPanel() {
 
                     <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
                       <button onClick={() => openInventory(p)} title="Mochila" style={{background:'none', border:'none', cursor:'pointer', fontSize:'1.2rem'}}>🎒</button>
-                      <select value={p.rank || 'F'} onChange={(e) => updateRank(p.id, e.target.value)} style={{background:'#000', color:'#fbbf24', border:'1px solid #444', borderRadius:'4px', fontSize:'0.7rem', padding:'2px'}}>{RANKS.map(r => <option key={r} value={r}>{r}</option>)}</select>
+                      <select 
+                        value={p.rank || 'F'} 
+                        onChange={(e) => updateRank(p.id, e.target.value)} 
+                        style={{
+                          background:'#000', 
+                          color: rankColor, 
+                          border: `1px solid ${rankColor}`, 
+                          borderRadius:'4px', 
+                          fontSize:'0.7rem', 
+                          padding:'2px',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        {RANKS.map(r => <option key={r} value={r} style={{color: RANK_COLORS[r]}}>{r}</option>)}
+                      </select>
                     </div>
                   </div>
                   
@@ -378,6 +428,10 @@ export default function MasterPanel() {
         {/* ESTOQUE DA LOJA */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Vendedor</label>
+            <input className={styles.input} placeholder="Nome do Vendedor" value={shopForm.seller} onChange={e => setShopForm({...shopForm, seller: e.target.value})} />
+          </div>
           <div className={styles.inputGroup}>
             <label className={styles.label}>Item</label>
             <input className={styles.input} placeholder="Nome do Item" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} />

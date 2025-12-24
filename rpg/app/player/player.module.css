@@ -107,6 +107,27 @@
 
 .emptyMsg { text-align: center; color: #666; font-style: italic; width: 100%; grid-column: 1 / -1; }
 
+/* NOVO: Botões de Aba do Modal */
+.tabBtn {
+  background: transparent;
+  border: 1px solid #444;
+  padding: 8px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-family: var(--font-title);
+  font-weight: bold;
+  transition: all 0.2s;
+  flex: 1;
+}
+.tabBtn:hover { border-color: var(--text-gold); }
+.btnPrimary {
+  background: linear-gradient(180deg, #b45309 0%, #78350f 100%);
+  border: 1px solid #d97706; color: white; padding: 12px;
+  font-weight: bold; font-family: var(--font-title); text-transform: uppercase;
+  border-radius: 6px; cursor: pointer; margin-top: 10px; letter-spacing: 1px;
+}
+.btnPrimary:hover { filter: brightness(1.2); }
+
 /* Inventário */
 .invWrapper { 
   background: rgba(10,10,10,0.8); 
