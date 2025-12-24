@@ -11,7 +11,7 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   
-  // Voltamos aos nomes originais que provavelmente são os do banco
+  // Estado do formulário (mantendo nomes curtos internos para facilitar)
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
   const [partyForm, setPartyForm] = useState('');
@@ -129,13 +129,13 @@ export default function MasterPanel() {
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
     
-    // Tenta inserir usando nomes de colunas mais prováveis
+    // CORREÇÃO CRÍTICA: Mapeia os campos do formulário para os nomes EXATOS do banco de dados
     const payload = {
       title: form.title,
-      desc: form.desc,          // Coluna 'desc'
+      description: form.desc,    // DB usa 'description', form usa 'desc'
       rank: form.rank,
-      xp_reward: form.xp,       // Mapeando form.xp -> xp_reward
-      gold_reward: form.gold,   // Mapeando form.gold -> gold_reward
+      xp_reward: form.xp,        // DB usa 'xp_reward', form usa 'xp'
+      gold_reward: form.gold,    // DB usa 'gold_reward', form usa 'gold'
       status: 'open'
     };
 
@@ -143,7 +143,7 @@ export default function MasterPanel() {
     
     if (error) {
       console.error(error);
-      return alert("Erro ao criar missão: " + error.message + "\nVerifique o console para detalhes.");
+      return alert("Erro ao criar missão: " + error.message);
     }
 
     setForm({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
@@ -154,8 +154,16 @@ export default function MasterPanel() {
     if (!shopForm.name) return alert("Nome do item necessário!");
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     
-    // Insere usando 'name' e 'desc'
-    const { error } = await supabase.from('shop_items').insert([{ ...shopForm }]);
+    // CORREÇÃO CRÍTICA: Mapeia para 'item_name' e 'description'
+    const payload = {
+      seller: shopForm.seller,
+      item_name: shopForm.name,  // DB usa 'item_name', form usa 'name'
+      price: shopForm.price,
+      quantity: shopForm.quantity,
+      description: shopForm.desc // DB usa 'description', form usa 'desc'
+    };
+
+    const { error } = await supabase.from('shop_items').insert([payload]);
     
     if (error) {
       console.error(error);
