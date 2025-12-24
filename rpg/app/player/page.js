@@ -9,7 +9,6 @@ const RANK_COLORS = {
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
 
-// Tabela de XP (Mesma do Mestre)
 const XP_TABLE = [
   { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
   { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
@@ -24,10 +23,8 @@ export default function PlayerPanel() {
   const [missions, setMissions] = useState([]);
   const [shop, setShop] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]);
-  
   const [myRequests, setMyRequests] = useState([]); 
   const [incomingTrades, setIncomingTrades] = useState([]); 
-  
   const [myParty, setMyParty] = useState(null); 
   const [tab, setTab] = useState('missions');
 
@@ -42,17 +39,15 @@ export default function PlayerPanel() {
   const [transferItemIdx, setTransferItemIdx] = useState(0);
   const [transferItemQty, setTransferItemQty] = useState(1);
 
-  // NOVO: Estado para Level Up
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [leveledUpTo, setLeveledUpTo] = useState(1);
-  // Ref para guardar o nível anterior e não perder no re-render
   const prevLevelRef = useRef(1);
 
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000); // Polling mais rápido (5s) para ver o level up
+    const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -61,14 +56,10 @@ export default function PlayerPanel() {
     if (user) {
       const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       
-      // Lógica de Detecção de Level Up
       if (prof) {
-        // Se é a primeira carga, apenas sincroniza
         if (prevLevelRef.current === 1 && prof.level > 1 && !profile) {
            prevLevelRef.current = prof.level;
-        }
-        // Se o nível novo é maior que o salvo na ref
-        else if (prof.level > prevLevelRef.current) {
+        } else if (prof.level > prevLevelRef.current) {
           setLeveledUpTo(prof.level);
           setShowLevelUp(true);
           prevLevelRef.current = prof.level;
@@ -230,40 +221,25 @@ export default function PlayerPanel() {
 
   const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
 
-  // --- LÓGICA DA BARRA DE XP ---
   const getXpProgress = () => {
     if (!profile) return { percent: 0, text: '0/0' };
-    
     const currentLevel = profile.level || 1;
-    // Se estiver no nível máximo (20 ou mais), barra cheia
     if (currentLevel >= 20) return { percent: 100, text: 'Nível Máximo' };
-
     const currentLevelData = XP_TABLE.find(l => l.lvl === currentLevel) || { xp: 0 };
     const nextLevelData = XP_TABLE.find(l => l.lvl === currentLevel + 1) || { xp: 999999 };
-
     const currentXpFloor = currentLevelData.xp;
     const nextXpCeiling = nextLevelData.xp;
-    
     const xpInLevel = profile.xp - currentXpFloor;
     const xpNeededForLevel = nextXpCeiling - currentXpFloor;
-    
     const percent = Math.min(100, Math.max(0, (xpInLevel / xpNeededForLevel) * 100));
-    
-    // Cálculo do que falta (total necessário para o próximo nível - total atual)
     const needed = nextXpCeiling - profile.xp;
-    
-    return { 
-      percent, 
-      text: `${profile.xp} / ${nextXpCeiling} (Faltam ${needed})` 
-    };
+    return { percent, text: `${profile.xp} / ${nextXpCeiling} (Faltam ${needed})` };
   };
 
   const xpData = getXpProgress();
 
   return (
     <div className={styles.container}>
-      
-      {/* MODAL DE LEVEL UP (NOVO) */}
       {showLevelUp && (
         <div className="modal-overlay" style={{background:'rgba(0,0,0,0.85)'}} onClick={() => setShowLevelUp(false)}>
           <div className={styles.levelUpCard} onClick={e => e.stopPropagation()}>
@@ -275,7 +251,6 @@ export default function PlayerPanel() {
         </div>
       )}
 
-      {/* MODAL TRANSFER */}
       {transferModalOpen && transferTarget && (
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -284,7 +259,6 @@ export default function PlayerPanel() {
               <button onClick={() => setTransferType('gold')} className={styles.tabBtn} style={{borderColor: transferType === 'gold' ? '#fbbf24' : '#444', color: transferType === 'gold' ? '#fbbf24' : '#888'}}>💰 Ouro</button>
               <button onClick={() => setTransferType('item')} className={styles.tabBtn} style={{borderColor: transferType === 'item' ? '#fbbf24' : '#444', color: transferType === 'item' ? '#fbbf24' : '#888'}}>🎒 Item</button>
             </div>
-
             {transferType === 'gold' ? (
               <div style={{marginBottom:'20px'}}>
                 <label style={{display:'block', color:'#888', fontSize:'0.8rem'}}>Quantidade (Saldo: {profile.gold})</label>
@@ -298,7 +272,7 @@ export default function PlayerPanel() {
                   <select className="rpg-input" value={transferItemIdx} onChange={e => {setTransferItemIdx(e.target.value); setTransferItemQty(1);}}>
                     {profile.inventory.map((item, idx) => <option key={idx} value={idx}>{item.name} (x{item.qty})</option>)}
                   </select>
-                  <label style={{display:'block', color:'#888', fontSize:'0.8rem', marginTop:'10px'}}>Quantidade a enviar</label>
+                  <label style={{display:'block', color:'#888', fontSize:'0.8rem', marginTop:'10px'}}>Quantidade</label>
                   <input type="number" className="rpg-input" value={transferItemQty} onChange={e => setTransferItemQty(e.target.value)} min="1" max={profile.inventory[transferItemIdx]?.qty || 1} />
                   </>
                 )}
@@ -309,7 +283,6 @@ export default function PlayerPanel() {
         </div>
       )}
 
-      {/* MODAL REQUEST */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -338,14 +311,11 @@ export default function PlayerPanel() {
               <div className={styles.stats}>
                 <div className={styles.statItem}><span className={`${styles.statVal} ${styles.gold}`}>{profile.gold}</span><span className={styles.statLabel}>Ouro</span></div>
               </div>
-              
-              {/* BARRA DE XP */}
               <div className={styles.xpBarContainer} title={xpData.text}>
                 <div className={styles.xpBarFill} style={{width: `${xpData.percent}%`}}></div>
                 <span className={styles.xpTextOverlay}>XP {xpData.text}</span>
               </div>
             </div>
-
             <div className={styles.actions}><button onClick={loadData} className={styles.btnHeader}>↻</button><button onClick={handleLogout} className={styles.btnHeader} style={{color:'#fca5a5'}}>Sair</button></div>
           </div>
         </div>
@@ -388,17 +358,32 @@ export default function PlayerPanel() {
              {allPlayers.map(p => {
                const isPartyMember = myParty && p.party_id === myParty.id;
                const isMe = p.id === profile.id;
-               const color = getRankColor(p.rank);
+               
+               // Verifica se é líder (do meu grupo)
+               const isLeader = myParty && p.id === myParty.leader_id;
+               
+               // Lógica de Cor da Borda: Se for do grupo, usa VERDE, senão usa a cor do Rank
+               const borderColor = isPartyMember ? '#22c55e' : getRankColor(p.rank);
+               const borderWidth = isPartyMember ? '2px' : '1px';
+               const boxShadow = isPartyMember ? '0 0 15px rgba(34, 197, 94, 0.3)' : `0 0 10px ${getRankColor(p.rank)}20`;
 
                return (
-                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: `1px solid ${color}`, boxShadow:`0 0 10px ${color}20`}}>
+                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: `${borderWidth} solid ${borderColor}`, boxShadow: boxShadow}}>
                    <div style={{fontSize:'2.5rem', marginBottom:'10px'}}>🛡️</div>
-                   <h3 style={{color:'white', margin:0}}>{p.username}</h3>
+                   
+                   {/* Nome com Coroa se for Líder */}
+                   <h3 style={{color:'white', margin:0, display:'flex', alignItems:'center', gap:'5px'}}>
+                     {p.username} 
+                     {isLeader && <span title="Líder do Grupo">👑</span>}
+                   </h3>
+
                    <div style={{display:'flex', gap:'5px', justifyContent:'center', marginTop:'5px'}}>
-                     <span style={{color: color, fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px', border:`1px solid ${color}`}}>RANK {p.rank}</span>
+                     <span style={{color: getRankColor(p.rank), fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px', border:`1px solid ${getRankColor(p.rank)}`}}>RANK {p.rank}</span>
                      <span style={{color:'#eab308', fontSize:'0.7rem', fontWeight:'bold', background:'#111', padding:'2px 6px', borderRadius:'4px'}}>LVL {p.level || 1}</span>
                    </div>
+                   
                    {isPartyMember && <span style={{fontSize:'0.7rem', color:'#86efac', marginTop:'5px'}}>Seu Grupo</span>}
+                   
                    {isPartyMember && !isMe && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px', background:'#b45309', fontSize:'0.8rem', padding:'8px'}}>🎁 Enviar Recurso</button>}
                  </div>
                );
@@ -419,7 +404,6 @@ export default function PlayerPanel() {
                   )
                 })}
              </div>
-             
              {incomingTrades.length > 0 && (
                <div style={{marginTop:'30px', background:'#111', padding:'15px', borderRadius:'8px', border:'1px solid #b45309'}}>
                  <h4 style={{color:'#fbbf24', fontSize:'0.9rem'}}>🎁 Entregas ({incomingTrades.length})</h4>
