@@ -30,8 +30,8 @@ export default function MasterPanel() {
   
   const [goldMod, setGoldMod] = useState({});
   const [xpMod, setXpMod] = useState({});
-  const [levelMod, setLevelMod] = useState({});
-
+  
+  // Controle de inventário
   const [selectedPlayerForInv, setSelectedPlayerForInv] = useState(null);
   const [masterItemName, setMasterItemName] = useState('');
   const [masterItemQty, setMasterItemQty] = useState(1);
@@ -57,6 +57,7 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
+  // Calcula o nível com base no XP total
   function calculateLevel(totalXp) {
     let newLevel = 1;
     for (let i = 0; i < XP_TABLE.length; i++) {
@@ -69,12 +70,17 @@ export default function MasterPanel() {
     return newLevel;
   }
 
+  // Atualiza XP e recalcula nível (para cima ou para baixo)
   async function updatePlayerXpAndLevel(playerId, amountXP, amountGold = 0) {
     const player = players.find(p => p.id === playerId);
     if (!player) return;
 
+    // Calcula novo XP (não deixa ser negativo)
     const newXp = Math.max(0, (player.xp || 0) + Number(amountXP));
+    // Calcula novo Ouro (não deixa ser negativo)
     const newGold = Math.max(0, (player.gold || 0) + Number(amountGold));
+    
+    // Recalcula o nível baseado no novo XP (se diminuir XP, o nível desce automaticamente)
     const newLevel = calculateLevel(newXp);
 
     await supabase.from('profiles').update({ 
@@ -82,8 +88,11 @@ export default function MasterPanel() {
       gold: newGold,
       level: newLevel 
     }).eq('id', playerId);
+    
+    fetchData();
   }
 
+  // --- Funções de Grupo e Missão ---
   async function createParty() {
     if (!partyForm.trim()) return alert("Nome do grupo necessário");
     const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
@@ -114,11 +123,10 @@ export default function MasterPanel() {
         if (memberCount > 0) {
           const goldSplit = Math.floor(Number(goldReward) / memberCount); 
           const xpFull = Number(xpReward); 
-          
           for (const member of members) {
             await updatePlayerXpAndLevel(member.id, xpFull, goldSplit);
           }
-          alert(`Grupo recompensado! XP: ${xpFull}, Ouro: ${goldSplit} cada.`);
+          alert(`Grupo recompensado!`);
         }
       } else {
         await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
@@ -164,72 +172,75 @@ export default function MasterPanel() {
 
   async function addItem() {
     if (!shopForm.name) return alert("Nome necessário!");
-    if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     const payload = { item_name: shopForm.name, price: Number(shopForm.price), quantity: shopForm.quantity, description: shopForm.desc };
     const { error } = await supabase.from('shop_items').insert([payload]);
     if (error) return alert("Erro: " + error.message);
-    setShopForm({ name: '', price: '', quantity: 1, desc: '' });
+    setShopForm({ seller: '', name: '', price: '', quantity: 1, desc: '' });
     fetchData();
   }
 
+  // --- Modificadores Manuais ---
   async function modifyGold(playerId, amount) { 
     if (!amount) return; 
     await updatePlayerXpAndLevel(playerId, 0, amount);
     setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
-    fetchData(); 
   }
 
   async function modifyXp(playerId, amount) { 
     if (!amount) return; 
     await updatePlayerXpAndLevel(playerId, amount, 0);
     setXpMod(prev => ({ ...prev, [playerId]: '' })); 
+  }
+
+  async function updateRank(playerId, newRank) { 
+    await supabase.from('profiles').update({ rank: newRank }).eq('id', playerId); 
     fetchData(); 
   }
 
-  async function modifyLevel(playerId, amount) { if (!amount) return; const p = players.find(x => x.id === playerId); const newLevel = (p.level || 1) + Number(amount); if (newLevel < 1) return; await supabase.from('profiles').update({ level: newLevel }).eq('id', playerId); setLevelMod(prev => ({ ...prev, [playerId]: '' })); fetchData(); }
-  async function updateRank(playerId, newRank) { await supabase.from('profiles').update({ rank: newRank }).eq('id', playerId); fetchData(); }
-
+  // --- Inventário Mestre ---
   function openInventory(player) { setSelectedPlayerForInv(player); setSlotAddQty(1); setMasterItemQty(1); setMasterItemName(''); }
-  async function increaseSlots() { if (!selectedPlayerForInv) return; const qtd = Number(slotAddQty); if (qtd <= 0) return; await supabase.from('profiles').update({ slots: (selectedPlayerForInv.slots||10) + qtd }).eq('id', selectedPlayerForInv.id); const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); setSelectedPlayerForInv(data); fetchData(); }
+  
+  async function increaseSlots() { 
+    if (!selectedPlayerForInv) return; 
+    const qtd = Number(slotAddQty); 
+    if (qtd <= 0) return; 
+    await supabase.from('profiles').update({ slots: (selectedPlayerForInv.slots||10) + qtd }).eq('id', selectedPlayerForInv.id); 
+    const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); 
+    setSelectedPlayerForInv(data); fetchData(); 
+  }
+  
   async function masterAddItemToPlayer() {
     if (!masterItemName.trim() || !selectedPlayerForInv) return;
-    const qtd = Number(masterItemQty);
-    if (qtd <= 0) return;
+    const qtd = Number(masterItemQty); if (qtd <= 0) return;
     const currentInv = selectedPlayerForInv.inventory || [];
     const idx = currentInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
     let newInv = [...currentInv];
     if (idx >= 0) newInv[idx].qty += qtd; else { if (currentInv.length >= (selectedPlayerForInv.slots||10)) return alert("Mochila cheia!"); newInv.push({ name: masterItemName, qty: qtd }); }
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
-    setMasterItemName(''); setMasterItemQty(1);
-    const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); setSelectedPlayerForInv(data); fetchData();
+    const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); 
+    setSelectedPlayerForInv(data); setMasterItemName(''); fetchData();
   }
+  
   async function masterRemoveItemFromPlayer(index) {
     if (!selectedPlayerForInv) return;
     const currentInv = selectedPlayerForInv.inventory || [];
     let newInv = [...currentInv];
     if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
-    const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); setSelectedPlayerForInv(data); fetchData();
+    const { data } = await supabase.from('profiles').select('*').eq('id', selectedPlayerForInv.id).single(); 
+    setSelectedPlayerForInv(data); fetchData();
   }
 
   return (
     <div className={styles.container}>
+      {/* MODAL INVENTÁRIO */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
-            <div style={{borderBottom:'1px solid #333', paddingBottom:'15px', marginBottom:'15px'}}>
-              <h2 style={{color:'#fbbf24', margin:'0 0 10px 0'}}>Mochila de {selectedPlayerForInv.username}</h2>
-              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#111', padding:'10px', borderRadius:'6px'}}>
-                <span style={{color:'#888', fontSize:'0.9rem'}}>Capacidade: <strong style={{color:'#fff'}}>{selectedPlayerForInv.slots || 10}</strong> slots</span>
-                <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
-                  <input type="number" min="1" className="rpg-input" style={{width:'60px', padding:'5px', textAlign:'center'}} value={slotAddQty} onChange={e => setSlotAddQty(e.target.value)} />
-                  <button onClick={increaseSlots} style={{background:'#2563eb', color:'white', border:'none', padding:'6px', borderRadius:'4px', cursor:'pointer'}}>+ SLOTS</button>
-                </div>
-              </div>
-            </div>
-            <div style={{display:'flex', gap:'5px', marginBottom:'20px', background:'#1a1a1a', padding:'10px', borderRadius:'6px'}}>
-               <input className="rpg-input" placeholder="Nome do Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} style={{flex:2}} />
-               <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'70px', textAlign:'center'}} />
+            <h2 style={{color:'#fbbf24', margin:'0 0 10px 0'}}>Mochila de {selectedPlayerForInv.username}</h2>
+            <div style={{display:'flex', gap:'5px', marginBottom:'20px'}}>
+               <input className="rpg-input" placeholder="Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} style={{flex:2}} />
+               <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'70px'}} />
                <button onClick={masterAddItemToPlayer} style={{background:'#15803d', color:'#fff', border:'none', padding:'0 15px', borderRadius:'4px', cursor:'pointer'}}>ADD</button>
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(60px, 1fr))', gap:'8px', maxHeight:'300px', overflowY:'auto'}}>
@@ -256,6 +267,8 @@ export default function MasterPanel() {
       </header>
 
       <div className={styles.grid}>
+        
+        {/* COLUNA 1 */}
         <div className={styles.column}>
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>📜 Nova Missão</h2>
@@ -276,16 +289,17 @@ export default function MasterPanel() {
               {missions.filter(m => m.status === 'open').map(m => (
                 <div key={m.id} className={styles.requestItem} style={{borderLeftColor: RANK_COLORS[m.rank]}}>
                   <div><strong style={{color:'#fff'}}>{m.title}</strong><div style={{fontSize:'0.75rem', color:'#aaa'}}>{m.rank} | XP:{m.xp_reward} G:{m.gold_reward}</div></div>
-                  <button onClick={() => deleteMission(m.id)} className={styles.btnReject} title="Apagar">🗑️</button>
+                  <button onClick={() => deleteMission(m.id)} className={styles.btnReject}>🗑️</button>
                 </div>
               ))}
             </div>
           </section>
         </div>
 
+        {/* COLUNA 2 */}
         <div className={styles.column}>
           <section className={styles.card}>
-            <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
+            <h2 className={styles.cardTitle}>⚖️ Estoque</h2>
             <div className={styles.inputGroup}><label className={styles.label}>Item</label><input className={styles.input} placeholder="Nome" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} /></div>
             <div className={styles.inputGroup}><label className={styles.label}>Descrição</label><textarea className={styles.input} placeholder="Efeitos..." rows={2} value={shopForm.desc} onChange={e => setShopForm({...shopForm, desc: e.target.value})} /></div>
             <div className={styles.row}>
@@ -295,13 +309,13 @@ export default function MasterPanel() {
             <button onClick={addItem} className={styles.btnPrimary} style={{marginTop:'auto'}}>Estocar</button>
           </section>
 
-          <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
+          <section className={styles.card}>
             <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
             <div className={styles.scrollableListSmall}>
-              {requests.length === 0 && <p style={{color:'#666', textAlign:'center'}}>Nenhum pedido.</p>}
+              {requests.length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio.</p>}
               {requests.map(req => (
                 <div key={req.id} className={styles.requestItem}>
-                  <div><strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
+                  <div><strong style={{color:'#fff'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
                   <div style={{display:'flex', gap:'5px'}}>
                     <button onClick={() => handleRequest(req, true)} className={styles.btnApprove}>✓</button>
                     <button onClick={() => handleRequest(req, false)} className={styles.btnReject}>✕</button>
@@ -312,19 +326,22 @@ export default function MasterPanel() {
           </section>
         </div>
 
+        {/* COLUNA 3 */}
         <div className={styles.column}>
           <section className={styles.card}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', borderBottom:'1px solid #444', paddingBottom:'10px'}}>
-               <h2 className={styles.cardTitle} style={{border:'none', padding:0, margin:0}}>👥 Jogadores</h2>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid #444', paddingBottom:'10px', marginBottom:'10px'}}>
+               <h2 className={styles.cardTitle} style={{border:'none', margin:0, padding:0}}>👥 Jogadores</h2>
                <div style={{display:'flex', gap:'5px'}}>
-                 <input className="rpg-input" placeholder="Novo Grupo" value={partyForm} onChange={e => setPartyForm(e.target.value)} style={{width:'100px', padding:'4px', fontSize:'0.7rem'}} />
+                 <input className="rpg-input" placeholder="Novo Grupo" value={partyForm} onChange={e => setPartyForm(e.target.value)} style={{width:'80px', padding:'2px', fontSize:'0.7rem'}} />
                  <button onClick={createParty} style={{background:'#3f6212', color:'white', border:'none', padding:'4px', borderRadius:'4px', fontSize:'0.7rem'}}>CRIAR</button>
                </div>
             </div>
             <div className={styles.scrollableList}>
               {players.map(p => {
                 const currentParty = parties.find(party => party.id === p.party_id);
-                const rankColor = RANK_COLORS[p.rank || 'F'];
+                // Define a cor baseada no Rank
+                const rankColor = RANK_COLORS[p.rank] || RANK_COLORS['F'];
+                
                 return (
                   <div key={p.id} className={styles.playerItem}>
                     <div className={styles.playerHeader}>
@@ -336,11 +353,41 @@ export default function MasterPanel() {
                       </div>
                       <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
                         <button onClick={() => openInventory(p)} title="Mochila" style={{background:'none', border:'none', cursor:'pointer', fontSize:'1.2rem'}}>🎒</button>
-                        <select value={p.rank || 'F'} onChange={(e) => updateRank(p.id, e.target.value)} style={{background:'#000', color: rankColor, border: `1px solid ${rankColor}`, borderRadius:'4px', fontSize:'0.7rem', padding:'2px', fontWeight:'bold'}}>{RANKS.map(r => <option key={r} value={r} style={{color: RANK_COLORS[r]}}>{r}</option>)}</select>
+                        {/* SELECT DE RANK COM COR DINÂMICA */}
+                        <select 
+                          value={p.rank || 'F'} 
+                          onChange={(e) => updateRank(p.id, e.target.value)} 
+                          style={{
+                            background: 'transparent', 
+                            color: rankColor, 
+                            border: `1px solid ${rankColor}`, 
+                            borderRadius:'4px', 
+                            fontSize:'0.7rem', 
+                            padding:'2px', 
+                            fontWeight:'bold'
+                          }}
+                        >
+                          {RANKS.map(r => <option key={r} value={r} style={{color: RANK_COLORS[r], background:'#000'}}>{r}</option>)}
+                        </select>
                       </div>
                     </div>
-                    <div className={styles.resourceRow}><span style={{color:'#fbbf24'}}>💰 {p.gold}</span><div style={{display:'flex', gap:'2px'}}><input className={styles.miniInput} onChange={e => setGoldMod({...goldMod, [p.id]: e.target.value})} value={goldMod[p.id] || ''} /><button onClick={() => modifyGold(p.id, goldMod[p.id])} className={styles.miniBtn}>+</button></div></div>
-                    <div className={styles.resourceRow}><span style={{color:'#60a5fa'}}>✨ {p.xp} / Lvl {p.level}</span><div style={{display:'flex', gap:'2px'}}><input className={styles.miniInput} onChange={e => setXpMod({...xpMod, [p.id]: e.target.value})} value={xpMod[p.id] || ''} /><button onClick={() => modifyXp(p.id, xpMod[p.id])} className={styles.miniBtn}>+</button></div></div>
+                    {/* Linhas de Recursos com Botões + e - */}
+                    <div className={styles.resourceRow}>
+                      <span style={{color:'#fbbf24'}}>💰 {p.gold}</span>
+                      <div style={{display:'flex', gap:'2px'}}>
+                        <input className={styles.miniInput} onChange={e => setGoldMod({...goldMod, [p.id]: e.target.value})} value={goldMod[p.id] || ''} />
+                        <button onClick={() => modifyGold(p.id, goldMod[p.id])} className={styles.miniBtn} style={{color:'#4ade80'}} title="Adicionar">+</button>
+                        <button onClick={() => modifyGold(p.id, -(goldMod[p.id]))} className={styles.miniBtn} style={{color:'#f87171'}} title="Remover">-</button>
+                      </div>
+                    </div>
+                    <div className={styles.resourceRow}>
+                      <span style={{color:'#60a5fa'}}>✨ {p.xp} / Lvl {p.level}</span>
+                      <div style={{display:'flex', gap:'2px'}}>
+                        <input className={styles.miniInput} onChange={e => setXpMod({...xpMod, [p.id]: e.target.value})} value={xpMod[p.id] || ''} />
+                        <button onClick={() => modifyXp(p.id, xpMod[p.id])} className={styles.miniBtn} style={{color:'#4ade80'}} title="Adicionar">+</button>
+                        <button onClick={() => modifyXp(p.id, -(xpMod[p.id]))} className={styles.miniBtn} style={{color:'#f87171'}} title="Remover">-</button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -350,7 +397,7 @@ export default function MasterPanel() {
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>⚔️ Contratos Ativos</h2>
             <div className={styles.scrollableListSmall}>
-              {missions.filter(m => m.status === 'in_progress').length === 0 && <p style={{color:'#666', textAlign:'center'}}>Nenhum ativo.</p>}
+              {missions.filter(m => m.status === 'in_progress').length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio.</p>}
               {missions.filter(m => m.status === 'in_progress').map(m => (
                 <div key={m.id} className={styles.requestItem} style={{borderLeftColor:'#fbbf24'}}>
                   <div><strong style={{color:'#fff'}}>{m.title}</strong><span style={{fontSize:'0.7rem', color:'#aaa', display:'block'}}>Herói: {players.find(p => p.id === m.assigned_to)?.username}</span></div>
