@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './player.module.css';
@@ -9,7 +9,7 @@ const RANK_COLORS = {
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
 
-// Tabela de XP para cálculo da barra
+// Tabela de XP (Mesma do Mestre)
 const XP_TABLE = [
   { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
   { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
@@ -42,11 +42,17 @@ export default function PlayerPanel() {
   const [transferItemIdx, setTransferItemIdx] = useState(0);
   const [transferItemQty, setTransferItemQty] = useState(1);
 
+  // NOVO: Estado para Level Up
+  const [showLevelUp, setShowLevelUp] = useState(false);
+  const [leveledUpTo, setLeveledUpTo] = useState(1);
+  // Ref para guardar o nível anterior e não perder no re-render
+  const prevLevelRef = useRef(1);
+
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(loadData, 5000); // Polling mais rápido (5s) para ver o level up
     return () => clearInterval(interval);
   }, []);
 
@@ -54,6 +60,21 @@ export default function PlayerPanel() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      
+      // Lógica de Detecção de Level Up
+      if (prof) {
+        // Se é a primeira carga, apenas sincroniza
+        if (prevLevelRef.current === 1 && prof.level > 1 && !profile) {
+           prevLevelRef.current = prof.level;
+        }
+        // Se o nível novo é maior que o salvo na ref
+        else if (prof.level > prevLevelRef.current) {
+          setLeveledUpTo(prof.level);
+          setShowLevelUp(true);
+          prevLevelRef.current = prof.level;
+        }
+      }
+
       setProfile(prof);
       const { data: reqs } = await supabase.from('item_requests').select('*').eq('player_id', user.id);
       setMyRequests(reqs || []);
@@ -241,6 +262,19 @@ export default function PlayerPanel() {
 
   return (
     <div className={styles.container}>
+      
+      {/* MODAL DE LEVEL UP (NOVO) */}
+      {showLevelUp && (
+        <div className="modal-overlay" style={{background:'rgba(0,0,0,0.85)'}} onClick={() => setShowLevelUp(false)}>
+          <div className={styles.levelUpCard} onClick={e => e.stopPropagation()}>
+            <h1 className={styles.levelUpTitle}>LEVEL UP!</h1>
+            <div className={styles.levelBadge}>{leveledUpTo}</div>
+            <p style={{color:'#ddd', marginTop:'15px'}}>Você alcançou um novo patamar de poder.</p>
+            <button className={styles.btnPrimary} onClick={() => setShowLevelUp(false)} style={{marginTop:'20px'}}>CONTINUAR</button>
+          </div>
+        </div>
+      )}
+
       {/* MODAL TRANSFER */}
       {transferModalOpen && transferTarget && (
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>

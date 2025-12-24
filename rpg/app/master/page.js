@@ -9,7 +9,6 @@ const RANK_COLORS = {
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
 
-// Tabela de XP baseada na sua imagem
 const XP_TABLE = [
   { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
   { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
@@ -58,7 +57,6 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  // --- FUNÇÃO AUXILIAR: CALCULA NÍVEL BASEADO NO XP ---
   function calculateLevel(totalXp) {
     let newLevel = 1;
     for (let i = 0; i < XP_TABLE.length; i++) {
@@ -71,7 +69,6 @@ export default function MasterPanel() {
     return newLevel;
   }
 
-  // --- FUNÇÃO AUXILIAR: ATUALIZA XP E NIVEL ---
   async function updatePlayerXpAndLevel(playerId, amountXP, amountGold = 0) {
     const player = players.find(p => p.id === playerId);
     if (!player) return;
@@ -119,13 +116,11 @@ export default function MasterPanel() {
           const xpFull = Number(xpReward); 
           
           for (const member of members) {
-            // Usa a nova função para atualizar XP e Nível de cada membro
             await updatePlayerXpAndLevel(member.id, xpFull, goldSplit);
           }
           alert(`Grupo recompensado! XP: ${xpFull}, Ouro: ${goldSplit} cada.`);
         }
       } else {
-        // Atualiza XP e Nível do jogador solo
         await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
       }
     }
@@ -191,9 +186,7 @@ export default function MasterPanel() {
     fetchData(); 
   }
 
-  // Modificar nível manualmente ainda é possível, mas o XP recalculará no próximo ganho
   async function modifyLevel(playerId, amount) { if (!amount) return; const p = players.find(x => x.id === playerId); const newLevel = (p.level || 1) + Number(amount); if (newLevel < 1) return; await supabase.from('profiles').update({ level: newLevel }).eq('id', playerId); setLevelMod(prev => ({ ...prev, [playerId]: '' })); fetchData(); }
-  
   async function updateRank(playerId, newRank) { await supabase.from('profiles').update({ rank: newRank }).eq('id', playerId); fetchData(); }
 
   function openInventory(player) { setSelectedPlayerForInv(player); setSlotAddQty(1); setMasterItemQty(1); setMasterItemName(''); }
@@ -221,7 +214,6 @@ export default function MasterPanel() {
 
   return (
     <div className={styles.container}>
-      {/* Modal e Header (Mantidos) */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
@@ -264,7 +256,6 @@ export default function MasterPanel() {
       </header>
 
       <div className={styles.grid}>
-        {/* NOVA MISSÃO */}
         <div className={styles.column}>
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>📜 Nova Missão</h2>
@@ -292,7 +283,6 @@ export default function MasterPanel() {
           </section>
         </div>
 
-        {/* LOJA E PEDIDOS */}
         <div className={styles.column}>
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
@@ -322,7 +312,6 @@ export default function MasterPanel() {
           </section>
         </div>
 
-        {/* JOGADORES */}
         <div className={styles.column}>
           <section className={styles.card}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', borderBottom:'1px solid #444', paddingBottom:'10px'}}>
@@ -350,7 +339,6 @@ export default function MasterPanel() {
                         <select value={p.rank || 'F'} onChange={(e) => updateRank(p.id, e.target.value)} style={{background:'#000', color: rankColor, border: `1px solid ${rankColor}`, borderRadius:'4px', fontSize:'0.7rem', padding:'2px', fontWeight:'bold'}}>{RANKS.map(r => <option key={r} value={r} style={{color: RANK_COLORS[r]}}>{r}</option>)}</select>
                       </div>
                     </div>
-                    {/* Recursos Simplificados */}
                     <div className={styles.resourceRow}><span style={{color:'#fbbf24'}}>💰 {p.gold}</span><div style={{display:'flex', gap:'2px'}}><input className={styles.miniInput} onChange={e => setGoldMod({...goldMod, [p.id]: e.target.value})} value={goldMod[p.id] || ''} /><button onClick={() => modifyGold(p.id, goldMod[p.id])} className={styles.miniBtn}>+</button></div></div>
                     <div className={styles.resourceRow}><span style={{color:'#60a5fa'}}>✨ {p.xp} / Lvl {p.level}</span><div style={{display:'flex', gap:'2px'}}><input className={styles.miniInput} onChange={e => setXpMod({...xpMod, [p.id]: e.target.value})} value={xpMod[p.id] || ''} /><button onClick={() => modifyXp(p.id, xpMod[p.id])} className={styles.miniBtn}>+</button></div></div>
                   </div>
