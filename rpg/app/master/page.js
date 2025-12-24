@@ -11,9 +11,12 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   
-  // Estado do formulário (mantendo nomes curtos internos para facilitar)
+  // Estado do formulário (mantendo nomes curtos internos)
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
-  const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
+  
+  // REMOVIDO: seller (pois o banco não tem essa coluna)
+  const [shopForm, setShopForm] = useState({ name: '', price: 0, quantity: 1, desc: '' });
+  
   const [partyForm, setPartyForm] = useState('');
   
   const [goldMod, setGoldMod] = useState({});
@@ -129,13 +132,13 @@ export default function MasterPanel() {
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
     
-    // CORREÇÃO CRÍTICA: Mapeia os campos do formulário para os nomes EXATOS do banco de dados
+    // Mapeamento CORRETO para as colunas do banco de dados
     const payload = {
       title: form.title,
-      description: form.desc,    // DB usa 'description', form usa 'desc'
+      description: form.desc,    // DB usa 'description'
       rank: form.rank,
-      xp_reward: form.xp,        // DB usa 'xp_reward', form usa 'xp'
-      gold_reward: form.gold,    // DB usa 'gold_reward', form usa 'gold'
+      xp_reward: form.xp,        // DB usa 'xp_reward'
+      gold_reward: form.gold,    // DB usa 'gold_reward'
       status: 'open'
     };
 
@@ -154,13 +157,12 @@ export default function MasterPanel() {
     if (!shopForm.name) return alert("Nome do item necessário!");
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     
-    // CORREÇÃO CRÍTICA: Mapeia para 'item_name' e 'description'
+    // Mapeamento CORRETO para as colunas do banco (SEM SELLER)
     const payload = {
-      seller: shopForm.seller,
-      item_name: shopForm.name,  // DB usa 'item_name', form usa 'name'
+      item_name: shopForm.name,  // DB usa 'item_name'
       price: shopForm.price,
       quantity: shopForm.quantity,
-      description: shopForm.desc // DB usa 'description', form usa 'desc'
+      description: shopForm.desc // DB usa 'description'
     };
 
     const { error } = await supabase.from('shop_items').insert([payload]);
@@ -170,7 +172,7 @@ export default function MasterPanel() {
       return alert("Erro ao adicionar item: " + error.message);
     }
 
-    setShopForm({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
+    setShopForm({ name: '', price: 0, quantity: 1, desc: '' });
     fetchData();
   }
 
@@ -376,10 +378,6 @@ export default function MasterPanel() {
         {/* ESTOQUE DA LOJA */}
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>⚖️ Estoque da Loja</h2>
-          <div className={styles.inputGroup}>
-            <label className={styles.label}>Vendedor</label>
-            <input className={styles.input} placeholder="Nome do Vendedor" value={shopForm.seller} onChange={e => setShopForm({...shopForm, seller: e.target.value})} />
-          </div>
           <div className={styles.inputGroup}>
             <label className={styles.label}>Item</label>
             <input className={styles.input} placeholder="Nome do Item" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} />
