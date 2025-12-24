@@ -3,34 +3,27 @@
   padding: 2rem;
   max-width: 1400px;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
 }
 
 .header {
-  background: var(--bg-panel);
-  border-bottom: 2px solid #78350f;
-  padding: 1.5rem 2rem;
-  border-radius: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 15px;
-  box-shadow: var(--glow-gold);
-  backdrop-filter: blur(10px);
+  margin-bottom: 2rem;
+  border-bottom: 2px solid var(--border-gold);
+  padding-bottom: 1rem;
 }
 
 .title {
   font-family: var(--font-title);
-  font-size: 2.5rem;
   color: var(--text-gold);
+  font-size: 2.5rem;
+  text-transform: uppercase;
   margin: 0;
-  text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+  text-shadow: 0 2px 10px rgba(212, 175, 55, 0.3);
 }
 
-.actions { display: flex; gap: 10px; }
+.actions { display: flex; gap: 1rem; }
 
 .btnHeader {
   background: transparent;
@@ -41,123 +34,125 @@
   cursor: pointer;
   font-family: var(--font-title);
   text-transform: uppercase;
+  font-size: 0.8rem;
   transition: all 0.3s;
-  white-space: nowrap;
 }
 .btnHeader:hover { border-color: var(--text-gold); color: var(--text-gold); }
 
-/* GRID RESPONSIVO */
+/* LAYOUT DE 3 COLUNAS */
 .grid {
-  display: grid; 
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* Força 3 colunas */
   gap: 2rem;
-  align-items: start; /* Impede que cards estiquem para preencher altura vazia */
+  align-items: start; /* Impede que estiquem para a mesma altura */
+}
+
+/* Em telas pequenas, vira 1 coluna */
+@media (max-width: 1024px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem; /* Espaço entre cards verticais */
 }
 
 .card {
-  background: linear-gradient(180deg, rgba(25,25,25,0.95) 0%, rgba(15,15,15,0.98) 100%);
-  border: 1px solid var(--border-gold);
-  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid #333;
+  border-radius: 8px;
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.2rem;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-  position: relative;
+  gap: 1rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
 }
 
 .cardTitle {
-  color: var(--text-gold);
   font-family: var(--font-title);
-  font-size: 1.4rem;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
-  padding-bottom: 10px;
+  color: #ddd;
+  font-size: 1.2rem;
   margin: 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #444;
 }
 
-/* ÁREAS DE SCROLL (NOVO) */
-/* Para Jogadores (Lista maior) */
-.scrollableList {
-  max-height: 400px; /* Altura máxima */
-  overflow-y: auto;  /* Scroll se passar disso */
-  padding-right: 5px; /* Espaço para scrollbar não cobrir texto */
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* Para Solicitações e Contratos (Listas menores) */
-.scrollableListSmall {
-  max-height: 200px; /* Altura reduzida conforme pedido */
-  overflow-y: auto;
-  padding-right: 5px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* Estilização da Scrollbar interna */
-.scrollableList::-webkit-scrollbar, .scrollableListSmall::-webkit-scrollbar { width: 4px; }
-.scrollableList::-webkit-scrollbar-thumb, .scrollableListSmall::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
-
-/* INPUTS E LABELS */
-.inputGroup {
-  display: flex; flex-direction: column; width: 100%;
-}
-
-.label {
-  font-size: 0.7rem; color: #888; text-transform: uppercase; margin-bottom: 4px; display: block; font-weight: bold; letter-spacing: 1px;
-}
-
+.inputGroup { display: flex; flex-direction: column; gap: 4px; }
+.label { font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: bold; }
 .input {
-  width: 100%; padding: 12px; background: #0a0a0a; border: 1px solid #333; 
-  color: #fff; border-radius: 6px; outline: none; transition: border 0.3s;
-  box-sizing: border-box;
+  background: #000;
+  border: 1px solid #333;
+  color: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  font-family: inherit;
 }
-.input:focus { border-color: var(--text-gold); }
+.input:focus { border-color: var(--text-gold); outline: none; }
 
-.row { display: flex; gap: 10px; width: 100%; }
+.row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
 .btnPrimary {
-  background: linear-gradient(180deg, #b45309 0%, #78350f 100%);
-  border: 1px solid #d97706; color: white; padding: 12px;
-  font-weight: bold; font-family: var(--font-title); text-transform: uppercase;
-  border-radius: 6px; cursor: pointer; margin-top: 10px; letter-spacing: 1px;
+  background: var(--btn-primary);
+  color: #fff;
+  border: none;
+  padding: 10px;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  text-transform: uppercase;
+  margin-top: 10px;
 }
 .btnPrimary:hover { filter: brightness(1.2); }
 
-/* ITENS DAS LISTAS */
+/* Listas Roláveis */
+.scrollableList {
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: 500px; overflow-y: auto; padding-right: 5px;
+}
+.scrollableListSmall {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 300px; overflow-y: auto; padding-right: 5px;
+}
+
+/* Item de Lista (Player, Request) */
+.playerItem, .requestItem {
+  background: #1a1a1a;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
 .requestItem {
-  background: #1c1c1c; border-left: 3px solid #3b82f6; padding: 10px;
-  border-radius: 0 6px 6px 0; display: flex; justify-content: space-between;
-  align-items: center;
+  display: flex; justify-content: space-between; align-items: center;
+  border-left: 3px solid #666;
 }
-.btnApprove { background: #15803d; color: white; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;}
-.btnReject { background: #991b1b; color: white; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;}
 
-.playerItem { background: #1a1a1a; padding: 12px; border-radius: 8px; border: 1px solid #333; }
-.playerHeader { display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: bold; align-items: center; }
-
-.resourceRow { 
-  display: flex; justify-content: space-between; background: #111; 
-  padding: 6px 10px; border-radius: 4px; margin-top: 5px; align-items: center; 
+.playerHeader {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 8px;
 }
-.miniInput { background: transparent; border: none; border-bottom: 1px solid #555; color: white; width: 40px; text-align: center; font-size: 0.8rem; }
-.miniBtn { width: 22px; height: 22px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; margin-left: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem;}
-.add { background: #166534; color: #fff; }
-.rem { background: #7f1d1d; color: #fff; }
 
-/* MODAL INVENTÁRIO */
+.resourceRow {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.8rem; margin-bottom: 4px; background: #111; padding: 4px 8px; borderRadius: 4px;
+}
+
+.miniInput { width: 40px; background: #000; border: 1px solid #333; color: white; text-align: center; padding: 2px; font-size: 0.8rem; }
+.miniBtn { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; font-weight: bold; margin-left: 2px; background: #333; color: #fff; }
+.miniBtn:hover { background: #555; }
+
+.btnApprove { background: #166534; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.btnReject { background: #991b1b; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+
+/* SLOTS MOCHILA MESTRE */
 .invSlot {
-  background: #111; border: 1px solid #444; aspect-ratio: 1; 
-  display: flex; flex-direction: column; alignItems: center; justifyContent: center; position: relative; border-radius: 6px;
+  aspect-ratio: 1; background: #050505; border: 1px solid #333; border-radius: 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  position: relative;
 }
 .invRemoveBtn {
-  position: absolute; top: -6px; right: -6px; background: #ef4444; width: 18px; height: 18px; 
-  border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; fontSize: 10px; font-weight: bold; color: white;
+  position: absolute; top: 0; right: 0; background: #991b1b; color: white;
+  width: 16px; height: 16px; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.invItemName { fontSize: 0.7rem; fontWeight: bold; color: #fbbf24; text-align: center; line-height: 1.1; padding: 0 2px;}
-.invItemQty { fontSize: 0.65rem; color: #888; margin-top: 2px;}
+.invItemName { font-size: 0.6rem; text-align: center; color: #ddd; }
+.invItemQty { font-size: 0.6rem; color: var(--text-gold); position: absolute; bottom: 2px; }
