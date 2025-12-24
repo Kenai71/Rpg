@@ -11,7 +11,7 @@ export default function PlayerPanel() {
   const [shop, setShop] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]);
   const [myRequests, setMyRequests] = useState([]); 
-  const [myParty, setMyParty] = useState(null); // NOVO
+  const [myParty, setMyParty] = useState(null); 
   const [tab, setTab] = useState('missions');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -32,7 +32,6 @@ export default function PlayerPanel() {
       const { data: reqs } = await supabase.from('item_requests').select('*').eq('player_id', user.id);
       setMyRequests(reqs || []);
 
-      // Buscar info do grupo se tiver
       if (prof.party_id) {
         const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
         setMyParty(party);
@@ -54,16 +53,13 @@ export default function PlayerPanel() {
     router.push('/login');
   };
 
-  // --- MISSÕES COM RESTRIÇÃO DE GRUPO ---
   async function acceptMission(mission) {
     if (!profile) return;
     const pRank = RANK_VALUES[profile.rank || 'F'];
     const mRank = RANK_VALUES[mission.rank || 'F'];
     if (mRank > pRank + 1) return alert("Seu Rank é muito baixo para esta missão.");
 
-    // Verifica liderança
     if (profile.party_id) {
-      // Precisa buscar a party atualizada para garantir
       const { data: partyCheck } = await supabase.from('parties').select('leader_id').eq('id', profile.party_id).single();
       if (partyCheck.leader_id !== profile.id) {
         return alert("Apenas o Líder do grupo pode aceitar missões!");
@@ -79,12 +75,16 @@ export default function PlayerPanel() {
     if (profile.gold < item.price) return alert("Ouro insuficiente.");
     const currentInv = profile.inventory || [];
     const limit = profile.slots || 10;
-    const idx = currentInv.findIndex(i => i.name === item.item_name);
+    
+    // Tenta pegar o nome usando 'name' (padrão Mestre antigo) ou 'item_name'
+    const itemName = item.name || item.item_name;
+
+    const idx = currentInv.findIndex(i => i.name === itemName);
     let newInv = [...currentInv];
     if (idx >= 0) newInv[idx].qty += 1;
     else {
       if (currentInv.length >= limit) return alert("Mochila cheia!");
-      newInv.push({ name: item.item_name, qty: 1 });
+      newInv.push({ name: itemName, qty: 1 });
     }
     const { error } = await supabase.from('profiles').update({ gold: profile.gold - item.price, inventory: newInv }).eq('id', profile.id);
     if (!error) {
@@ -113,7 +113,6 @@ export default function PlayerPanel() {
 
   return (
     <div className={styles.container}>
-      {/* Modal */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -175,7 +174,8 @@ export default function PlayerPanel() {
             {missions.map(m => (
               <div key={m.id} className={styles.card} style={{borderLeft:'4px solid #d97706'}}>
                 <div className={styles.cardHeader}><h3>{m.title}</h3><span style={{fontSize:'0.8rem', color:'#fbbf24'}}>RANK {m.rank}</span></div>
-                <p className={styles.cardDesc}>"{m.description}"</p>
+                {/* LÊ DESC OU DESCRIPTION */}
+                <p className={styles.cardDesc}>"{m.desc || m.description}"</p>
                 <div style={{marginTop:'auto', borderTop:'1px solid #333', paddingTop:'10px'}}>
                   <button onClick={() => acceptMission(m)} className={`${styles.btnAction} ${styles.accept}`}>Aceitar</button>
                 </div>
@@ -185,13 +185,13 @@ export default function PlayerPanel() {
           </div>
         )}
 
-        {/* Loja mantida */}
         {tab === 'shop' && (
           <div className={styles.grid}>
             {shop.map(item => (
               <div key={item.id} className={styles.card}>
-                <div className={styles.cardHeader}><h3>{item.item_name}</h3><span style={{fontSize:'0.8rem', color: item.quantity<5?'#f87171':'#4ade80'}}>Estoque: {item.quantity}</span></div>
-                <p className={styles.cardDesc}>{item.description}</p>
+                {/* LÊ NAME OU ITEM_NAME */}
+                <div className={styles.cardHeader}><h3>{item.name || item.item_name}</h3><span style={{fontSize:'0.8rem', color: item.quantity<5?'#f87171':'#4ade80'}}>Estoque: {item.quantity}</span></div>
+                <p className={styles.cardDesc}>{item.desc || item.description}</p>
                 <button onClick={() => buyItem(item)} className={`${styles.btnAction} ${styles.buy}`}>Comprar {item.price}g</button>
               </div>
             ))}
@@ -199,7 +199,6 @@ export default function PlayerPanel() {
           </div>
         )}
 
-        {/* Players / Aliados - Agora mostra o grupo */}
         {tab === 'players' && (
           <div className={styles.grid}>
              {allPlayers.map(p => (
@@ -216,7 +215,6 @@ export default function PlayerPanel() {
           </div>
         )}
 
-        {/* Mochila mantida */}
         {tab === 'inv' && (
           <div className={styles.invWrapper}>
              <h2 className={styles.invTitle}>Mochila ({profile?.inventory?.length || 0}/{profile?.slots || 10})</h2>

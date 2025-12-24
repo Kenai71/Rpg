@@ -11,12 +11,9 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   
-  // CORREÇÃO 1: Nomes dos campos ajustados para bater com o banco de dados (description, xp_reward, gold_reward)
-  const [form, setForm] = useState({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
-  
-  // CORREÇÃO 2: Nomes dos campos ajustados para a loja (item_name, description)
-  const [shopForm, setShopForm] = useState({ seller: '', item_name: '', price: 0, quantity: 1, description: '' });
-  
+  // Voltamos aos nomes originais que provavelmente são os do banco
+  const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
+  const [shopForm, setShopForm] = useState({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
   const [partyForm, setPartyForm] = useState('');
   
   const [goldMod, setGoldMod] = useState({});
@@ -58,7 +55,8 @@ export default function MasterPanel() {
   // --- GESTÃO DE GRUPOS ---
   async function createParty() {
     if (!partyForm.trim()) return alert("Nome do grupo necessário");
-    await supabase.from('parties').insert([{ name: partyForm }]);
+    const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
+    if (error) return alert("Erro ao criar grupo: " + error.message);
     setPartyForm('');
     fetchData();
   }
@@ -76,7 +74,8 @@ export default function MasterPanel() {
 
   // --- ATUALIZAÇÃO DE MISSÃO ---
   async function updateMission(id, status, playerId, xpReward, goldReward) {
-    await supabase.from('missions').update({ status }).eq('id', id);
+    const { error } = await supabase.from('missions').update({ status }).eq('id', id);
+    if (error) return alert("Erro ao atualizar missão: " + error.message);
 
     if (status === 'completed' && playerId) {
       const player = players.find(p => p.id === playerId);
@@ -129,19 +128,41 @@ export default function MasterPanel() {
 
   async function createMission() {
     if (!form.title) return alert("Título necessário!");
-    // CORREÇÃO: Os campos já estão corretos no state form (description, xp_reward, gold_reward)
-    await supabase.from('missions').insert([{ ...form, status: 'open' }]);
-    setForm({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
+    
+    // Tenta inserir usando nomes de colunas mais prováveis
+    const payload = {
+      title: form.title,
+      desc: form.desc,          // Coluna 'desc'
+      rank: form.rank,
+      xp_reward: form.xp,       // Mapeando form.xp -> xp_reward
+      gold_reward: form.gold,   // Mapeando form.gold -> gold_reward
+      status: 'open'
+    };
+
+    const { error } = await supabase.from('missions').insert([payload]);
+    
+    if (error) {
+      console.error(error);
+      return alert("Erro ao criar missão: " + error.message + "\nVerifique o console para detalhes.");
+    }
+
+    setForm({ title: '', desc: '', rank: 'F', xp: 0, gold: 0 });
     fetchData();
   }
 
   async function addItem() {
-    if (!shopForm.item_name) return alert("Nome do item necessário!");
+    if (!shopForm.name) return alert("Nome do item necessário!");
     if (Number(shopForm.price) <= 0 || Number(shopForm.quantity) <= 0) return alert("Valores inválidos!");
     
-    // CORREÇÃO: Insere item com as chaves corretas (item_name, description, etc)
-    await supabase.from('shop_items').insert([{ ...shopForm }]);
-    setShopForm({ seller: '', item_name: '', price: 0, quantity: 1, description: '' });
+    // Insere usando 'name' e 'desc'
+    const { error } = await supabase.from('shop_items').insert([{ ...shopForm }]);
+    
+    if (error) {
+      console.error(error);
+      return alert("Erro ao adicionar item: " + error.message);
+    }
+
+    setShopForm({ seller: '', name: '', price: 0, quantity: 1, desc: '' });
     fetchData();
   }
 
@@ -283,13 +304,11 @@ export default function MasterPanel() {
           </div>
           <div className={styles.inputGroup}>
             <label className={styles.label}>Descrição</label>
-            {/* CORREÇÃO: Usando form.description */}
-            <textarea className={styles.input} placeholder="Detalhes..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} rows={3} />
+            <textarea className={styles.input} placeholder="Detalhes..." value={form.desc} onChange={e => setForm({...form, desc: e.target.value})} rows={3} />
           </div>
           <div className={styles.row}>
-            {/* CORREÇÃO: Usando form.xp_reward e form.gold_reward */}
-            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#60a5fa'}}>XP</label><input className={styles.input} type="number" value={form.xp_reward} onChange={e => setForm({...form, xp_reward: e.target.value})} /></div>
-            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#fbbf24'}}>Ouro</label><input className={styles.input} type="number" value={form.gold_reward} onChange={e => setForm({...form, gold_reward: e.target.value})} /></div>
+            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#60a5fa'}}>XP</label><input className={styles.input} type="number" value={form.xp} onChange={e => setForm({...form, xp: e.target.value})} /></div>
+            <div className={styles.inputGroup}><label className={styles.label} style={{color:'#fbbf24'}}>Ouro</label><input className={styles.input} type="number" value={form.gold} onChange={e => setForm({...form, gold: e.target.value})} /></div>
             <div className={styles.inputGroup}><label className={styles.label} style={{color:'#a8a29e'}}>Rank</label><select className={styles.input} value={form.rank} onChange={e => setForm({...form, rank: e.target.value})}>{RANKS.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
           </div>
           <button onClick={createMission} className={styles.btnPrimary}>Publicar</button>
@@ -355,13 +374,11 @@ export default function MasterPanel() {
           </div>
           <div className={styles.inputGroup}>
             <label className={styles.label}>Item</label>
-            {/* CORREÇÃO: Usando shopForm.item_name */}
-            <input className={styles.input} placeholder="Nome do Item" value={shopForm.item_name} onChange={e => setShopForm({...shopForm, item_name: e.target.value})} />
+            <input className={styles.input} placeholder="Nome do Item" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} />
           </div>
-          {/* ADICIONADO: Campo de Descrição do Item que faltava */}
           <div className={styles.inputGroup}>
             <label className={styles.label}>Descrição</label>
-            <textarea className={styles.input} placeholder="Efeitos do item..." rows={2} value={shopForm.description} onChange={e => setShopForm({...shopForm, description: e.target.value})} />
+            <textarea className={styles.input} placeholder="Efeitos do item..." rows={2} value={shopForm.desc} onChange={e => setShopForm({...shopForm, desc: e.target.value})} />
           </div>
           <div className={styles.row}>
              <div className={styles.inputGroup}><label className={styles.label}>Valor (Ouro)</label><input className={styles.input} type="number" min="1" value={shopForm.price} onChange={e => setShopForm({...shopForm, price: e.target.value})} /></div>
@@ -396,7 +413,6 @@ export default function MasterPanel() {
               <div key={m.id} className={styles.requestItem} style={{borderLeftColor:'#fbbf24'}}>
                 <div><strong style={{color:'#fff'}}>{m.title}</strong><span style={{fontSize:'0.8rem', color:'#aaa'}}>Herói: {players.find(p => p.id === m.assigned_to)?.username}</span></div>
                 <div style={{display:'flex', gap:'5px'}}>
-                  {/* Usa xp_reward e gold_reward do banco */}
                   <button onClick={() => updateMission(m.id, 'completed', m.assigned_to, m.xp_reward, m.gold_reward)} className={styles.btnApprove} title="Completar">✓</button>
                   <button onClick={() => updateMission(m.id, 'failed', m.assigned_to, 0, 0)} className={styles.btnReject} title="Falhar">✕</button>
                 </div>
