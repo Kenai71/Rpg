@@ -281,7 +281,7 @@ export default function MasterPanel() {
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>📌 Mural (Abertas)</h2>
             <div className={styles.scrollableListSmall}>
-              {missions.filter(m => m.status === 'open').length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio</p>}
+              {missions.filter(m => m.status === 'open').length === 0 && <p style={{color:'#665', textAlign:'center'}}>Vazio</p>}
               {missions.filter(m => m.status === 'open').map(m => (
                 <div key={m.id} className={styles.requestItem} style={{borderLeftColor: RANK_COLORS[m.rank]}}>
                   <div><strong style={{color:'#fff'}}>{m.title}</strong><div style={{fontSize:'0.75rem', color:'#aaa'}}>{m.rank} | XP:{m.xp_reward} G:{m.gold_reward}</div></div>
@@ -308,7 +308,7 @@ export default function MasterPanel() {
           <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
             <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
             <div className={styles.scrollableListSmall}>
-              {requests.length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio.</p>}
+              {requests.length === 0 && <p style={{color:'#665', textAlign:'center'}}>Vazio.</p>}
               {requests.map(req => (
                 <div key={req.id} className={styles.requestItem}>
                   <div><strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
@@ -420,7 +420,7 @@ export default function MasterPanel() {
           <section className={styles.card}>
             <h2 className={styles.cardTitle}>⚔️ Contratos Ativos</h2>
             <div className={styles.scrollableListSmall}>
-              {missions.filter(m => m.status === 'in_progress').length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio.</p>}
+              {missions.filter(m => m.status === 'in_progress').length === 0 && <p style={{color:'#665', textAlign:'center'}}>Vazio.</p>}
               {missions.filter(m => m.status === 'in_progress').map(m => (
                 <div key={m.id} className={styles.requestItem} style={{borderLeftColor:'#fbbf24'}}>
                   <div><strong style={{color:'#fff'}}>{m.title}</strong><span style={{fontSize:'0.7rem', color:'#aaa', display:'block'}}>Herói: {players.find(p => p.id === m.assigned_to)?.username}</span></div>
