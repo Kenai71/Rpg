@@ -1,8 +1,9 @@
 .container {
   min-height: 100vh;
   padding: 2rem;
-  max-width: 1600px; /* Aumentei para caber melhor as 3 colunas */
+  max-width: 1600px;
   margin: 0 auto;
+  color: #fff; /* Garante texto branco base */
 }
 
 .header {
@@ -10,42 +11,50 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 2rem;
-  border-bottom: 2px solid var(--border-gold);
+  border-bottom: 2px solid #fbbf24; /* Ouro */
   padding-bottom: 1rem;
+  background: rgba(0, 0, 0, 0.5); /* Fundo leve no header */
+  padding: 1rem;
+  border-radius: 8px;
 }
 
 .title {
-  font-family: var(--font-title);
-  color: var(--text-gold);
-  font-size: 2.5rem;
+  font-family: 'Cinzel', serif; /* Fonte RPG se disponível, ou serif */
+  color: #fbbf24;
+  font-size: 2.2rem;
   text-transform: uppercase;
   margin: 0;
-  text-shadow: 0 2px 10px rgba(212, 175, 55, 0.3);
+  text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+  letter-spacing: 1px;
 }
 
 .actions { display: flex; gap: 1rem; }
 
 .btnHeader {
-  background: transparent;
+  background: #000;
   border: 1px solid #444;
   color: #ccc;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  font-family: var(--font-title);
+  font-weight: bold;
   text-transform: uppercase;
   font-size: 0.8rem;
   transition: all 0.3s;
 }
-.btnHeader:hover { border-color: var(--text-gold); color: var(--text-gold); }
+.btnHeader:hover { border-color: #fbbf24; color: #fbbf24; }
 
-/* GRID DE 3 COLUNAS - Melhorado para não quebrar */
+/* GRID PRINCIPAL */
 .grid {
   display: grid;
-  /* Cria colunas que têm no mínimo 350px, senão quebra linha */
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  grid-template-columns: repeat(3, 1fr); /* 3 Colunas Padrão */
   gap: 1.5rem;
   align-items: start;
+}
+
+/* Responsividade: Mobile vira 1 coluna */
+@media (max-width: 1024px) {
+  .grid { grid-template-columns: 1fr; }
 }
 
 .column {
@@ -54,81 +63,90 @@
   gap: 1.5rem;
 }
 
+/* CARDS (RESOLUÇÃO DA TRANSPARÊNCIA) */
 .card {
-  background: var(--bg-panel);
+  background-color: #121212; /* Cor sólida escura (não transparente) */
   border: 1px solid #333;
   border-radius: 8px;
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  /* CENTRALIZAÇÃO DO CONTEÚDO DO CARD */
-  align-items: center; 
-  text-align: center;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  position: relative;
+  overflow: hidden; /* Garante que nada saia do card */
+}
+
+/* Efeito sutil de brilho no topo do card */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #333, transparent);
 }
 
 .cardTitle {
-  font-family: var(--font-title);
-  color: #ddd;
+  font-family: 'Cinzel', serif;
+  color: #fbbf24; /* Título Dourado */
   font-size: 1.2rem;
-  margin: 0;
+  margin: 0 0 0.5rem 0;
   padding-bottom: 0.5rem;
-  width: 100%;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid #333;
   text-align: center;
+  width: 100%;
 }
 
-/* Inputs centralizados */
+/* INPUTS E LABELS */
 .inputGroup { 
   display: flex; 
   flex-direction: column; 
   gap: 5px; 
   width: 100%; 
-  align-items: center; /* Centraliza label e input */
 }
 
 .label { 
-  font-size: 0.75rem; 
-  color: #888; 
+  font-size: 0.7rem; 
+  color: #aaa; 
   text-transform: uppercase; 
   font-weight: bold; 
+  margin-left: 2px;
 }
 
-.input {
-  background: #000;
+.input, textarea.input, select.input {
+  background: #0a0a0a; /* Fundo bem escuro para inputs */
   border: 1px solid #333;
   color: #fff;
   padding: 10px;
   border-radius: 4px;
   font-family: inherit;
-  width: 90%; /* Largura um pouco menor para centralizar bonito */
-  text-align: center; /* Texto digitado no meio */
+  width: 100%;
+  box-sizing: border-box; /* Garante que padding não estoure a largura */
 }
-.input:focus { border-color: var(--text-gold); outline: none; }
+.input:focus { border-color: #fbbf24; outline: none; }
 
 .row { 
   display: grid; 
   grid-template-columns: 1fr 1fr 1fr; 
   gap: 10px; 
-  width: 90%;
+  width: 100%;
 }
 
 .btnPrimary {
-  background: var(--btn-primary);
+  background: linear-gradient(180deg, #b45309, #78350f); /* Gradiente Laranja/Marrom */
   color: #fff;
-  border: none;
+  border: 1px solid #b45309;
   padding: 12px;
   border-radius: 4px;
   font-weight: bold;
   cursor: pointer;
   text-transform: uppercase;
   margin-top: 10px;
-  width: 100%; /* Botão full width */
+  width: 100%;
+  transition: filter 0.2s;
 }
 .btnPrimary:hover { filter: brightness(1.2); }
 
-/* Listas Roláveis */
+/* LISTAS DE ITENS */
 .scrollableList {
   display: flex; flex-direction: column; gap: 10px;
   max-height: 600px; overflow-y: auto; padding-right: 5px;
@@ -136,55 +154,60 @@
 }
 .scrollableListSmall {
   display: flex; flex-direction: column; gap: 8px;
-  max-height: 300px; overflow-y: auto; padding-right: 5px;
+  max-height: 350px; overflow-y: auto; padding-right: 5px;
   width: 100%;
 }
 
-/* Itens */
+/* Scrollbar customizada */
+.scrollableList::-webkit-scrollbar, .scrollableListSmall::-webkit-scrollbar { width: 5px; }
+.scrollableList::-webkit-scrollbar-thumb, .scrollableListSmall::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
 .playerItem, .requestItem {
-  background: #1a1a1a;
+  background: #181818; /* Fundo um pouco mais claro que o card */
   padding: 12px;
   border-radius: 6px;
-  border: 1px solid #333;
-  width: 100%;
+  border: 1px solid #2a2a2a;
+  display: flex; flex-direction: column; gap: 8px;
 }
+
 .requestItem {
-  display: flex; justify-content: space-between; align-items: center;
-  border-left: 3px solid #666;
-  text-align: left; /* Mantém texto alinhado à esquerda na lista */
+  flex-direction: row; 
+  justify-content: space-between; 
+  align-items: center;
+  border-left-width: 4px; /* Faixa colorida na esquerda */
 }
 
 .playerHeader {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 8px;
 }
 
 .resourceRow {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 0.85rem; margin-bottom: 5px; background: #111; padding: 6px 10px; border-radius: 4px;
+  font-size: 0.85rem; background: #000; padding: 6px 10px; border-radius: 4px; border: 1px solid #222;
 }
 
 .miniInput { 
-  width: 50px; background: #000; border: 1px solid #333; color: white; text-align: center; padding: 4px; font-size: 0.8rem; margin-right: 5px;
+  width: 50px; background: #222; border: 1px solid #444; color: white; text-align: center; padding: 2px; font-size: 0.8rem; margin-right: 5px; border-radius: 3px;
 }
 
 .miniBtn { 
-  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 1px solid #333; cursor: pointer; font-weight: bold; margin-left: 2px; background: #222; transition: all 0.2s;
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 1px solid #444; cursor: pointer; font-weight: bold; margin-left: 2px; background: #333; color: #fff; border-radius: 3px; transition: all 0.2s;
 }
-.miniBtn:hover { background: #444; }
+.miniBtn:hover { background: #555; }
 
-.btnApprove { background: #166534; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-.btnReject { background: #991b1b; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.btnApprove { background: #15803d; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+.btnReject { background: #b91c1c; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; }
 
-/* SLOTS MOCHILA */
+/* SLOTS MOCHILA (MODAL) */
 .invSlot {
-  aspect-ratio: 1; background: #050505; border: 1px solid #333; border-radius: 4px;
+  aspect-ratio: 1; background: #000; border: 1px solid #333; border-radius: 4px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   position: relative;
 }
 .invRemoveBtn {
-  position: absolute; top: 0; right: 0; background: #991b1b; color: white;
-  width: 16px; height: 16px; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  position: absolute; top: 2px; right: 2px; background: #b91c1c; color: white;
+  width: 16px; height: 16px; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%;
 }
-.invItemName { font-size: 0.6rem; text-align: center; color: #ddd; }
-.invItemQty { font-size: 0.6rem; color: var(--text-gold); position: absolute; bottom: 2px; }
+.invItemName { font-size: 0.6rem; text-align: center; color: #ccc; padding: 0 2px; }
+.invItemQty { font-size: 0.7rem; color: #fbbf24; margin-top: 2px; font-weight: bold; }

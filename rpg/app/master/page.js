@@ -223,15 +223,21 @@ export default function MasterPanel() {
 
   return (
     <div className={styles.container}>
-      {/* MODAL INVENTÁRIO */}
       {selectedPlayerForInv && (
         <div className="modal-overlay" onClick={() => setSelectedPlayerForInv(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'600px'}}>
             <h2 style={{color:'#fbbf24', margin:'0 0 10px 0'}}>Mochila de {selectedPlayerForInv.username}</h2>
-            <div style={{display:'flex', gap:'5px', marginBottom:'20px'}}>
-               <input className="rpg-input" placeholder="Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} style={{flex:2}} />
-               <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'70px'}} />
-               <button onClick={masterAddItemToPlayer} style={{background:'#15803d', color:'#fff', border:'none', padding:'0 15px', borderRadius:'4px', cursor:'pointer'}}>ADD</button>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#111', padding:'10px', borderRadius:'6px'}}>
+                <span style={{color:'#888', fontSize:'0.9rem'}}>Capacidade: <strong style={{color:'#fff'}}>{selectedPlayerForInv.slots || 10}</strong> slots</span>
+                <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
+                  <input type="number" min="1" className="rpg-input" style={{width:'60px', padding:'5px', textAlign:'center', color:'black'}} value={slotAddQty} onChange={e => setSlotAddQty(e.target.value)} />
+                  <button onClick={increaseSlots} style={{background:'#2563eb', color:'white', border:'none', padding:'6px 12px', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>+ SLOTS</button>
+                </div>
+            </div>
+            <div style={{display:'flex', gap:'5px', margin:'20px 0', background:'#1a1a1a', padding:'10px', borderRadius:'6px'}}>
+               <input className="rpg-input" placeholder="Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} style={{flex:2, padding:'8px', color:'black'}} />
+               <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'70px', padding:'8px', textAlign:'center', color:'black'}} />
+               <button onClick={masterAddItemToPlayer} style={{background:'#15803d', color:'#fff', border:'none', padding:'0 15px', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>ADD</button>
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(60px, 1fr))', gap:'8px', maxHeight:'300px', overflowY:'auto'}}>
               {[...Array(selectedPlayerForInv.slots || 10)].map((_, i) => {
@@ -279,7 +285,7 @@ export default function MasterPanel() {
               {missions.filter(m => m.status === 'open').map(m => (
                 <div key={m.id} className={styles.requestItem} style={{borderLeftColor: RANK_COLORS[m.rank]}}>
                   <div><strong style={{color:'#fff'}}>{m.title}</strong><div style={{fontSize:'0.75rem', color:'#aaa'}}>{m.rank} | XP:{m.xp_reward} G:{m.gold_reward}</div></div>
-                  <button onClick={() => deleteMission(m.id)} className={styles.btnReject}>🗑️</button>
+                  <button onClick={() => deleteMission(m.id)} className={styles.btnReject} style={{padding:'4px 8px'}}>🗑️</button>
                 </div>
               ))}
             </div>
@@ -299,13 +305,13 @@ export default function MasterPanel() {
             <button onClick={addItem} className={styles.btnPrimary} style={{marginTop:'auto'}}>Estocar</button>
           </section>
 
-          <section className={styles.card}>
+          <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
             <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
             <div className={styles.scrollableListSmall}>
               {requests.length === 0 && <p style={{color:'#666', textAlign:'center'}}>Vazio.</p>}
               {requests.map(req => (
                 <div key={req.id} className={styles.requestItem}>
-                  <div><strong style={{color:'#fff'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
+                  <div><strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
                   <div style={{display:'flex', gap:'5px'}}>
                     <button onClick={() => handleRequest(req, true)} className={styles.btnApprove}>✓</button>
                     <button onClick={() => handleRequest(req, false)} className={styles.btnReject}>✕</button>
@@ -322,8 +328,8 @@ export default function MasterPanel() {
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid #444', paddingBottom:'10px', marginBottom:'10px', width:'100%'}}>
                <h2 className={styles.cardTitle} style={{border:'none', margin:0, padding:0, width:'auto', textAlign:'left'}}>👥 Jogadores</h2>
                <div style={{display:'flex', gap:'5px'}}>
-                 <input className="rpg-input" placeholder="Novo Grupo" value={partyForm} onChange={e => setPartyForm(e.target.value)} style={{width:'80px', padding:'4px', fontSize:'0.7rem', textAlign:'center'}} />
-                 <button onClick={createParty} style={{background:'#3f6212', color:'white', border:'none', padding:'4px', borderRadius:'4px', fontSize:'0.7rem'}}>CRIAR</button>
+                 <input className="rpg-input" placeholder="Novo Grupo" value={partyForm} onChange={e => setPartyForm(e.target.value)} style={{width:'80px', padding:'4px', fontSize:'0.7rem', textAlign:'center', color:'black'}} />
+                 <button onClick={createParty} style={{background:'#3f6212', color:'white', border:'none', padding:'4px 8px', borderRadius:'4px', fontSize:'0.7rem', fontWeight:'bold', cursor:'pointer'}}>CRIAR</button>
                </div>
             </div>
             <div className={styles.scrollableList}>
@@ -337,14 +343,14 @@ export default function MasterPanel() {
                     <div className={styles.playerHeader}>
                       <div style={{display:'flex', flexDirection:'column', alignItems:'flex-start'}}>
                         <span style={{color:'#fff', fontWeight:'bold'}}>
-                          {p.username} {currentParty?.leader_id === p.id && <span title="Líder">👑</span>}
+                          {p.username} {currentParty?.leader_id === p.id && <span title="Líder" style={{color:'#fbbf24'}}>👑</span>}
                         </span>
                         
                         <div style={{display:'flex', gap:'5px', marginTop:'5px', alignItems:'center'}}>
                           {/* SELECT GRUPO */}
                           <select 
                             className="rpg-input" 
-                            style={{padding:'2px', fontSize:'0.7rem', width:'90px'}} 
+                            style={{padding:'2px', fontSize:'0.7rem', width:'90px', color:'black'}} 
                             value={p.party_id || ""} 
                             onChange={(e) => assignToParty(p.id, e.target.value)}
                           >
