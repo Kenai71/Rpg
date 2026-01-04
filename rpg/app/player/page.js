@@ -103,20 +103,48 @@ export default function PlayerPanel() {
     alert("Missão aceita!"); loadData();
   }
 
+  // ATUALIZADA: Compra itens agrupando e perguntando quantidade
   async function buyItem(item) {
-    if (profile.gold < item.price) return alert("Ouro insuficiente.");
+    let qtyToBuy = 1;
+    const input = prompt(`Quantos "${item.name || item.item_name}" deseja comprar? (Preço unitário: ${item.price}g)`, "1");
+    if (input === null) return; 
+    qtyToBuy = parseInt(input);
+    if (isNaN(qtyToBuy) || qtyToBuy <= 0) return alert("Quantidade inválida.");
+
+    const totalPrice = item.price * qtyToBuy;
+
+    if (item.quantity < qtyToBuy) return alert("Estoque insuficiente na loja.");
+    if (profile.gold < totalPrice) return alert("Ouro insuficiente.");
+
     const currentInv = profile.inventory || [];
     const limit = profile.slots || 10;
     const itemName = item.name || item.item_name;
-    const idx = currentInv.findIndex(i => i.name === itemName);
+    
+    // Procura se já tem o item (case insensitive)
+    const idx = currentInv.findIndex(i => i.name.toLowerCase() === itemName.toLowerCase());
+    
     let newInv = [...currentInv];
-    if (idx >= 0) newInv[idx].qty += 1;
-    else {
+    
+    if (idx >= 0) {
+      newInv[idx].qty += qtyToBuy;
+    } else {
       if (currentInv.length >= limit) return alert("Mochila cheia!");
-      newInv.push({ name: itemName, qty: 1 });
+      newInv.push({ name: itemName, qty: qtyToBuy });
     }
-    const { error } = await supabase.from('profiles').update({ gold: profile.gold - item.price, inventory: newInv }).eq('id', profile.id);
-    if (!error) { await supabase.from('shop_items').update({ quantity: item.quantity - 1 }).eq('id', item.id); alert("Comprado!"); loadData(); }
+
+    const { error } = await supabase.from('profiles').update({ 
+      gold: profile.gold - totalPrice, 
+      inventory: newInv 
+    }).eq('id', profile.id);
+
+    if (!error) { 
+      await supabase.from('shop_items').update({ 
+        quantity: item.quantity - qtyToBuy 
+      }).eq('id', item.id); 
+      
+      alert(`Comprou ${qtyToBuy}x ${itemName}!`); 
+      loadData(); 
+    }
   }
 
   async function requestItem() {
@@ -359,10 +387,8 @@ export default function PlayerPanel() {
                const isPartyMember = myParty && p.party_id === myParty.id;
                const isMe = p.id === profile.id;
                
-               // Verifica se é líder (do meu grupo)
                const isLeader = myParty && p.id === myParty.leader_id;
                
-               // Lógica de Cor da Borda: Se for do grupo, usa VERDE, senão usa a cor do Rank
                const borderColor = isPartyMember ? '#22c55e' : getRankColor(p.rank);
                const borderWidth = isPartyMember ? '2px' : '1px';
                const boxShadow = isPartyMember ? '0 0 15px rgba(34, 197, 94, 0.3)' : `0 0 10px ${getRankColor(p.rank)}20`;
@@ -371,7 +397,6 @@ export default function PlayerPanel() {
                  <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: `${borderWidth} solid ${borderColor}`, boxShadow: boxShadow}}>
                    <div style={{fontSize:'2.5rem', marginBottom:'10px'}}>🛡️</div>
                    
-                   {/* Nome com Coroa se for Líder */}
                    <h3 style={{color:'white', margin:0, display:'flex', alignItems:'center', gap:'5px'}}>
                      {p.username} 
                      {isLeader && <span title="Líder do Grupo">👑</span>}

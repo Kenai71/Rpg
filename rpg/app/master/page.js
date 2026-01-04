@@ -23,6 +23,7 @@ export default function MasterPanel() {
   const [players, setPlayers] = useState([]);
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
+  const [shopItems, setShopItems] = useState([]); // NOVO: Estado para itens da loja
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: '', quantity: 1, desc: '' });
@@ -47,11 +48,15 @@ export default function MasterPanel() {
     const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player').order('username', { ascending: true });
     const { data: g } = await supabase.from('parties').select('*').order('name', { ascending: true });
     const { data: r } = await supabase.from('item_requests').select('*, profiles(username)').order('created_at', { ascending: true });
+    
+    // NOVO: Busca itens da loja
+    const { data: s } = await supabase.from('shop_items').select('*').order('item_name', { ascending: true });
 
     setMissions(m || []);
     setPlayers(p || []);
     setParties(g || []);
     setRequests(r || []);
+    setShopItems(s || []); // Atualiza estado da loja
   }
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
@@ -168,6 +173,14 @@ export default function MasterPanel() {
     const { error } = await supabase.from('shop_items').insert([payload]);
     if (error) return alert("Erro: " + error.message);
     setShopForm({ seller: '', name: '', price: '', quantity: 1, desc: '' });
+    fetchData();
+  }
+
+  // NOVO: Função para remover item da loja
+  async function deleteShopItem(id) {
+    if (!confirm("Remover este item da loja?")) return;
+    const { error } = await supabase.from('shop_items').delete().eq('id', id);
+    if (error) return alert("Erro: " + error.message);
     fetchData();
   }
 
@@ -295,14 +308,31 @@ export default function MasterPanel() {
         {/* COLUNA 2: LOJA E SOLICITAÇÕES */}
         <div className={styles.column}>
           <section className={styles.card}>
-            <h2 className={styles.cardTitle}>⚖️ Estoque</h2>
+            <h2 className={styles.cardTitle}>⚖️ Gerenciar Loja</h2>
             <div className={styles.inputGroup}><label className={styles.label}>Item</label><input className={styles.input} placeholder="Nome" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} /></div>
             <div className={styles.inputGroup}><label className={styles.label}>Descrição</label><textarea className={styles.input} placeholder="Efeitos..." rows={2} value={shopForm.desc} onChange={e => setShopForm({...shopForm, desc: e.target.value})} /></div>
             <div className={styles.row}>
                <div className={styles.inputGroup}><label className={styles.label}>Valor</label><input className={styles.input} type="number" min="1" value={shopForm.price} onChange={e => setShopForm({...shopForm, price: e.target.value})} /></div>
-               <div className={styles.inputGroup}><label className={styles.label}>Qtd</label><input className={styles.input} type="number" min="1" value={shopForm.quantity} onChange={e => setShopForm({...shopForm, quantity: e.target.value})} /></div>
+               <div className={styles.inputGroup}><label className={styles.label}>Qtd (Estoque)</label><input className={styles.input} type="number" min="1" value={shopForm.quantity} onChange={e => setShopForm({...shopForm, quantity: e.target.value})} /></div>
             </div>
-            <button onClick={addItem} className={styles.btnPrimary} style={{marginTop:'auto'}}>Estocar</button>
+            <button onClick={addItem} className={styles.btnPrimary}>Adicionar Estoque</button>
+
+            {/* LISTA DE ITENS NA LOJA (NOVO) */}
+            <div style={{marginTop: '15px', borderTop: '1px solid #333', paddingTop: '10px'}}>
+               <h3 style={{color: '#aaa', fontSize: '0.9rem', marginBottom:'10px'}}>Itens à Venda</h3>
+               <div className={styles.scrollableListSmall} style={{maxHeight: '200px'}}>
+                  {shopItems.length === 0 && <p style={{color:'#444', fontStyle:'italic', fontSize:'0.8rem'}}>Nenhum item na loja.</p>}
+                  {shopItems.map(item => (
+                    <div key={item.id} className={styles.requestItem} style={{borderLeft: '2px solid #064e3b'}}>
+                      <div>
+                        <strong style={{color: '#fff', fontSize:'0.9rem'}}>{item.item_name}</strong>
+                        <div style={{fontSize:'0.75rem', color:'#888'}}>Preço: {item.price}g | Estoque: {item.quantity}</div>
+                      </div>
+                      <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject} title="Remover da Loja">🗑️</button>
+                    </div>
+                  ))}
+               </div>
+            </div>
           </section>
 
           <section className={styles.card} style={{borderColor: requests.length > 0 ? '#3b82f6' : 'var(--border-gold)'}}>
@@ -335,7 +365,6 @@ export default function MasterPanel() {
             <div className={styles.scrollableList}>
               {players.map(p => {
                 const currentParty = parties.find(party => party.id === p.party_id);
-                // Define a cor baseada no Rank
                 const rankColor = RANK_COLORS[p.rank] || RANK_COLORS['F'];
                 
                 return (
@@ -347,7 +376,6 @@ export default function MasterPanel() {
                         </span>
                         
                         <div style={{display:'flex', gap:'5px', marginTop:'5px', alignItems:'center'}}>
-                          {/* SELECT GRUPO */}
                           <select 
                             className="rpg-input" 
                             style={{padding:'2px', fontSize:'0.7rem', width:'90px', color:'black'}} 
@@ -357,42 +385,24 @@ export default function MasterPanel() {
                             <option value="">Sem Grupo</option>
                             {parties.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                           </select>
-
-                          {/* BOTÃO NOMEAR LÍDER (Só aparece se tiver grupo e NÃO for o líder) */}
                           {p.party_id && currentParty?.leader_id !== p.id && (
-                            <button 
-                              onClick={() => makeLeader(p.party_id, p.id)} 
-                              title="Tornar Líder"
-                              style={{background:'transparent', border:'1px solid #fbbf24', cursor:'pointer', fontSize:'0.8rem', padding:'2px 4px', borderRadius:'4px'}}
-                            >
-                              👑
-                            </button>
+                            <button onClick={() => makeLeader(p.party_id, p.id)} title="Tornar Líder" style={{background:'transparent', border:'1px solid #fbbf24', cursor:'pointer', fontSize:'0.8rem', padding:'2px 4px', borderRadius:'4px'}}>👑</button>
                           )}
                         </div>
                       </div>
 
                       <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
                         <button onClick={() => openInventory(p)} title="Mochila" style={{background:'none', border:'none', cursor:'pointer', fontSize:'1.2rem'}}>🎒</button>
-                        {/* SELECT RANK */}
                         <select 
                           value={p.rank || 'F'} 
                           onChange={(e) => updateRank(p.id, e.target.value)} 
-                          style={{
-                            background: 'transparent', 
-                            color: rankColor, 
-                            border: `1px solid ${rankColor}`, 
-                            borderRadius:'4px', 
-                            fontSize:'0.7rem', 
-                            padding:'2px', 
-                            fontWeight:'bold'
-                          }}
+                          style={{background: 'transparent', color: rankColor, border: `1px solid ${rankColor}`, borderRadius:'4px', fontSize:'0.7rem', padding:'2px', fontWeight:'bold'}}
                         >
                           {RANKS.map(r => <option key={r} value={r} style={{color: RANK_COLORS[r], background:'#000'}}>{r}</option>)}
                         </select>
                       </div>
                     </div>
 
-                    {/* RECURSOS: OURO */}
                     <div className={styles.resourceRow}>
                       <span style={{color:'#fbbf24'}}>💰 {p.gold}</span>
                       <div style={{display:'flex', gap:'2px', alignItems:'center'}}>
@@ -402,7 +412,6 @@ export default function MasterPanel() {
                       </div>
                     </div>
 
-                    {/* RECURSOS: XP */}
                     <div className={styles.resourceRow}>
                       <span style={{color:'#60a5fa'}}>✨ {p.xp} (Lvl {p.level})</span>
                       <div style={{display:'flex', gap:'2px', alignItems:'center'}}>
