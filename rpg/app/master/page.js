@@ -23,7 +23,7 @@ export default function MasterPanel() {
   const [players, setPlayers] = useState([]);
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
-  const [shopItems, setShopItems] = useState([]); // Estado para itens da loja
+  const [shopItems, setShopItems] = useState([]); 
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: '', quantity: 1, desc: '' });
@@ -41,7 +41,7 @@ export default function MasterPanel() {
 
   useEffect(() => {
     fetchData();
-    // NOVO: Atualiza a cada 5 segundos para refletir compras dos jogadores
+    // Atualiza a cada 5 segundos para refletir compras e novas solicitações de roleta
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -140,22 +140,40 @@ export default function MasterPanel() {
     fetchData();
   }
   
+  // --- FUNÇÃO DE SOLICITAÇÃO ATUALIZADA (Roleta + Itens) ---
   async function handleRequest(request, approved) {
     if (approved) {
-      const { data: player } = await supabase.from('profiles').select('inventory, slots').eq('id', request.player_id).single();
-      const currentInv = player.inventory || [];
-      const limit = player.slots || 10;
-      const existingIndex = currentInv.findIndex(i => i.name.toLowerCase() === request.item_name.toLowerCase());
-      let newInv = [...currentInv];
-      const qtyToAdd = request.quantity || 1; 
-      if (existingIndex >= 0) { newInv[existingIndex].qty += qtyToAdd; } 
+      // Verifica se é uma solicitação de Roleta
+      if (request.item_name === "SOLICITACAO_ROLETA") {
+        // Libera o giro para o jogador
+        await supabase.from('profiles').update({ spin_allowed: true }).eq('id', request.player_id);
+        
+        // Remove a solicitação da lista (limpeza)
+        await supabase.from('item_requests').delete().eq('id', request.id);
+      } 
       else {
-        if (currentInv.length >= limit) return alert("Mochila cheia!");
-        newInv.push({ name: request.item_name, qty: qtyToAdd });
+        // Lógica Padrão: Adicionar Item ao Inventário
+        const { data: player } = await supabase.from('profiles').select('inventory, slots').eq('id', request.player_id).single();
+        const currentInv = player.inventory || [];
+        const limit = player.slots || 10;
+        const existingIndex = currentInv.findIndex(i => i.name.toLowerCase() === request.item_name.toLowerCase());
+        let newInv = [...currentInv];
+        const qtyToAdd = request.quantity || 1; 
+        
+        if (existingIndex >= 0) { 
+          newInv[existingIndex].qty += qtyToAdd; 
+        } else {
+          if (currentInv.length >= limit) return alert("Mochila cheia!");
+          newInv.push({ name: request.item_name, qty: qtyToAdd });
+        }
+        
+        await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
+        await supabase.from('item_requests').delete().eq('id', request.id);
       }
-      await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
+    } else {
+      // Recusado: Apenas apaga a solicitação
+      await supabase.from('item_requests').delete().eq('id', request.id);
     }
-    await supabase.from('item_requests').delete().eq('id', request.id);
     fetchData();
   }
 
@@ -339,15 +357,25 @@ export default function MasterPanel() {
             <h2 className={styles.cardTitle}>📦 Solicitações ({requests.length})</h2>
             <div className={styles.scrollableListSmall}>
               {requests.length === 0 && <p style={{color:'#665', textAlign:'center'}}>Vazio.</p>}
-              {requests.map(req => (
-                <div key={req.id} className={styles.requestItem}>
-                  <div><strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong><span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span></div>
-                  <div style={{display:'flex', gap:'5px'}}>
-                    <button onClick={() => handleRequest(req, true)} className={styles.btnApprove}>✓</button>
-                    <button onClick={() => handleRequest(req, false)} className={styles.btnReject}>✕</button>
+              {requests.map(req => {
+                const isRoulette = req.item_name === "SOLICITACAO_ROLETA";
+                return (
+                  <div key={req.id} className={styles.requestItem} style={isRoulette ? {borderLeftColor: '#9333ea', background: 'linear-gradient(90deg, #2e1065 0%, #111 100%)'} : {}}>
+                    <div>
+                      {isRoulette ? (
+                        <strong style={{color:'#d8b4fe', display:'block', textShadow:'0 0 5px #a855f7'}}>🔮 GIRO DA SORTE</strong>
+                      ) : (
+                        <strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong>
+                      )}
+                      <span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span>
+                    </div>
+                    <div style={{display:'flex', gap:'5px'}}>
+                      <button onClick={() => handleRequest(req, true)} className={styles.btnApprove} title={isRoulette ? "Liberar Giro" : "Aprovar"}>✓</button>
+                      <button onClick={() => handleRequest(req, false)} className={styles.btnReject} title="Recusar">✕</button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
