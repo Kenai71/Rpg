@@ -23,7 +23,7 @@ export default function MasterPanel() {
   const [players, setPlayers] = useState([]);
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
-  const [shopItems, setShopItems] = useState([]); // NOVO: Estado para itens da loja
+  const [shopItems, setShopItems] = useState([]); // Estado para itens da loja
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: '', quantity: 1, desc: '' });
@@ -41,6 +41,9 @@ export default function MasterPanel() {
 
   useEffect(() => {
     fetchData();
+    // NOVO: Atualiza a cada 5 segundos para refletir compras dos jogadores
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   async function fetchData() {
@@ -48,15 +51,13 @@ export default function MasterPanel() {
     const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player').order('username', { ascending: true });
     const { data: g } = await supabase.from('parties').select('*').order('name', { ascending: true });
     const { data: r } = await supabase.from('item_requests').select('*, profiles(username)').order('created_at', { ascending: true });
-    
-    // NOVO: Busca itens da loja
     const { data: s } = await supabase.from('shop_items').select('*').order('item_name', { ascending: true });
 
     setMissions(m || []);
     setPlayers(p || []);
     setParties(g || []);
     setRequests(r || []);
-    setShopItems(s || []); // Atualiza estado da loja
+    setShopItems(s || []); 
   }
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
@@ -176,7 +177,6 @@ export default function MasterPanel() {
     fetchData();
   }
 
-  // NOVO: Função para remover item da loja
   async function deleteShopItem(id) {
     if (!confirm("Remover este item da loja?")) return;
     const { error } = await supabase.from('shop_items').delete().eq('id', id);
@@ -317,7 +317,7 @@ export default function MasterPanel() {
             </div>
             <button onClick={addItem} className={styles.btnPrimary}>Adicionar Estoque</button>
 
-            {/* LISTA DE ITENS NA LOJA (NOVO) */}
+            {/* LISTA DE ITENS NA LOJA */}
             <div style={{marginTop: '15px', borderTop: '1px solid #333', paddingTop: '10px'}}>
                <h3 style={{color: '#aaa', fontSize: '0.9rem', marginBottom:'10px'}}>Itens à Venda</h3>
                <div className={styles.scrollableListSmall} style={{maxHeight: '200px'}}>

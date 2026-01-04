@@ -47,6 +47,7 @@ export default function PlayerPanel() {
 
   useEffect(() => {
     loadData();
+    // Atualização automática a cada 5 segundos
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -103,7 +104,7 @@ export default function PlayerPanel() {
     alert("Missão aceita!"); loadData();
   }
 
-  // ATUALIZADA: Compra itens agrupando e perguntando quantidade
+  // --- FUNÇÃO ATUALIZADA: Compra + Stacking + Deletar se acabar ---
   async function buyItem(item) {
     let qtyToBuy = 1;
     const input = prompt(`Quantos "${item.name || item.item_name}" deseja comprar? (Preço unitário: ${item.price}g)`, "1");
@@ -120,7 +121,7 @@ export default function PlayerPanel() {
     const limit = profile.slots || 10;
     const itemName = item.name || item.item_name;
     
-    // Procura se já tem o item (case insensitive)
+    // Agrupa itens iguais (ignorando maiúsculas/minúsculas)
     const idx = currentInv.findIndex(i => i.name.toLowerCase() === itemName.toLowerCase());
     
     let newInv = [...currentInv];
@@ -132,15 +133,22 @@ export default function PlayerPanel() {
       newInv.push({ name: itemName, qty: qtyToBuy });
     }
 
+    // Atualiza jogador
     const { error } = await supabase.from('profiles').update({ 
       gold: profile.gold - totalPrice, 
       inventory: newInv 
     }).eq('id', profile.id);
 
+    // Atualiza Loja (Remove se acabar)
     if (!error) { 
-      await supabase.from('shop_items').update({ 
-        quantity: item.quantity - qtyToBuy 
-      }).eq('id', item.id); 
+      const remaining = item.quantity - qtyToBuy;
+      
+      if (remaining > 0) {
+        await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
+      } else {
+        // Se o estoque zerar, deleta o item da loja para sumir do painel do Mestre
+        await supabase.from('shop_items').delete().eq('id', item.id);
+      }
       
       alert(`Comprou ${qtyToBuy}x ${itemName}!`); 
       loadData(); 
