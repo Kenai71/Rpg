@@ -41,7 +41,6 @@ export default function MasterPanel() {
 
   useEffect(() => {
     fetchData();
-    // Atualiza a cada 5 segundos para refletir compras e novas solicitações de roleta
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -140,38 +139,41 @@ export default function MasterPanel() {
     fetchData();
   }
   
-  // --- FUNÇÃO DE SOLICITAÇÃO ATUALIZADA (Roleta + Itens) ---
+  // --- FUNÇÃO DE SOLICITAÇÃO ATUALIZADA ---
   async function handleRequest(request, approved) {
     if (approved) {
-      // Verifica se é uma solicitação de Roleta
+      // Busca dados do jogador para poder adicionar o item
+      const { data: player } = await supabase.from('profiles').select('inventory, slots').eq('id', request.player_id).single();
+      const currentInv = player.inventory || [];
+      const limit = player.slots || 10;
+      let newInv = [...currentInv];
+
+      // Define qual item será adicionado
+      let itemToAddName = request.item_name;
+      
+      // SE FOR PEDIDO DE ROLETA, O ITEM A SER DADO É "Gacha Gift"
       if (request.item_name === "SOLICITACAO_ROLETA") {
-        // Libera o giro para o jogador
-        await supabase.from('profiles').update({ spin_allowed: true }).eq('id', request.player_id);
-        
-        // Remove a solicitação da lista (limpeza)
-        await supabase.from('item_requests').delete().eq('id', request.id);
-      } 
-      else {
-        // Lógica Padrão: Adicionar Item ao Inventário
-        const { data: player } = await supabase.from('profiles').select('inventory, slots').eq('id', request.player_id).single();
-        const currentInv = player.inventory || [];
-        const limit = player.slots || 10;
-        const existingIndex = currentInv.findIndex(i => i.name.toLowerCase() === request.item_name.toLowerCase());
-        let newInv = [...currentInv];
-        const qtyToAdd = request.quantity || 1; 
-        
-        if (existingIndex >= 0) { 
-          newInv[existingIndex].qty += qtyToAdd; 
-        } else {
-          if (currentInv.length >= limit) return alert("Mochila cheia!");
-          newInv.push({ name: request.item_name, qty: qtyToAdd });
-        }
-        
-        await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
-        await supabase.from('item_requests').delete().eq('id', request.id);
+        itemToAddName = "Gacha Gift";
       }
+
+      const existingIndex = newInv.findIndex(i => i.name.toLowerCase() === itemToAddName.toLowerCase());
+      const qtyToAdd = request.quantity || 1; 
+
+      if (existingIndex >= 0) { 
+        newInv[existingIndex].qty += qtyToAdd; 
+      } else {
+        if (newInv.length >= limit) return alert("Mochila do jogador cheia!");
+        newInv.push({ name: itemToAddName, qty: qtyToAdd });
+      }
+
+      // Atualiza inventário do jogador
+      await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
+      
+      // Remove a solicitação
+      await supabase.from('item_requests').delete().eq('id', request.id);
+
     } else {
-      // Recusado: Apenas apaga a solicitação
+      // Recusado
       await supabase.from('item_requests').delete().eq('id', request.id);
     }
     fetchData();
@@ -363,14 +365,14 @@ export default function MasterPanel() {
                   <div key={req.id} className={styles.requestItem} style={isRoulette ? {borderLeftColor: '#9333ea', background: 'linear-gradient(90deg, #2e1065 0%, #111 100%)'} : {}}>
                     <div>
                       {isRoulette ? (
-                        <strong style={{color:'#d8b4fe', display:'block', textShadow:'0 0 5px #a855f7'}}>🔮 GIRO DA SORTE</strong>
+                        <strong style={{color:'#d8b4fe', display:'block', textShadow:'0 0 5px #a855f7'}}>🔮 PEDIDO DE ROLETA</strong>
                       ) : (
                         <strong style={{color:'#fff', display:'block'}}>{req.quantity}x {req.item_name}</strong>
                       )}
                       <span style={{fontSize:'0.8rem', color:'#888'}}>{req.profiles?.username}</span>
                     </div>
                     <div style={{display:'flex', gap:'5px'}}>
-                      <button onClick={() => handleRequest(req, true)} className={styles.btnApprove} title={isRoulette ? "Liberar Giro" : "Aprovar"}>✓</button>
+                      <button onClick={() => handleRequest(req, true)} className={styles.btnApprove} title={isRoulette ? "Enviar Gift" : "Aprovar"}>✓</button>
                       <button onClick={() => handleRequest(req, false)} className={styles.btnReject} title="Recusar">✕</button>
                     </div>
                   </div>

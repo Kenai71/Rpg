@@ -17,7 +17,6 @@ const XP_TABLE = [
   { lvl: 17, xp: 225000 }, { lvl: 18, xp: 265000 }, { lvl: 19, xp: 305000 }, { lvl: 20, xp: 355000 }
 ];
 
-// Configuração da Roleta
 const RARITIES = [
   { name: 'COMUM', color: 'var(--rarity-common)', chance: 50 },
   { name: 'INCOMUM', color: 'var(--rarity-uncommon)', chance: 30 },
@@ -43,7 +42,7 @@ export default function PlayerPanel() {
   const [newItemQty, setNewItemQty] = useState(1);
 
   // Estados da Roleta
-  const [rouletteState, setRouletteState] = useState('idle'); // idle, waiting_approval, spinning, result
+  const [rouletteState, setRouletteState] = useState('idle'); // idle, spinning, result
   const [currentRarityDisplay, setCurrentRarityDisplay] = useState(RARITIES[0]);
   const [finalResult, setFinalResult] = useState(null);
 
@@ -62,16 +61,9 @@ export default function PlayerPanel() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 3000); // Atualiza mais rápido para ver a liberação da roleta
+    const interval = setInterval(loadData, 5000); 
     return () => clearInterval(interval);
   }, []);
-
-  // Monitora se o Mestre liberou o giro
-  useEffect(() => {
-    if (profile && profile.spin_allowed && rouletteState === 'waiting_approval') {
-      startSpinAnimation();
-    }
-  }, [profile, rouletteState]);
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -115,9 +107,7 @@ export default function PlayerPanel() {
   // --- FUNÇÕES DA ROLETA ---
 
   async function requestSpin() {
-    if (profile.gold < 0) return alert("Você está sem ouro!"); // Opcional: cobrar custo
-    
-    // 1. Cria a solicitação pro Mestre
+    // Apenas envia a solicitação para o mestre
     const { error } = await supabase.from('item_requests').insert([{ 
       player_id: profile.id, 
       item_name: "SOLICITACAO_ROLETA", 
@@ -125,21 +115,36 @@ export default function PlayerPanel() {
     }]);
 
     if (error) return alert("Erro ao solicitar giro.");
+    alert("Solicitação enviada ao Mestre! Aguarde receber o 'Gacha Gift' na mochila.");
+  }
+
+  // NOVA FUNÇÃO: Usar o item da mochila para girar
+  async function useGachaGift(index) {
+    if (!profile) return;
+    const currentInv = profile.inventory || [];
+    let newInv = [...currentInv];
+
+    // Remove 1 Gacha Gift
+    if (newInv[index].qty > 1) {
+       newInv[index].qty -= 1;
+    } else {
+       newInv.splice(index, 1);
+    }
+
+    // Atualiza inventário (consome o item)
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
     
-    setRouletteState('waiting_approval');
+    // Inicia a animação imediatamente
+    startSpinAnimation();
   }
 
   function startSpinAnimation() {
     setRouletteState('spinning');
     
-    // Remove a flag do banco para ele não girar de novo no F5 (limpeza)
-    // O ideal seria fazer isso no final, mas aqui garante que a animação começou
-    
     let speed = 50;
     let counter = 0;
-    const maxSpins = 30; // Quantas trocas de nome antes de parar
+    const maxSpins = 30; 
 
-    // Decide o resultado com base nas chances
     const rand = Math.random() * 100;
     let accumulated = 0;
     let resultObj = RARITIES[0];
@@ -153,17 +158,15 @@ export default function PlayerPanel() {
     }
 
     const spinInterval = () => {
-      // Efeito visual: escolhe uma raridade aleatória para mostrar
       const randomDisplay = RARITIES[Math.floor(Math.random() * RARITIES.length)];
       setCurrentRarityDisplay(randomDisplay);
       
       counter++;
       
       if (counter < maxSpins) {
-        speed += 10; // Desacelera
+        speed += 10; 
         setTimeout(spinInterval, speed);
       } else {
-        // FIM DO GIRO
         finishSpin(resultObj);
       }
     };
@@ -176,27 +179,24 @@ export default function PlayerPanel() {
     setFinalResult(result);
     setRouletteState('result');
 
-    // Remove a permissão e salva o "item" (neste caso, adiciona ao inventário como texto)
-    const currentInv = profile.inventory || [];
-    // Adiciona um item genérico com o nome da raridade ou algo específico
-    const itemName = `Item ${result.name}`; 
-    let newInv = [...currentInv];
+    // Agora adiciona o prêmio
+    const currentInv = profile.inventory || []; // Pega o inventário ATUALIZADO (sem o gift) se possível, mas aqui usamos o estado local que pode estar levemente defasado se não atualizarmos o profile
+    // Para segurança, vamos buscar o profile de novo ou confiar que o useGachaGift já atualizou o banco
+    // Vamos fazer um fetch rápido para garantir que não sobrescrevemos a remoção do Gift
+    const { data: updatedProfile } = await supabase.from('profiles').select('inventory').eq('id', profile.id).single();
     
-    if (newInv.length < (profile.slots || 10)) {
-       newInv.push({ name: itemName, qty: 1 });
+    let newInv = updatedProfile.inventory || [];
+    const itemName = `Item ${result.name}`; // Nome do prêmio
+
+    // Lógica de stack do prêmio
+    const idx = newInv.findIndex(i => i.name === itemName);
+    if (idx >= 0) {
+        newInv[idx].qty += 1;
+    } else {
+        newInv.push({ name: itemName, qty: 1 });
     }
 
-    await supabase.from('profiles').update({ 
-      spin_allowed: false,
-      inventory: newInv
-    }).eq('id', profile.id);
-    
-    // Limpa também a solicitação se ainda existir (segurança)
-    const req = myRequests.find(r => r.item_name === "SOLICITACAO_ROLETA");
-    if (req) {
-       await supabase.from('item_requests').delete().eq('id', req.id);
-    }
-    
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
     loadData();
   }
 
@@ -363,14 +363,6 @@ export default function PlayerPanel() {
         <div className="modal-overlay">
           <div className="modal-content" style={{border: '4px solid #fff'}}>
             
-            {rouletteState === 'waiting_approval' && (
-              <>
-                <h2 style={{color: '#aaa'}}>🔮 Aguardando o Mestre...</h2>
-                <div style={{margin: '20px auto', width: '40px', height: '40px', border: '4px solid #333', borderTop: '4px solid #fbbf24', borderRadius: '50%', animation: 'spin 1s linear infinite'}}></div>
-                <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-              </>
-            )}
-
             {(rouletteState === 'spinning' || rouletteState === 'result') && (
               <>
                 <h2 style={{color: '#fff', fontSize: '1.2rem', marginBottom:'2rem'}}>Sua Sorte Define seu Destino</h2>
@@ -464,7 +456,7 @@ export default function PlayerPanel() {
                  boxShadow: '0 0 10px rgba(147, 51, 234, 0.5)'
                }}
              >
-               🔮 Girar Roleta
+               🔮 Pedir Gift
              </button>
 
             <div style={{display:'flex', flexDirection:'column', alignItems:'end', gap:'5px'}}>
@@ -541,7 +533,19 @@ export default function PlayerPanel() {
                   const item = profile?.inventory?.[i];
                   return (
                     <div key={i} className={`slot ${item ? 'filled' : ''} ${styles.slot}`}>
-                      {item ? (<><div onClick={() => removeItem(i)} className={styles.removeBtn}>-</div><span className={styles.itemName}>{item.name}</span><span className={styles.itemQty}>x{item.qty}</span></>) : <button className={styles.addBtn} onClick={() => setIsModalOpen(true)}>+</button>}
+                      {item ? (
+                        <>
+                          {/* SE O ITEM FOR GACHA GIFT, APARECE O BOTÃO DE USAR */}
+                          {item.name === 'Gacha Gift' && (
+                             <button onClick={() => useGachaGift(i)} style={{position:'absolute', top:0, left:0, width:'100%', height:'100%', background:'rgba(147, 51, 234, 0.8)', border:'none', color:'white', fontWeight:'bold', cursor:'pointer', zIndex:10}}>USAR</button>
+                          )}
+                          <div onClick={() => removeItem(i)} className={styles.removeBtn}>-</div>
+                          <span className={styles.itemName}>{item.name}</span>
+                          <span className={styles.itemQty}>x{item.qty}</span>
+                        </>
+                      ) : (
+                        <button className={styles.addBtn} onClick={() => setIsModalOpen(true)}>+</button>
+                      )}
                     </div>
                   )
                 })}
