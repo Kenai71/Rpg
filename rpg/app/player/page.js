@@ -23,7 +23,7 @@ const RARITIES = [
   { name: 'RARO', color: 'var(--rarity-rare)', chance: 15 },
   { name: 'ÉPICO', color: 'var(--rarity-epic)', chance: 4 },
   { name: 'LENDÁRIO', color: 'var(--rarity-legendary)', chance: 0.9 },
-  { name: 'MÍTICO', color: 'var(--rarity-mythic)', chance: 0.1 }
+  { name: 'MÍTICO', color: 'var(--rarity-mythic)', chance: 0.01 }
 ];
 
 export default function PlayerPanel() {
