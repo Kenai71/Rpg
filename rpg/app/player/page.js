@@ -65,9 +65,17 @@ export default function PlayerPanel() {
 
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [leveledUpTo, setLeveledUpTo] = useState(1);
+  
+  // REFs para manter o estado atualizado dentro de funções assíncronas (como a roleta)
   const prevLevelRef = useRef(1);
+  const profileRef = useRef(null);
 
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
+
+  // Mantém o profileRef sempre sincronizado com o profile do estado
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     loadData();
@@ -79,7 +87,6 @@ export default function PlayerPanel() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Carregamento Paralelo
     const [profRes, missionsRes, shopRes, playersRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('missions').select('*').eq('status', 'open'),
@@ -96,7 +103,15 @@ export default function PlayerPanel() {
         setShowLevelUp(true);
         prevLevelRef.current = prof.level;
       }
-      setProfile(prof);
+      
+      // Só atualiza se não estiver rodando a roleta para evitar "pulos" visuais
+      if (rouletteState === 'idle') {
+        setProfile(prof);
+      } else {
+        // Se estiver rodando, atualizamos apenas o ref silenciosamente se necessário,
+        // mas evitamos setProfile para não sobrescrever a remoção otimista do Gacha Gift.
+        // Porém, como usamos profileRef na finalização, o estado visual local é rei.
+      }
 
       if (prof.party_id) {
         const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
@@ -112,8 +127,6 @@ export default function PlayerPanel() {
   }
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
-
-  // --- AÇÕES ---
 
   async function acceptMission(mission) {
     if (!profile) return;
@@ -176,7 +189,6 @@ export default function PlayerPanel() {
     if (!error) alert("Solicitado!");
   }
 
-  // --- FUNÇÃO CORRIGIDA AQUI ---
   async function useGachaGift(index) {
     // 1. Clona o inventário
     const currentInv = [...profile.inventory];
@@ -192,7 +204,7 @@ export default function PlayerPanel() {
     // 3. Atualiza a tela IMEDIATAMENTE (antes do banco/animação)
     setProfile(prev => ({ ...prev, inventory: currentInv }));
 
-    // 4. Salva no banco (assíncrono, sem travar a UI)
+    // 4. Salva no banco (assíncrono)
     supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id).then(({error}) => {
        if(error) console.error("Erro ao atualizar inventário:", error);
     });
@@ -244,14 +256,27 @@ export default function PlayerPanel() {
     spinInterval();
   }
 
+  // --- CORREÇÃO PRINCIPAL: Usando profileRef ---
   async function finishSpin(result) {
-    setCurrentRarityDisplay(result); setFinalResult(result); setRouletteState('result');
+    setCurrentRarityDisplay(result); 
+    setFinalResult(result); 
+    setRouletteState('result');
+
+    // Usamos o profileRef.current para garantir que estamos pegando 
+    // o inventário MAIS ATUAL (aquele onde o Gacha Gift já foi removido).
+    const currentProf = profileRef.current;
+    if (!currentProf) return;
+
     const itemName = `Item ${result.name}`;
-    const newInv = [...profile.inventory];
+    const newInv = [...currentProf.inventory]; 
     const idx = newInv.findIndex(i => i.name === itemName);
-    if (idx >= 0) newInv[idx].qty += 1; else newInv.push({ name: itemName, qty: 1 });
+    
+    if (idx >= 0) newInv[idx].qty += 1; 
+    else newInv.push({ name: itemName, qty: 1 });
+    
+    // Atualiza estado e banco com a lista correta
     setProfile(prev => ({...prev, inventory: newInv}));
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
   }
 
   const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
