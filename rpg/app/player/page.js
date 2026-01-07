@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './player.module.css';
+import Logo from '../components/Logo'; // Certifique-se que o arquivo existe em app/components/Logo.js
 import { 
   User, Shield, ShoppingBag, Scroll, Package, LogOut, 
   RefreshCw, Sparkles, Coins, Gift, Plus, X, Check 
@@ -78,19 +79,15 @@ export default function PlayerPanel() {
   useEffect(() => {
     loadData();
 
-    // --- REALTIME: Atualização Instantânea ---
+    // REALTIME ATIVADO
     const channel = supabase
       .channel('player-realtime')
-      // Atualiza se mudarem as missões (nova missão ou status alterado)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => loadData())
-      // Atualiza se mudarem o estoque da loja
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_items' }, () => loadData())
-      // Atualiza se mudarem perfis (seu ouro/xp ou rank de aliados)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .subscribe();
 
-    // Fallback de segurança (30s) caso o realtime desconecte
-    const interval = setInterval(loadData, 30000); 
+    const interval = setInterval(loadData, 30000); // Backup
     
     return () => {
       supabase.removeChannel(channel);
@@ -192,12 +189,10 @@ export default function PlayerPanel() {
     await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]);
     setNewItemName(''); 
     setIsModalOpen(false);
-    // REMOVIDO: alert("Solicitado!");
   }
 
   async function requestSpin() {
     await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]);
-    // REMOVIDO: alert("Solicitado!");
   }
 
   async function useGachaGift(index) {
@@ -242,7 +237,6 @@ export default function PlayerPanel() {
         if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido");
         
         await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd });
-        // REMOVIDO: alert("Enviado!"); 
         setTransferModalOpen(false);
     }
   }
@@ -306,12 +300,19 @@ export default function PlayerPanel() {
       <div className={styles.container}>
         {profile && (
           <div className={styles.hud}>
-            <div className={styles.charInfo}>
-              <h1><User size={32} /> {profile.username}</h1>
-              <div className={styles.charDetails}>
-                <span className={styles.tag} style={{color: getRankColor(profile.rank), borderColor: getRankColor(profile.rank)}}>RANK {profile.rank || 'F'}</span>
-                <span className={styles.tag}>LVL {profile.level || 1}</span>
-                {myParty && <span className={styles.tag} style={{borderColor: '#10b981', color: '#10b981'}}>{myParty.name}</span>}
+            
+            {/* --- ÁREA DO PERSONAGEM (ATUALIZADA) --- */}
+            {/* Agora o logo fica ao lado esquerdo, separado do nome */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '25px' }}>
+              <Logo size={45} showText={false} /> {/* Logo Dourado */}
+              
+              <div className={styles.charInfo}>
+                <h1><User size={32} /> {profile.username}</h1>
+                <div className={styles.charDetails}>
+                  <span className={styles.tag} style={{color: getRankColor(profile.rank), borderColor: getRankColor(profile.rank)}}>RANK {profile.rank || 'F'}</span>
+                  <span className={styles.tag}>LVL {profile.level || 1}</span>
+                  {myParty && <span className={styles.tag} style={{borderColor: '#10b981', color: '#10b981'}}>{myParty.name}</span>}
+                </div>
               </div>
             </div>
             

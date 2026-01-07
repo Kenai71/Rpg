@@ -3,8 +3,9 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './master.module.css';
+import Logo from '../components/Logo'; // Importando o Logo
 import { 
-  LayoutGrid, RefreshCw, LogOut, Plus, Trash2, 
+  RefreshCw, LogOut, Plus, Trash2, 
   Check, X, ShoppingBag, Scroll, Users, Backpack, 
   Crown, Coins, Sparkles, Zap, MessageSquare
 } from 'lucide-react';
@@ -53,34 +54,16 @@ export default function MasterPanel() {
   const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
 
   useEffect(() => {
-    // Carrega dados iniciais
     fetchData();
 
-    // --- REALTIME (O SEGREDO DA VELOCIDADE) ---
-    // Inscreve-se para ouvir mudanças nas tabelas críticas
+    // --- REALTIME ---
     const channel = supabase
       .channel('master-updates')
-      .on(
-        'postgres_changes', 
-        { event: '*', schema: 'public', table: 'item_requests' }, 
-        () => {
-          console.log("Nova solicitação recebida!");
-          fetchData(); // Recarrega instantaneamente
-        }
-      )
-      .on(
-        'postgres_changes', 
-        { event: '*', schema: 'public', table: 'missions' }, 
-        () => fetchData()
-      )
-      .on(
-        'postgres_changes', 
-        { event: '*', schema: 'public', table: 'profiles' }, 
-        () => fetchData()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'item_requests' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchData())
       .subscribe();
 
-    // Mantemos um intervalo de segurança (30s) caso a conexão realtime caia
     const interval = setInterval(fetchData, 30000);
 
     return () => {
@@ -89,7 +72,6 @@ export default function MasterPanel() {
     };
   }, []);
 
-  // --- FETCH DATA OTIMIZADO (PROMISE.ALL) ---
   async function fetchData() {
     const [
       { data: m },
@@ -122,7 +104,6 @@ export default function MasterPanel() {
     return newLevel;
   }
 
-  // Função auxiliar para salvar no banco (usada pelas funções otimistas)
   async function updatePlayerXpAndLevel(playerId, amountXP, amountGold = 0) {
     const player = players.find(p => p.id === playerId);
     if (!player) return;
@@ -130,10 +111,7 @@ export default function MasterPanel() {
     const newGold = Math.max(0, (player.gold || 0) + Number(amountGold));
     const newLevel = calculateLevel(newXp);
     
-    // Atualiza no banco
     await supabase.from('profiles').update({ xp: newXp, gold: newGold, level: newLevel }).eq('id', playerId);
-    // O Realtime vai acionar o fetchData automaticamente, mas podemos chamar aqui por garantia
-    // fetchData(); 
   }
 
   async function createParty() {
@@ -141,7 +119,6 @@ export default function MasterPanel() {
     const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
     if (error) return alert(error.message);
     setPartyForm(''); 
-    // fetchData chamado pelo realtime
   }
 
   async function assignToParty(playerId, partyId) {
@@ -151,7 +128,7 @@ export default function MasterPanel() {
 
   async function makeLeader(partyId, playerId) {
     await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId);
-    fetchData(); // Força fetch pois a tabela parties talvez não esteja no realtime acima (opcional adicionar)
+    fetchData(); 
   }
 
   async function updateMission(id, status, playerId, xpReward, goldReward) {
@@ -170,7 +147,6 @@ export default function MasterPanel() {
         await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
       }
     }
-    // fetchData chamado pelo realtime
   }
 
   async function deleteMission(id) {
@@ -208,7 +184,7 @@ export default function MasterPanel() {
     const payload = { item_name: shopForm.name, price: Number(shopForm.price), quantity: shopForm.quantity, description: shopForm.desc };
     await supabase.from('shop_items').insert([payload]);
     setShopForm({ seller: '', name: '', price: '', quantity: 1, desc: '' });
-    fetchData(); // Shop items não está no realtime principal, chamamos manual
+    fetchData(); 
   }
 
   async function deleteShopItem(id) {
@@ -217,16 +193,10 @@ export default function MasterPanel() {
     fetchData();
   }
 
-  // --- OTIMIZAÇÃO: ATUALIZAÇÕES LOCAIS INSTANTÂNEAS ---
-
   async function modifyGold(playerId, amount) { 
     if (!amount) return; 
     const val = Number(amount);
-    
-    // Atualiza visualmente agora
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, gold: Math.max(0, (p.gold||0) + val) } : p));
-    
-    // Envia para o banco em background
     await updatePlayerXpAndLevel(playerId, 0, val);
     setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
   }
@@ -234,20 +204,13 @@ export default function MasterPanel() {
   async function modifyXp(playerId, amount) { 
     if (!amount) return; 
     const val = Number(amount);
-
-    // Atualiza visualmente agora
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, xp: Math.max(0, (p.xp||0) + val) } : p));
-
-    // Envia para o banco em background
     await updatePlayerXpAndLevel(playerId, val, 0);
     setXpMod(prev => ({ ...prev, [playerId]: '' })); 
   }
 
   async function updateRank(playerId, newRank) { 
-    // Atualiza visualmente agora
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, rank: newRank } : p));
-
-    // Envia para o banco
     await supabase.from('profiles').update({ rank: newRank }).eq('id', playerId); 
   }
 
@@ -257,12 +220,8 @@ export default function MasterPanel() {
     if (!selectedPlayerForInv) return; 
     const qtd = Number(slotAddQty); if (qtd <= 0) return; 
     const newSlots = (selectedPlayerForInv.slots||10) + qtd;
-    
-    // Update local modal data
     setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots});
-    
     await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
-    // Realtime atualizará o resto
   }
   
   async function masterAddItemToPlayer() {
@@ -270,13 +229,9 @@ export default function MasterPanel() {
     const qtd = Number(masterItemQty); if (qtd <= 0) return;
     let newInv = [...(selectedPlayerForInv.inventory || [])];
     const idx = newInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
-    
     if (idx >= 0) newInv[idx].qty += qtd; 
     else { if (newInv.length >= (selectedPlayerForInv.slots||10)) return alert("Mochila cheia!"); newInv.push({ name: masterItemName, qty: qtd }); }
-    
-    // Update local modal data
     setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
-
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
     setMasterItemName(''); 
   }
@@ -285,10 +240,7 @@ export default function MasterPanel() {
     if (!selectedPlayerForInv) return;
     let newInv = [...(selectedPlayerForInv.inventory || [])];
     if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
-    
-    // Update local modal data
     setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
-
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
   }
 
@@ -308,7 +260,6 @@ export default function MasterPanel() {
               <h2 style={{color:'var(--accent-glow)', margin:'0 0 20px 0', fontSize:'1.4rem', display:'flex', alignItems:'center', gap:'10px'}}>
                 <Backpack size={24} /> Mochila: <span style={{color:'#fff'}}>{selectedPlayerForInv.username}</span>
               </h2>
-              
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#18181b', padding:'12px', borderRadius:'8px', marginBottom:'20px', border:'1px solid #27272a'}}>
                   <span style={{color:'#a1a1aa', fontSize:'0.9rem'}}>Capacidade: <strong style={{color:'#fff'}}>{selectedPlayerForInv.slots || 10}</strong> slots</span>
                   <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
@@ -316,14 +267,11 @@ export default function MasterPanel() {
                     <button onClick={increaseSlots} className={styles.btnPrimary} style={{marginTop:0, width:'auto', padding:'8px 16px'}}><Plus size={16}/></button>
                   </div>
               </div>
-
               <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
                  <input className={styles.input} placeholder="Item" value={masterItemName} onChange={e => setMasterItemName(e.target.value)} />
                  <input type="number" min="1" className={styles.input} placeholder="Qtd" value={masterItemQty} onChange={e => setMasterItemQty(e.target.value)} style={{width:'80px'}} />
                  <button onClick={masterAddItemToPlayer} className={styles.btnPrimary} style={{width:'auto', marginTop:0}}><Plus size={18}/></button>
               </div>
-
-              {/* GRID DA MOCHILA REESTRUTURADO */}
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(80px, 1fr))', gap:'12px', maxHeight:'300px', overflowY:'auto'}}>
                 {[...Array(selectedPlayerForInv.slots || 10)].map((_, i) => {
                   const item = selectedPlayerForInv.inventory?.[i];
@@ -346,7 +294,11 @@ export default function MasterPanel() {
         )}
 
         <header className={styles.header}>
-          <div className={styles.titleGroup}><h1><LayoutGrid size={28} /> O ÚLTIMO ECO DE ASTRALIS</h1></div>
+          {/* LOGO NOVO AQUI NO HEADER DO MESTRE */}
+          <div className={styles.titleGroup}>
+             <Logo size={42} showText={true} /> 
+          </div>
+          
           <div className={styles.actions}>
             <button onClick={fetchData} className={`${styles.btnIcon} ${styles.btnRefresh}`}>
               <RefreshCw size={18} /> <span className="hidden md:inline">Atualizar</span>
