@@ -3,6 +3,10 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './player.module.css';
+import { 
+  User, Shield, ShoppingBag, Scroll, Package, LogOut, 
+  RefreshCw, Sparkles, Coins, Gift, Plus, X, Check 
+} from 'lucide-react';
 
 const RANK_COLORS = {
   'F': '#9ca3af', 'E': '#4ade80', 'D': '#60a5fa',
@@ -18,31 +22,37 @@ const XP_TABLE = [
 ];
 
 const RARITIES = [
-  { name: 'COMUM', color: 'var(--rarity-common)', chance: 50 },
-  { name: 'INCOMUM', color: 'var(--rarity-uncommon)', chance: 30 },
-  { name: 'RARO', color: 'var(--rarity-rare)', chance: 15 },
-  { name: 'ÉPICO', color: 'var(--rarity-epic)', chance: 4 },
-  { name: 'LENDÁRIO', color: 'var(--rarity-legendary)', chance: 0.9 },
-  { name: 'MÍTICO', color: 'var(--rarity-mythic)', chance: 0.01 }
+  { name: 'COMUM', color: '#9ca3af', chance: 50 },
+  { name: 'INCOMUM', color: '#4ade80', chance: 30 },
+  { name: 'RARO', color: '#60a5fa', chance: 15 },
+  { name: 'ÉPICO', color: '#a78bfa', chance: 4 },
+  { name: 'LENDÁRIO', color: '#fbbf24', chance: 0.9 },
+  { name: 'MÍTICO', color: '#ef4444', chance: 0.1 }
+];
+
+const themes = [
+    { id: 'purple', color: '#8b5cf6', label: 'Nebula Violet' },
+    { id: 'green',  color: '#10b981', label: 'Toxic Emerald' },
+    { id: 'blue',   color: '#0ea5e9', label: 'Cyber Sky' },
+    { id: 'red',    color: '#ef4444', label: 'Crimson Core' },
 ];
 
 export default function PlayerPanel() {
   const router = useRouter();
+  const [currentTheme, setCurrentTheme] = useState('purple');
+  
   const [profile, setProfile] = useState(null);
   const [missions, setMissions] = useState([]);
   const [shop, setShop] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]);
-  const [myRequests, setMyRequests] = useState([]); 
-  const [incomingTrades, setIncomingTrades] = useState([]); 
   const [myParty, setMyParty] = useState(null); 
+  
   const [tab, setTab] = useState('missions');
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState(1);
 
-  // Estados da Roleta
-  const [rouletteState, setRouletteState] = useState('idle'); // idle, spinning, result
+  const [rouletteState, setRouletteState] = useState('idle'); 
   const [currentRarityDisplay, setCurrentRarityDisplay] = useState(RARITIES[0]);
   const [finalResult, setFinalResult] = useState(null);
 
@@ -67,24 +77,26 @@ export default function PlayerPanel() {
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      
-      if (prof) {
-        if (prevLevelRef.current === 1 && prof.level > 1 && !profile) {
-           prevLevelRef.current = prof.level;
-        } else if (prof.level > prevLevelRef.current) {
-          setLeveledUpTo(prof.level);
-          setShowLevelUp(true);
-          prevLevelRef.current = prof.level;
-        }
-      }
+    if (!user) return;
 
+    // Carregamento Paralelo
+    const [profRes, missionsRes, shopRes, playersRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('missions').select('*').eq('status', 'open'),
+        supabase.from('shop_items').select('*').gt('quantity', 0).order('item_name', { ascending: true }),
+        supabase.from('profiles').select('*').eq('role', 'player')
+    ]);
+
+    const prof = profRes.data;
+    if (prof) {
+      if (prevLevelRef.current === 1 && prof.level > 1 && !profile) {
+         prevLevelRef.current = prof.level;
+      } else if (prof.level > prevLevelRef.current) {
+        setLeveledUpTo(prof.level);
+        setShowLevelUp(true);
+        prevLevelRef.current = prof.level;
+      }
       setProfile(prof);
-      const { data: reqs } = await supabase.from('item_requests').select('*').eq('player_id', user.id);
-      setMyRequests(reqs || []);
-      const { data: trades } = await supabase.from('trade_requests').select('*, profiles!sender_id(username)').eq('receiver_id', user.id);
-      setIncomingTrades(trades || []);
 
       if (prof.party_id) {
         const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
@@ -93,467 +105,374 @@ export default function PlayerPanel() {
         setMyParty(null);
       }
     }
-    const { data: m } = await supabase.from('missions').select('*').eq('status', 'open');
-    const { data: s } = await supabase.from('shop_items').select('*').gt('quantity', 0);
-    const { data: p } = await supabase.from('profiles').select('*').eq('role', 'player');
-    
-    setMissions(m || []);
-    setShop(s || []);
-    setAllPlayers(p || []);
+
+    setMissions(missionsRes.data || []);
+    setShop(shopRes.data || []);
+    setAllPlayers(playersRes.data || []);
   }
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  // --- FUNÇÕES DA ROLETA ---
-
-  async function requestSpin() {
-    // Apenas envia a solicitação para o mestre
-    const { error } = await supabase.from('item_requests').insert([{ 
-      player_id: profile.id, 
-      item_name: "SOLICITACAO_ROLETA", 
-      quantity: 1 
-    }]);
-
-    if (error) return alert("Erro ao solicitar giro.");
-    alert("Solicitação enviada ao Mestre! Aguarde receber o 'Gacha Gift' na mochila.");
-  }
-
-  // NOVA FUNÇÃO: Usar o item da mochila para girar
-  async function useGachaGift(index) {
-    if (!profile) return;
-    const currentInv = profile.inventory || [];
-    let newInv = [...currentInv];
-
-    // Remove 1 Gacha Gift
-    if (newInv[index].qty > 1) {
-       newInv[index].qty -= 1;
-    } else {
-       newInv.splice(index, 1);
-    }
-
-    // Atualiza inventário (consome o item)
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
-    
-    // Inicia a animação imediatamente
-    startSpinAnimation();
-  }
-
-  function startSpinAnimation() {
-    setRouletteState('spinning');
-    
-    let speed = 50;
-    let counter = 0;
-    const maxSpins = 30; 
-
-    const rand = Math.random() * 100;
-    let accumulated = 0;
-    let resultObj = RARITIES[0];
-    
-    for (let r of RARITIES) {
-      accumulated += r.chance;
-      if (rand <= accumulated) {
-        resultObj = r;
-        break;
-      }
-    }
-
-    const spinInterval = () => {
-      const randomDisplay = RARITIES[Math.floor(Math.random() * RARITIES.length)];
-      setCurrentRarityDisplay(randomDisplay);
-      
-      counter++;
-      
-      if (counter < maxSpins) {
-        speed += 10; 
-        setTimeout(spinInterval, speed);
-      } else {
-        finishSpin(resultObj);
-      }
-    };
-
-    spinInterval();
-  }
-
-  async function finishSpin(result) {
-    setCurrentRarityDisplay(result);
-    setFinalResult(result);
-    setRouletteState('result');
-
-    // Agora adiciona o prêmio
-    const currentInv = profile.inventory || []; // Pega o inventário ATUALIZADO (sem o gift) se possível, mas aqui usamos o estado local que pode estar levemente defasado se não atualizarmos o profile
-    // Para segurança, vamos buscar o profile de novo ou confiar que o useGachaGift já atualizou o banco
-    // Vamos fazer um fetch rápido para garantir que não sobrescrevemos a remoção do Gift
-    const { data: updatedProfile } = await supabase.from('profiles').select('inventory').eq('id', profile.id).single();
-    
-    let newInv = updatedProfile.inventory || [];
-    const itemName = `Item ${result.name}`; // Nome do prêmio
-
-    // Lógica de stack do prêmio
-    const idx = newInv.findIndex(i => i.name === itemName);
-    if (idx >= 0) {
-        newInv[idx].qty += 1;
-    } else {
-        newInv.push({ name: itemName, qty: 1 });
-    }
-
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
-    loadData();
-  }
-
-  function closeRoulette() {
-    setRouletteState('idle');
-    setFinalResult(null);
-  }
-
-  // -------------------------
+  // --- AÇÕES ---
 
   async function acceptMission(mission) {
     if (!profile) return;
     const pRank = RANK_VALUES[profile.rank || 'F'];
     const mRank = RANK_VALUES[mission.rank || 'F'];
     if (mRank > pRank + 1) return alert("Seu Rank é muito baixo para esta missão.");
-    if (profile.party_id) {
-      const { data: partyCheck } = await supabase.from('parties').select('leader_id').eq('id', profile.party_id).single();
-      if (partyCheck.leader_id !== profile.id) return alert("Apenas o Líder do grupo pode aceitar missões!");
-    }
-    await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id);
-    alert("Missão aceita!"); loadData();
+    
+    setMissions(current => current.filter(m => m.id !== mission.id));
+    const { error } = await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id);
+    if(error) { alert("Erro ao aceitar"); loadData(); }
   }
 
   async function buyItem(item) {
     let qtyToBuy = 1;
-    const input = prompt(`Quantos "${item.name || item.item_name}" deseja comprar? (Preço unitário: ${item.price}g)`, "1");
+    const input = prompt(`Quantos "${item.name || item.item_name}"?`, "1");
     if (input === null) return; 
     qtyToBuy = parseInt(input);
-    if (isNaN(qtyToBuy) || qtyToBuy <= 0) return alert("Quantidade inválida.");
+    if (isNaN(qtyToBuy) || qtyToBuy <= 0) return alert("Qtd inválida.");
 
     const totalPrice = item.price * qtyToBuy;
-
-    if (item.quantity < qtyToBuy) return alert("Estoque insuficiente na loja.");
+    if (item.quantity < qtyToBuy) return alert("Sem estoque.");
     if (profile.gold < totalPrice) return alert("Ouro insuficiente.");
 
-    const currentInv = profile.inventory || [];
-    const limit = profile.slots || 10;
     const itemName = item.name || item.item_name;
+    const currentInv = [...(profile.inventory || [])];
     const idx = currentInv.findIndex(i => i.name.toLowerCase() === itemName.toLowerCase());
     
-    let newInv = [...currentInv];
-    if (idx >= 0) newInv[idx].qty += qtyToBuy; 
-    else {
-      if (currentInv.length >= limit) return alert("Mochila cheia!");
-      newInv.push({ name: itemName, qty: qtyToBuy });
-    }
+    if (idx >= 0) currentInv[idx].qty += qtyToBuy; 
+    else currentInv.push({ name: itemName, qty: qtyToBuy });
 
-    const { error } = await supabase.from('profiles').update({ gold: profile.gold - totalPrice, inventory: newInv }).eq('id', profile.id);
+    setProfile(prev => ({ ...prev, gold: prev.gold - totalPrice, inventory: currentInv }));
+    setShop(currentShop => currentShop.map(s => 
+        s.id === item.id ? { ...s, quantity: s.quantity - qtyToBuy } : s
+    ).filter(s => s.quantity > 0));
 
-    if (!error) { 
-      const remaining = item.quantity - qtyToBuy;
-      if (remaining > 0) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
-      else await supabase.from('shop_items').delete().eq('id', item.id);
-      alert(`Comprou ${qtyToBuy}x ${itemName}!`); 
-      loadData(); 
-    }
+    await supabase.from('profiles').update({ gold: profile.gold - totalPrice, inventory: currentInv }).eq('id', profile.id);
+    const remaining = item.quantity - qtyToBuy;
+    if (remaining > 0) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
+    else await supabase.from('shop_items').delete().eq('id', item.id);
+  }
+
+  async function removeItem(index) {
+    if(!confirm("Jogar fora?")) return;
+    const currentInv = [...profile.inventory];
+    if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1);
+    
+    setProfile(prev => ({ ...prev, inventory: currentInv }));
+    await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
   }
 
   async function requestItem() {
     if (!newItemName.trim()) return;
-    if (newItemQty <= 0) return alert("Qtd > 0");
     await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]);
-    alert("Solicitação enviada!"); setNewItemName(''); setNewItemQty(1); setIsModalOpen(false); loadData();
+    setNewItemName(''); setIsModalOpen(false);
+    alert("Solicitado!"); 
   }
 
-  async function removeItem(index) {
-    if(!confirm("Jogar item fora?")) return;
-    const currentInv = profile.inventory || [];
-    let newInv = [...currentInv];
-    if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
-    loadData();
+  async function requestSpin() {
+    const { error } = await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]);
+    if (!error) alert("Solicitado!");
+  }
+
+  // --- FUNÇÃO CORRIGIDA AQUI ---
+  async function useGachaGift(index) {
+    // 1. Clona o inventário
+    const currentInv = [...profile.inventory];
+    const item = currentInv[index];
+
+    // 2. Remove ou diminui a quantidade
+    if (item.qty > 1) {
+      item.qty -= 1;
+    } else {
+      currentInv.splice(index, 1);
+    }
+
+    // 3. Atualiza a tela IMEDIATAMENTE (antes do banco/animação)
+    setProfile(prev => ({ ...prev, inventory: currentInv }));
+
+    // 4. Salva no banco (assíncrono, sem travar a UI)
+    supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id).then(({error}) => {
+       if(error) console.error("Erro ao atualizar inventário:", error);
+    });
+
+    // 5. Começa a roleta
+    startSpinAnimation();
   }
 
   function openTransfer(target) {
-    setTransferTarget(target);
-    setTransferType('gold');
-    setTransferAmount('');
-    setTransferItemQty(1);
-    setTransferModalOpen(true);
+    setTransferTarget(target); setTransferType('gold'); setTransferAmount(''); setTransferItemQty(1); setTransferModalOpen(true);
   }
 
   async function handleTransfer() {
     if (!transferTarget || !profile) return;
-    
     if (transferType === 'gold') {
       const amount = Math.floor(Number(transferAmount)); 
-      if (isNaN(amount) || amount <= 0) return alert("Valor inválido.");
-      if (amount > profile.gold) return alert("Você não tem ouro suficiente.");
+      if (amount <= 0 || amount > profile.gold) return alert("Inválido.");
+      
+      setProfile(prev => ({ ...prev, gold: prev.gold - amount }));
+      setTransferModalOpen(false);
 
       await supabase.from('profiles').update({ gold: profile.gold - amount }).eq('id', profile.id);
-      const { data: targetData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single();
-      await supabase.from('profiles').update({ gold: (targetData.gold || 0) + amount }).eq('id', transferTarget.id);
-
-      alert(`Você enviou ${amount} de ouro para ${transferTarget.username}!`);
-      setTransferModalOpen(false);
-      loadData();
-    } 
-    else if (transferType === 'item') {
-      const inv = profile.inventory || [];
-      const itemToGive = inv[transferItemIdx];
-      const qtd = Math.floor(Number(transferItemQty));
-
-      if (!itemToGive) return;
-      if (isNaN(qtd) || qtd <= 0) return alert("Quantidade inválida.");
-      if (qtd > itemToGive.qty) return alert("Você não tem essa quantidade!");
-
-      const { error } = await supabase.from('trade_requests').insert({
-        sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd
-      });
-
-      if (error) alert("Erro: " + error.message);
-      else alert(`Solicitação enviada!`);
-
-      setTransferModalOpen(false);
-      loadData();
+      const { data: tData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single();
+      await supabase.from('profiles').update({ gold: (tData.gold || 0) + amount }).eq('id', transferTarget.id);
+    } else {
+        const inv = profile.inventory || [];
+        const itemToGive = inv[transferItemIdx];
+        const qtd = Math.floor(Number(transferItemQty));
+        if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido");
+        
+        await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd });
+        alert("Enviado!"); setTransferModalOpen(false);
     }
   }
 
-  async function acceptTrade(trade) {
-    const { data: sender } = await supabase.from('profiles').select('inventory').eq('id', trade.sender_id).single();
-    if (!sender) { alert("Remetente não encontrado."); await supabase.from('trade_requests').delete().eq('id', trade.id); loadData(); return; }
-    const senderInv = sender.inventory || [];
-    const itemIndex = senderInv.findIndex(i => i.name === trade.item_name);
-    if (itemIndex === -1 || senderInv[itemIndex].qty < trade.quantity) {
-      alert("Falha: Remetente não tem mais este item."); await supabase.from('trade_requests').delete().eq('id', trade.id); loadData(); return;
-    }
-    let newSenderInv = [...senderInv];
-    if (newSenderInv[itemIndex].qty > trade.quantity) newSenderInv[itemIndex].qty -= trade.quantity; else newSenderInv.splice(itemIndex, 1);
-    const myInv = profile.inventory || [];
-    if (myInv.length >= (profile.slots || 10) && !myInv.find(i => i.name === trade.item_name)) return alert("Mochila cheia!");
-    let newMyInv = [...myInv];
-    const myItemIndex = newMyInv.findIndex(i => i.name === trade.item_name);
-    if (myItemIndex >= 0) newMyInv[myItemIndex].qty += trade.quantity; else newMyInv.push({ name: trade.item_name, qty: trade.quantity });
-    await supabase.from('profiles').update({ inventory: newSenderInv }).eq('id', trade.sender_id);
-    await supabase.from('profiles').update({ inventory: newMyInv }).eq('id', profile.id);
-    await supabase.from('trade_requests').delete().eq('id', trade.id);
-    alert(`Recebido!`); loadData();
+  function startSpinAnimation() {
+    setRouletteState('spinning');
+    let speed = 50; let counter = 0; const maxSpins = 30; 
+    const rand = Math.random() * 100;
+    let accumulated = 0; let resultObj = RARITIES[0];
+    for (let r of RARITIES) { accumulated += r.chance; if (rand <= accumulated) { resultObj = r; break; } }
+
+    const spinInterval = () => {
+      setCurrentRarityDisplay(RARITIES[Math.floor(Math.random() * RARITIES.length)]);
+      counter++;
+      if (counter < maxSpins) { speed += 10; setTimeout(spinInterval, speed); } 
+      else { finishSpin(resultObj); }
+    };
+    spinInterval();
   }
 
-  async function rejectTrade(tradeId) {
-    if (!confirm("Recusar?")) return;
-    await supabase.from('trade_requests').delete().eq('id', tradeId); loadData();
+  async function finishSpin(result) {
+    setCurrentRarityDisplay(result); setFinalResult(result); setRouletteState('result');
+    const itemName = `Item ${result.name}`;
+    const newInv = [...profile.inventory];
+    const idx = newInv.findIndex(i => i.name === itemName);
+    if (idx >= 0) newInv[idx].qty += 1; else newInv.push({ name: itemName, qty: 1 });
+    setProfile(prev => ({...prev, inventory: newInv}));
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', profile.id);
   }
 
   const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
   const getXpProgress = () => {
     if (!profile) return { percent: 0, text: '0/0' };
-    const currentLevel = profile.level || 1;
-    if (currentLevel >= 20) return { percent: 100, text: 'Nível Máximo' };
-    const currentLevelData = XP_TABLE.find(l => l.lvl === currentLevel) || { xp: 0 };
-    const nextLevelData = XP_TABLE.find(l => l.lvl === currentLevel + 1) || { xp: 999999 };
-    const currentXpFloor = currentLevelData.xp;
-    const nextXpCeiling = nextLevelData.xp;
-    const percent = Math.min(100, Math.max(0, ((profile.xp - currentXpFloor) / (nextXpCeiling - currentXpFloor)) * 100));
-    return { percent, text: `${profile.xp} / ${nextXpCeiling}` };
+    const curr = profile.level || 1;
+    if (curr >= 20) return { percent: 100, text: 'MAX' };
+    const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 };
+    const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 };
+    const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100));
+    return { percent, text: `${profile.xp} / ${nextData.xp}` };
   };
   const xpData = getXpProgress();
 
   return (
-    <div className={styles.container}>
-      {/* MODAL DA ROLETA */}
-      {(rouletteState !== 'idle') && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{border: '4px solid #fff'}}>
+    <div className={styles.wrapper} data-theme={currentTheme}>
+      <div className={styles.themeSwitcher}>
+          {themes.map(t => (
+              <button key={t.id} className={`${styles.themeDot} ${currentTheme === t.id ? styles.activeDot : ''}`}
+                style={{backgroundColor: t.color}} onClick={() => setCurrentTheme(t.id)} title={t.label} />
+          ))}
+      </div>
+
+      <div className={styles.container}>
+        {profile && (
+          <div className={styles.hud}>
+            <div className={styles.charInfo}>
+              <h1><User size={32} /> {profile.username}</h1>
+              <div className={styles.charDetails}>
+                <span className={styles.tag} style={{color: getRankColor(profile.rank), borderColor: getRankColor(profile.rank)}}>RANK {profile.rank || 'F'}</span>
+                <span className={styles.tag}>LVL {profile.level || 1}</span>
+                {myParty && <span className={styles.tag} style={{borderColor: '#10b981', color: '#10b981'}}>{myParty.name}</span>}
+              </div>
+            </div>
             
-            {(rouletteState === 'spinning' || rouletteState === 'result') && (
-              <>
-                <h2 style={{color: '#fff', fontSize: '1.2rem', marginBottom:'2rem'}}>Sua Sorte Define seu Destino</h2>
-                <div className={`roulette-text ${currentRarityDisplay.name === 'MÍTICO' ? 'mythic-glow' : ''}`} style={{color: currentRarityDisplay.color, fontSize:'3.5rem'}}>
-                  {currentRarityDisplay.name}
-                </div>
-                
-                {rouletteState === 'result' && (
-                  <div style={{marginTop: '30px', animation: 'fadeIn 0.5s'}}>
-                     <p style={{color: '#ccc'}}>Item recebido na mochila!</p>
-                     <button onClick={closeRoulette} className={styles.btnPrimary}>RECEBER</button>
+            <div className={styles.hudRight}>
+               <button onClick={requestSpin} className={`${styles.btnIcon} ${styles.btnMagic}`}><Sparkles size={16}/> Gift</button>
+               
+               <div className={styles.statsGroup}>
+                 <div className={styles.goldDisplay}><Coins size={18} color="#fbbf24" /> {profile.gold}</div>
+                 <div className={styles.xpContainer} title={xpData.text}>
+                    <div className={styles.xpFill} style={{width: `${xpData.percent}%`}}></div>
+                 </div>
+                 <span className={styles.xpText}>XP {xpData.text}</span>
+               </div>
+
+               <div className={styles.hudActions}>
+                 <button onClick={loadData} className={`${styles.btnIcon} ${styles.btnRefresh}`}><RefreshCw size={18}/></button>
+                 <button onClick={handleLogout} className={`${styles.btnIcon} ${styles.btnLogout}`}><LogOut size={18}/></button>
+               </div>
+            </div>
+          </div>
+        )}
+
+        <nav className={styles.nav}>
+          <button onClick={() => setTab('missions')} className={`${styles.navBtn} ${tab === 'missions' ? styles.active : ''}`}>Mural</button>
+          <button onClick={() => setTab('shop')} className={`${styles.navBtn} ${tab === 'shop' ? styles.active : ''}`}>Loja</button>
+          <button onClick={() => setTab('players')} className={`${styles.navBtn} ${tab === 'players' ? styles.active : ''}`}>Aliados</button>
+          <button onClick={() => setTab('inv')} className={`${styles.navBtn} ${tab === 'inv' ? styles.active : ''}`}>Mochila</button>
+        </nav>
+
+        <main className={styles.grid}>
+          {tab === 'missions' && (
+            <>
+              {missions.length === 0 && <p className={styles.emptyMsg}>Nenhuma missão disponível.</p>}
+              {missions.map(m => (
+                <div key={m.id} className={styles.card} style={{borderLeft:`4px solid ${getRankColor(m.rank)}`}}>
+                  <div className={styles.missionHeader}>
+                    <h3><Scroll size={18}/> {m.title}</h3>
+                    <span style={{color: getRankColor(m.rank)}}>RANK {m.rank}</span>
                   </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
+                  <p className={styles.cardDesc}>"{m.desc || m.description}"</p>
+                  <button onClick={() => acceptMission(m)} className={styles.btnAction}><Check size={16}/> ACEITAR</button>
+                </div>
+              ))}
+            </>
+          )}
 
-      {/* (Mantive os outros modais: LevelUp, Transfer, ItemRequest igual antes) */}
-      {showLevelUp && (
-        <div className="modal-overlay" style={{background:'rgba(0,0,0,0.85)'}} onClick={() => setShowLevelUp(false)}>
-          <div className={styles.levelUpCard} onClick={e => e.stopPropagation()}>
-            <h1 className={styles.levelUpTitle}>LEVEL UP!</h1>
-            <div className={styles.levelBadge}>{leveledUpTo}</div>
-            <button className={styles.btnPrimary} onClick={() => setShowLevelUp(false)} style={{marginTop:'20px'}}>CONTINUAR</button>
-          </div>
-        </div>
-      )}
+          {tab === 'shop' && (
+            <>
+              {shop.length === 0 && <p className={styles.emptyMsg}>(Nada para comprar no momento...)</p>}
+              {shop.map(item => (
+                <div key={item.id} className={styles.card}>
+                  <div className={styles.cardHeader}><h3><ShoppingBag size={18}/> {item.name || item.item_name}</h3><span>x{item.quantity}</span></div>
+                  <p className={styles.cardDesc}>{item.desc || item.description}</p>
+                  <button onClick={() => buyItem(item)} className={styles.btnAction}><Coins size={16}/> {item.price}g</button>
+                </div>
+              ))}
+            </>
+          )}
 
-      {transferModalOpen && transferTarget && (
-        <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2 style={{color:'#fbbf24', marginBottom:'0.5rem'}}>Enviar para {transferTarget.username}</h2>
-            <div style={{display:'flex', gap:'10px', justifyContent:'center', marginBottom:'20px'}}>
-              <button onClick={() => setTransferType('gold')} className={styles.tabBtn} style={{borderColor: transferType === 'gold' ? '#fbbf24' : '#444'}}>💰 Ouro</button>
-              <button onClick={() => setTransferType('item')} className={styles.tabBtn} style={{borderColor: transferType === 'item' ? '#fbbf24' : '#444'}}>🎒 Item</button>
-            </div>
-            {transferType === 'gold' ? (
-              <div style={{marginBottom:'20px'}}>
-                <input type="number" className="rpg-input" value={transferAmount} onChange={e => setTransferAmount(e.target.value)} placeholder="0" min="1" />
-              </div>
-            ) : (
-              <div style={{marginBottom:'20px'}}>
-                <select className="rpg-input" value={transferItemIdx} onChange={e => {setTransferItemIdx(e.target.value); setTransferItemQty(1);}}>
-                  {profile.inventory?.map((item, idx) => <option key={idx} value={idx}>{item.name} (x{item.qty})</option>)}
-                </select>
-                <input type="number" className="rpg-input" value={transferItemQty} onChange={e => setTransferItemQty(e.target.value)} min="1" style={{marginTop:'10px'}} />
-              </div>
-            )}
-            <button onClick={handleTransfer} className={styles.btnPrimary}>Confirmar</button>
-          </div>
-        </div>
-      )}
-
-      {isModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2 style={{color:'#fbbf24'}}>Encontrou algo?</h2>
-            <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
-              <input className="rpg-input" placeholder="Item" value={newItemName} onChange={e => setNewItemName(e.target.value)} style={{flex: 3}} />
-              <input type="number" min="1" className="rpg-input" placeholder="Qtd" value={newItemQty} onChange={e => setNewItemQty(e.target.value)} style={{flex: 1}} />
-            </div>
-            <button onClick={requestItem} className={styles.btnPrimary}>Solicitar ao Mestre</button>
-          </div>
-        </div>
-      )}
-
-      {profile && (
-        <div className={styles.hud}>
-          <div className={styles.charInfo}>
-            <h1>{profile.username}</h1>
-            <div style={{display:'flex', gap:'10px'}}>
-              <span className={styles.rankTag} style={{background: `linear-gradient(45deg, ${getRankColor(profile.rank)}dd, #000)`, color: '#fff', border:`1px solid ${getRankColor(profile.rank)}`}}>RANK {profile.rank || 'F'}</span>
-              <span className={styles.rankTag} style={{background:'#444'}}>LVL {profile.level || 1}</span>
-              {myParty && <span className={styles.rankTag} style={{background:'#064e3b', color:'#a7f3d0'}}>{myParty.name}</span>}
-            </div>
-          </div>
-          
-          <div className={styles.hudRight}>
-             {/* BOTÃO DA ROLETA NO HUD */}
-             <button 
-               onClick={requestSpin} 
-               className={styles.btnHeader} 
-               style={{
-                 background: 'linear-gradient(45deg, #4f46e5, #9333ea)', 
-                 color: '#fff', 
-                 border: '1px solid #c084fc',
-                 fontWeight: 'bold',
-                 marginRight: '15px',
-                 boxShadow: '0 0 10px rgba(147, 51, 234, 0.5)'
-               }}
-             >
-               🔮 Pedir Gift
-             </button>
-
-            <div style={{display:'flex', flexDirection:'column', alignItems:'end', gap:'5px'}}>
-              <div className={styles.stats}>
-                <div className={styles.statItem}><span className={`${styles.statVal} ${styles.gold}`}>{profile.gold}</span><span className={styles.statLabel}>Ouro</span></div>
-              </div>
-              <div className={styles.xpBarContainer} title={xpData.text}>
-                <div className={styles.xpBarFill} style={{width: `${xpData.percent}%`}}></div>
-                <span className={styles.xpTextOverlay}>XP {xpData.text}</span>
-              </div>
-            </div>
-            <div className={styles.actions}><button onClick={loadData} className={styles.btnHeader}>↻</button><button onClick={handleLogout} className={styles.btnHeader} style={{color:'#fca5a5'}}>Sair</button></div>
-          </div>
-        </div>
-      )}
-
-      <nav className={styles.nav}>
-        {['missions', 'shop', 'players', 'inv'].map(t => (
-          <button key={t} onClick={() => setTab(t)} className={`${styles.navBtn} ${tab === t ? styles.active : ''}`}>{t === 'missions' && 'Mural'}{t === 'shop' && 'Loja'}{t === 'players' && 'Aliados'}{t === 'inv' && 'Mochila'}</button>
-        ))}
-      </nav>
-
-      <main className={styles.mainContent}>
-        {tab === 'missions' && (
-          <div className={styles.grid}>
-            {missions.length === 0 && <p className={styles.emptyMsg}>Nenhuma missão.</p>}
-            {missions.map(m => (
-              <div key={m.id} className={styles.card} style={{borderLeft:`4px solid ${getRankColor(m.rank)}`}}>
-                <div className={styles.cardHeader}><h3>{m.title}</h3><span style={{color: getRankColor(m.rank), fontWeight:'bold'}}>RANK {m.rank}</span></div>
-                <p className={styles.cardDesc}>"{m.desc || m.description}"</p>
-                <div style={{marginTop:'auto'}}><button onClick={() => acceptMission(m)} className={`${styles.btnAction} ${styles.accept}`}>Aceitar</button></div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'shop' && (
-          <div className={styles.grid}>
-            {shop.map(item => (
-              <div key={item.id} className={styles.card}>
-                <div className={styles.cardHeader}><h3>{item.name || item.item_name}</h3><span>x{item.quantity}</span></div>
-                <p className={styles.cardDesc}>{item.desc || item.description}</p>
-                <button onClick={() => buyItem(item)} className={`${styles.btnAction} ${styles.buy}`}>Comprar {item.price}g</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'players' && (
-          <div className={styles.grid}>
-             {allPlayers.map(p => {
-               const isPartyMember = myParty && p.party_id === myParty.id;
-               const isMe = p.id === profile.id;
-               const isLeader = myParty && p.id === myParty.leader_id;
-               const borderColor = isPartyMember ? '#22c55e' : getRankColor(p.rank);
-               const borderWidth = isPartyMember ? '2px' : '1px';
+          {tab === 'players' && (
+             allPlayers.map(p => {
+               const isMe = p.id === profile?.id;
                return (
-                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: `${borderWidth} solid ${borderColor}`}}>
-                   <div style={{fontSize:'2.5rem', marginBottom:'10px'}}>🛡️</div>
-                   <h3 style={{color:'white', margin:0}}>{p.username} {isLeader && '👑'}</h3>
-                   <span style={{color: getRankColor(p.rank), fontSize:'0.8rem'}}>RANK {p.rank}</span>
-                   {isPartyMember && !isMe && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px', background:'#b45309'}}>🎁 Enviar</button>}
+                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: isMe ? '1px solid var(--accent-primary)' : ''}}>
+                   <div style={{fontSize:'2.5rem', marginBottom:'10px'}}><Shield size={40} color={getRankColor(p.rank)}/></div>
+                   <h3 style={{color:'#fff', margin:0}}>{p.username}</h3>
+                   <span style={{color: getRankColor(p.rank), fontSize:'0.8rem', marginTop:'5px'}}>RANK {p.rank}</span>
+                   {!isMe && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px'}}><Gift size={16}/> Enviar</button>}
                  </div>
                );
-             })}
+             })
+          )}
+
+          {tab === 'inv' && (
+            <div className={styles.invWrapper} style={{gridColumn:'1/-1'}}>
+               <div className={styles.invHeader}>
+                 <h2 style={{margin:0, display:'flex', alignItems:'center', gap:'10px'}}><Package/> Inventário</h2>
+                 <span style={{color:'var(--text-muted)'}}>{profile?.inventory?.length || 0} / {profile?.slots || 10}</span>
+               </div>
+               <div className={styles.invGrid}>
+                  {[...Array(profile?.slots || 10)].map((_, i) => {
+                    const item = profile?.inventory?.[i];
+                    return (
+                      <div key={i} className={`${styles.slot} ${!item ? styles.empty : ''}`}>
+                        {item ? (
+                          <>
+                            <div onClick={(e) => {e.stopPropagation(); removeItem(i);}} className={styles.removeBtn}><X size={12}/></div>
+                            <span className={styles.itemName}>{item.name}</span>
+                            <span className={styles.itemQty}>x{item.qty}</span>
+                            
+                            {item.name === 'Gacha Gift' && (
+                                <button onClick={(e)=>{e.stopPropagation(); useGachaGift(i)}} className={styles.btnUseItem}>
+                                    USAR
+                                </button>
+                            )}
+                          </>
+                        ) : (
+                          <Plus size={20} color="#444" onClick={() => setIsModalOpen(true)}/>
+                        )}
+                      </div>
+                    )
+                  })}
+               </div>
+            </div>
+          )}
+        </main>
+
+        {/* MODAL GACHA/ROLETA */}
+        {rouletteState !== 'idle' && (
+          <div className={styles.modalOverlay}>
+            <div 
+              className={`${styles.gachaCard} ${rouletteState === 'spinning' ? styles.isSpinning : styles.isResult}`} 
+              style={{
+                borderColor: currentRarityDisplay.color, 
+                boxShadow: `0 0 60px ${currentRarityDisplay.color}80` 
+              }}
+            >
+               {rouletteState === 'spinning' ? (
+                 <>
+                   <div className={styles.gachaIconSpin}><Sparkles size={48} color="#fff"/></div>
+                   <h2 style={{color: '#fff', opacity: 0.8}}>Sorteando...</h2>
+                 </>
+               ) : (
+                 <h2 style={{color: '#fff'}}>VOCÊ GANHOU</h2>
+               )}
+
+               <div className={styles.rarityText} style={{ color: currentRarityDisplay.color }}>
+                 {currentRarityDisplay.name}
+               </div>
+
+               {rouletteState === 'result' && (
+                 <div className={styles.resultItemName}>Item {currentRarityDisplay.name}</div>
+               )}
+
+               {rouletteState === 'result' && (
+                 <button onClick={() => {setRouletteState('idle'); setFinalResult(null);}} className={styles.btnAction} style={{marginTop: 'auto'}}>
+                   COLETAR
+                 </button>
+               )}
+            </div>
           </div>
         )}
 
-        {tab === 'inv' && (
-          <div className={styles.invWrapper}>
-             <h2 className={styles.invTitle}>Mochila ({profile?.inventory?.length || 0}/{profile?.slots || 10})</h2>
-             <div className={styles.invGrid}>
-                {[...Array(profile?.slots || 10)].map((_, i) => {
-                  const item = profile?.inventory?.[i];
-                  return (
-                    <div key={i} className={`slot ${item ? 'filled' : ''} ${styles.slot}`}>
-                      {item ? (
-                        <>
-                          {/* SE O ITEM FOR GACHA GIFT, APARECE O BOTÃO DE USAR */}
-                          {item.name === 'Gacha Gift' && (
-                             <button onClick={() => useGachaGift(i)} style={{position:'absolute', top:0, left:0, width:'100%', height:'100%', background:'rgba(147, 51, 234, 0.8)', border:'none', color:'white', fontWeight:'bold', cursor:'pointer', zIndex:10}}>USAR</button>
-                          )}
-                          <div onClick={() => removeItem(i)} className={styles.removeBtn}>-</div>
-                          <span className={styles.itemName}>{item.name}</span>
-                          <span className={styles.itemQty}>x{item.qty}</span>
-                        </>
-                      ) : (
-                        <button className={styles.addBtn} onClick={() => setIsModalOpen(true)}>+</button>
-                      )}
-                    </div>
-                  )
-                })}
-             </div>
-             {/* (Lista de entregas mantida) */}
+        {showLevelUp && (
+          <div className={styles.modalOverlay} onClick={() => setShowLevelUp(false)}>
+            <div className={styles.levelUpCard}>
+              <h1 style={{fontSize:'3rem', margin:0, color:'#fbbf24'}}>LEVEL UP!</h1>
+              <div className={styles.levelBadge}>{leveledUpTo}</div>
+              <button className={styles.btnAction} onClick={() => setShowLevelUp(false)}>CONTINUAR</button>
+            </div>
           </div>
         )}
-      </main>
+
+        {isModalOpen && (
+          <div className={styles.modalOverlay} onClick={() => setIsModalOpen(false)}>
+            <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
+              <h2 style={{color:'var(--accent-glow)', marginBottom:'20px'}}>Solicitar Item</h2>
+              <input className={styles.input} placeholder="Nome do Item" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
+              <input type="number" min="1" className={styles.input} placeholder="Quantidade" value={newItemQty} onChange={e => setNewItemQty(e.target.value)} />
+              <button onClick={requestItem} className={styles.btnAction}>ENVIAR PEDIDO</button>
+            </div>
+          </div>
+        )}
+
+        {transferModalOpen && transferTarget && (
+          <div className={styles.modalOverlay} onClick={() => setTransferModalOpen(false)}>
+            <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
+              <h2 style={{color:'var(--accent-glow)', marginBottom:'20px'}}>Enviar para {transferTarget.username}</h2>
+              <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+                <button onClick={() => setTransferType('gold')} className={styles.navBtn} style={{background: transferType === 'gold' ? 'var(--accent-primary)' : '', color: transferType === 'gold' ? '#fff' : ''}}>Ouro</button>
+                <button onClick={() => setTransferType('item')} className={styles.navBtn} style={{background: transferType === 'item' ? 'var(--accent-primary)' : '', color: transferType === 'item' ? '#fff' : ''}}>Item</button>
+              </div>
+              
+              {transferType === 'gold' ? (
+                <input type="number" className={styles.input} value={transferAmount} onChange={e => setTransferAmount(e.target.value)} placeholder="Quantidade de Ouro" />
+              ) : (
+                <>
+                  <select className={styles.input} value={transferItemIdx} onChange={e => {setTransferItemIdx(e.target.value); setTransferItemQty(1);}}>
+                    {profile?.inventory?.map((item, idx) => <option key={idx} value={idx}>{item.name} (x{item.qty})</option>)}
+                  </select>
+                  <input type="number" className={styles.input} value={transferItemQty} onChange={e => setTransferItemQty(e.target.value)} placeholder="Qtd" />
+                </>
+              )}
+              <button onClick={handleTransfer} className={styles.btnAction}>CONFIRMAR</button>
+            </div>
+          </div>
+        )}
+
+      </div>
     </div>
   );
 }
