@@ -53,9 +53,40 @@ export default function MasterPanel() {
   const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
 
   useEffect(() => {
+    // Carrega dados iniciais
     fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+
+    // --- REALTIME (O SEGREDO DA VELOCIDADE) ---
+    // Inscreve-se para ouvir mudanças nas tabelas críticas
+    const channel = supabase
+      .channel('master-updates')
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'item_requests' }, 
+        () => {
+          console.log("Nova solicitação recebida!");
+          fetchData(); // Recarrega instantaneamente
+        }
+      )
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'missions' }, 
+        () => fetchData()
+      )
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'profiles' }, 
+        () => fetchData()
+      )
+      .subscribe();
+
+    // Mantemos um intervalo de segurança (30s) caso a conexão realtime caia
+    const interval = setInterval(fetchData, 30000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, []);
 
   // --- FETCH DATA OTIMIZADO (PROMISE.ALL) ---
@@ -101,25 +132,26 @@ export default function MasterPanel() {
     
     // Atualiza no banco
     await supabase.from('profiles').update({ xp: newXp, gold: newGold, level: newLevel }).eq('id', playerId);
-    // fetchData será chamado pelos fluxos ou interval, mas o UI já estará atualizado
+    // O Realtime vai acionar o fetchData automaticamente, mas podemos chamar aqui por garantia
+    // fetchData(); 
   }
 
   async function createParty() {
     if (!partyForm.trim()) return alert("Nome necessário");
     const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
     if (error) return alert(error.message);
-    setPartyForm(''); fetchData();
+    setPartyForm(''); 
+    // fetchData chamado pelo realtime
   }
 
   async function assignToParty(playerId, partyId) {
     const pid = partyId === "" ? null : partyId;
     await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId);
-    fetchData();
   }
 
   async function makeLeader(partyId, playerId) {
     await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId);
-    fetchData();
+    fetchData(); // Força fetch pois a tabela parties talvez não esteja no realtime acima (opcional adicionar)
   }
 
   async function updateMission(id, status, playerId, xpReward, goldReward) {
@@ -138,13 +170,12 @@ export default function MasterPanel() {
         await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
       }
     }
-    fetchData();
+    // fetchData chamado pelo realtime
   }
 
   async function deleteMission(id) {
     if (!confirm("Apagar?")) return;
     await supabase.from('missions').delete().eq('id', id);
-    fetchData();
   }
   
   async function handleRequest(request, approved) {
@@ -163,7 +194,6 @@ export default function MasterPanel() {
       await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
     }
     await supabase.from('item_requests').delete().eq('id', request.id);
-    fetchData();
   }
 
   async function createMission() {
@@ -171,7 +201,6 @@ export default function MasterPanel() {
     const payload = { title: form.title, description: form.desc, rank: form.rank, xp_reward: Number(form.xp), gold_reward: Number(form.gold), status: 'open' };
     await supabase.from('missions').insert([payload]);
     setForm({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
-    fetchData();
   }
 
   async function addItem() {
@@ -179,7 +208,7 @@ export default function MasterPanel() {
     const payload = { item_name: shopForm.name, price: Number(shopForm.price), quantity: shopForm.quantity, description: shopForm.desc };
     await supabase.from('shop_items').insert([payload]);
     setShopForm({ seller: '', name: '', price: '', quantity: 1, desc: '' });
-    fetchData();
+    fetchData(); // Shop items não está no realtime principal, chamamos manual
   }
 
   async function deleteShopItem(id) {
@@ -220,7 +249,6 @@ export default function MasterPanel() {
 
     // Envia para o banco
     await supabase.from('profiles').update({ rank: newRank }).eq('id', playerId); 
-    // Não precisa chamar fetchData imediatamente, a atualização local já resolve a UX
   }
 
   function openInventory(player) { setSelectedPlayerForInv(player); setSlotAddQty(1); setMasterItemQty(1); setMasterItemName(''); }
@@ -234,7 +262,7 @@ export default function MasterPanel() {
     setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots});
     
     await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
-    fetchData(); 
+    // Realtime atualizará o resto
   }
   
   async function masterAddItemToPlayer() {
@@ -251,8 +279,6 @@ export default function MasterPanel() {
 
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
     setMasterItemName(''); 
-    // Fetch data em background para garantir consistência, mas o modal já está atualizado
-    fetchData();
   }
   
   async function masterRemoveItemFromPlayer(index) {
@@ -264,7 +290,6 @@ export default function MasterPanel() {
     setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
 
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
-    fetchData();
   }
 
   return (
@@ -298,7 +323,7 @@ export default function MasterPanel() {
                  <button onClick={masterAddItemToPlayer} className={styles.btnPrimary} style={{width:'auto', marginTop:0}}><Plus size={18}/></button>
               </div>
 
-              {/* GRID DA MOCHILA REESTRUTURADO PARA EVITAR BAGUNÇA */}
+              {/* GRID DA MOCHILA REESTRUTURADO */}
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(80px, 1fr))', gap:'12px', maxHeight:'300px', overflowY:'auto'}}>
                 {[...Array(selectedPlayerForInv.slots || 10)].map((_, i) => {
                   const item = selectedPlayerForInv.inventory?.[i];
