@@ -66,21 +66,36 @@ export default function PlayerPanel() {
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [leveledUpTo, setLeveledUpTo] = useState(1);
   
-  // REFs para manter o estado atualizado dentro de funções assíncronas (como a roleta)
   const prevLevelRef = useRef(1);
   const profileRef = useRef(null);
 
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
 
-  // Mantém o profileRef sempre sincronizado com o profile do estado
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000); 
-    return () => clearInterval(interval);
+
+    // --- REALTIME: Atualização Instantânea ---
+    const channel = supabase
+      .channel('player-realtime')
+      // Atualiza se mudarem as missões (nova missão ou status alterado)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => loadData())
+      // Atualiza se mudarem o estoque da loja
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_items' }, () => loadData())
+      // Atualiza se mudarem perfis (seu ouro/xp ou rank de aliados)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
+      .subscribe();
+
+    // Fallback de segurança (30s) caso o realtime desconecte
+    const interval = setInterval(loadData, 30000); 
+    
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, []);
 
   async function loadData() {
@@ -104,13 +119,8 @@ export default function PlayerPanel() {
         prevLevelRef.current = prof.level;
       }
       
-      // Só atualiza se não estiver rodando a roleta para evitar "pulos" visuais
       if (rouletteState === 'idle') {
         setProfile(prof);
-      } else {
-        // Se estiver rodando, atualizamos apenas o ref silenciosamente se necessário,
-        // mas evitamos setProfile para não sobrescrever a remoção otimista do Gacha Gift.
-        // Porém, como usamos profileRef na finalização, o estado visual local é rei.
       }
 
       if (prof.party_id) {
@@ -180,36 +190,32 @@ export default function PlayerPanel() {
   async function requestItem() {
     if (!newItemName.trim()) return;
     await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]);
-    setNewItemName(''); setIsModalOpen(false);
-    alert("Solicitado!"); 
+    setNewItemName(''); 
+    setIsModalOpen(false);
+    // REMOVIDO: alert("Solicitado!");
   }
 
   async function requestSpin() {
-    const { error } = await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]);
-    if (!error) alert("Solicitado!");
+    await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]);
+    // REMOVIDO: alert("Solicitado!");
   }
 
   async function useGachaGift(index) {
-    // 1. Clona o inventário
     const currentInv = [...profile.inventory];
     const item = currentInv[index];
 
-    // 2. Remove ou diminui a quantidade
     if (item.qty > 1) {
       item.qty -= 1;
     } else {
       currentInv.splice(index, 1);
     }
 
-    // 3. Atualiza a tela IMEDIATAMENTE (antes do banco/animação)
     setProfile(prev => ({ ...prev, inventory: currentInv }));
 
-    // 4. Salva no banco (assíncrono)
     supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id).then(({error}) => {
        if(error) console.error("Erro ao atualizar inventário:", error);
     });
 
-    // 5. Começa a roleta
     startSpinAnimation();
   }
 
@@ -236,7 +242,8 @@ export default function PlayerPanel() {
         if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido");
         
         await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd });
-        alert("Enviado!"); setTransferModalOpen(false);
+        // REMOVIDO: alert("Enviado!"); 
+        setTransferModalOpen(false);
     }
   }
 
@@ -256,14 +263,11 @@ export default function PlayerPanel() {
     spinInterval();
   }
 
-  // --- CORREÇÃO PRINCIPAL: Usando profileRef ---
   async function finishSpin(result) {
     setCurrentRarityDisplay(result); 
     setFinalResult(result); 
     setRouletteState('result');
 
-    // Usamos o profileRef.current para garantir que estamos pegando 
-    // o inventário MAIS ATUAL (aquele onde o Gacha Gift já foi removido).
     const currentProf = profileRef.current;
     if (!currentProf) return;
 
@@ -274,7 +278,6 @@ export default function PlayerPanel() {
     if (idx >= 0) newInv[idx].qty += 1; 
     else newInv.push({ name: itemName, qty: 1 });
     
-    // Atualiza estado e banco com a lista correta
     setProfile(prev => ({...prev, inventory: newInv}));
     await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
   }
