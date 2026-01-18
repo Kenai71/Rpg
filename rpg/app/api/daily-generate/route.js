@@ -2,93 +2,71 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-// Configurações do ambiente
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Garante que a chave da IA existe, senão avisa no console
+if (!process.env.GEMINI_API_KEY) {
+  console.error("ERRO: GEMINI_API_KEY não encontrada no .env.local");
+}
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY 
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 export async function GET(request) {
   try {
-    // Usando o modelo flash (mais rápido e barato)
-    // Se der erro 404 mesmo após atualizar o npm, troque para "gemini-pro"
+    // Tenta usar o modelo Flash.
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `
-      Você é o Game Master (Mestre de Jogo) do RPG 'Astralis', um cenário que mistura fantasia medieval e sci-fi.
+      Você é o Game Master do RPG 'Astralis'.
+      Gere 1 Missão Nova e 1 Item de Loja Exótico.
       
-      Sua tarefa é criar conteúdo diário para os jogadores.
-      Gere 1 (uma) Missão Nova e 1 (um) Item de Loja Exótico.
-
-      Regras da Missão:
-      - Título criativo e curto.
-      - Descrição envolvente (máx 2 frases).
-      - Ranks: F, E, D, C, B, A ou S.
-      - XP e Gold proporcionais ao Rank (XP: 100-5000, Gold: 50-2000).
-
-      Regras do Item:
-      - Nome futurista ou mágico.
-      - Preço entre 100 e 5000 gold.
-      - Quantidade em estoque: 1 a 5.
-
-      Responda ESTRITAMENTE com um JSON neste formato (sem markdown):
+      Regras:
+      - Responda APENAS com um JSON válido.
+      - Sem blocos de código markdown (\`\`\`json).
+      
+      Estrutura JSON obrigatória:
       {
         "mission": {
-          "title": "String",
-          "description": "String",
-          "rank": "String",
-          "xp_reward": Number,
-          "gold_reward": Number,
-          "status": "open"
+          "title": "Texto", "description": "Texto", "rank": "S", 
+          "xp_reward": 1000, "gold_reward": 500, "status": "open"
         },
         "shop_item": {
-          "item_name": "String",
-          "description": "String",
-          "price": Number,
-          "quantity": Number
+          "item_name": "Texto", "description": "Texto", 
+          "price": 500, "quantity": 1
         }
       }
     `;
 
+    console.log("Iniciando geração com IA...");
     const result = await model.generateContent(prompt);
     const response = await result.response;
     
-    // Limpeza para garantir que o texto venha sem formatação de código markdown
+    // Limpeza forçada do texto para evitar erros de JSON
     const text = response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    
+    console.log("IA respondeu. Processando JSON...");
+
     let data;
     try {
         data = JSON.parse(text);
     } catch (e) {
-        console.error("Erro de Parse JSON:", text);
-        return NextResponse.json({ error: "A IA não retornou um JSON válido.", raw: text }, { status: 500 });
+        console.error("A IA não devolveu um JSON válido:", text);
+        return NextResponse.json({ error: "Erro de formato JSON da IA" }, { status: 500 });
     }
 
-    // 1. Criar Missão no Banco
-    const { error: missionError } = await supabaseAdmin
-      .from('missions')
-      .insert([data.mission]);
+    // Salvando no Banco
+    const { error: err1 } = await supabaseAdmin.from('missions').insert([data.mission]);
+    if (err1) throw new Error("Erro ao salvar Missão: " + err1.message);
 
-    if (missionError) {
-      console.error("Erro Supabase Missão:", missionError);
-      throw missionError;
-    }
+    const { error: err2 } = await supabaseAdmin.from('shop_items').insert([data.shop_item]);
+    if (err2) throw new Error("Erro ao salvar Item: " + err2.message);
 
-    // 2. Criar Item na Loja
-    const { error: shopError } = await supabaseAdmin
-      .from('shop_items')
-      .insert([data.shop_item]);
-
-    if (shopError) {
-      console.error("Erro Supabase Loja:", shopError);
-      throw shopError;
-    }
-
+    console.log("Sucesso! Conteúdo gerado.");
     return NextResponse.json({ success: true, created: data });
 
   } catch (error) {
-    console.error("Erro Geral na Rota:", error);
-    return NextResponse.json({ error: error.message || error.toString() }, { status: 500 });
+    console.error("ERRO FATAL NA API:", error);
+    return NextResponse.json({ error: error.message || "Erro interno" }, { status: 500 });
   }
 }
