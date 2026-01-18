@@ -15,6 +15,15 @@ const RANK_COLORS = {
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
 
+const RARITIES = [
+  { name: 'COMUM', color: '#9ca3af', chance: 50 },
+  { name: 'INCOMUM', color: '#4ade80', chance: 30 },
+  { name: 'RARO', color: '#60a5fa', chance: 15 },
+  { name: 'ÉPICO', color: '#a78bfa', chance: 4 },
+  { name: 'LENDÁRIO', color: '#fbbf24', chance: 0.9 },
+  { name: 'MÍTICO', color: '#ef4444', chance: 0.1 }
+];
+
 const XP_TABLE = [
   { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
   { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
@@ -51,6 +60,9 @@ export default function MasterPanel() {
   const [masterItemName, setMasterItemName] = useState('');
   const [masterItemQty, setMasterItemQty] = useState(1);
   const [slotAddQty, setSlotAddQty] = useState(1);
+
+  // --- TOOLTIP STATE ---
+  const [tooltipData, setTooltipData] = useState(null);
 
   const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
 
@@ -97,6 +109,40 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
+  // --- HELPERS DE RARIDADE E TOOLTIP ---
+  function getRarityFromItem(item) {
+    const match = item.description?.match(/<([^>]+)>/);
+    if (match) return match[1];
+    if (item.name?.includes("Runa")) return item.name.split(" ")[1];
+    return "COMUM";
+  }
+
+  function getRarityColor(rarityName) {
+    const upper = rarityName?.toUpperCase();
+    const found = RARITIES.find(r => r.name === upper);
+    return found ? found.color : '#fff';
+  }
+
+  function cleanDescription(desc) {
+    return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
+  }
+
+  const handleMouseEnter = (e, title, desc, color) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setTooltipData({
+      x: rect.right + 15, // Lateral direita
+      y: rect.top,
+      title,
+      desc: cleanDescription(desc),
+      color
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTooltipData(null);
+  };
+
+  // --- FUNÇÕES DO MESTRE ---
   async function generateDailyContent() {
     setIsGenerating(true);
     try {
@@ -320,7 +366,6 @@ export default function MasterPanel() {
           </div>
           
           <div className={styles.actions}>
-            {/* BOTÃO DA IA */}
             <button 
               onClick={generateDailyContent} 
               disabled={isGenerating}
@@ -380,16 +425,28 @@ export default function MasterPanel() {
               <div style={{marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '15px'}}>
                  <div className={styles.scrollableListSmall} style={{maxHeight: '180px'}}>
                     {shopItems.length === 0 && <p style={{color:'#64748b', textAlign:'center', fontSize:'0.85rem'}}>Estoque vazio.</p>}
-                    {/* AQUI ESTÁ A LÓGICA DO MOUSE PASSANDO (TOOLTIP) */}
-                    {shopItems.map(item => (
-                      <div key={item.id} className={styles.requestItem} title={item.description || "Sem descrição"}>
-                        <div style={{cursor: 'help'}}>
-                            <strong style={{color: '#e2e8f0', fontSize:'0.9rem'}}>{item.item_name}</strong>
-                            <div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div>
+                    
+                    {/* LISTA DE ITENS COM TOOLTIP */}
+                    {shopItems.map(item => {
+                      const rarity = getRarityFromItem(item);
+                      const color = getRarityColor(rarity);
+                      
+                      return (
+                        <div 
+                          key={item.id} 
+                          className={styles.requestItem}
+                          style={{borderLeft: `3px solid ${color}`}}
+                          onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)}
+                          onMouseLeave={handleMouseLeave}
+                        >
+                          <div style={{cursor: 'help'}}>
+                              <strong style={{color: color, fontSize:'0.9rem'}}>{item.item_name}</strong>
+                              <div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div>
+                          </div>
+                          <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject}><Trash2 size={14} /></button>
                         </div>
-                        <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject}><Trash2 size={14} /></button>
-                      </div>
-                    ))}
+                      );
+                    })}
                  </div>
               </div>
             </section>
@@ -414,7 +471,6 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
-            {/* Seção Jogadores e Contratos mantida igual... */}
             <section className={styles.card}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid rgba(255,255,255,0.08)', paddingBottom:'12px', marginBottom:'10px'}}>
                  <h2 className={styles.cardTitle} style={{margin:0, border:0, padding:0}}><Users size={18} /> Jogadores</h2>
@@ -473,6 +529,36 @@ export default function MasterPanel() {
             </section>
           </div>
         </div>
+
+        {/* TOOLTIP FLUTUANTE (FINALMENTE NO MESTRE) */}
+        {tooltipData && (
+            <div 
+                style={{
+                    position: 'fixed',
+                    top: tooltipData.y,
+                    left: tooltipData.x, 
+                    transform: 'translate(0, 0)',
+                    background: 'rgba(20, 20, 25, 0.98)',
+                    border: `1px solid ${tooltipData.color}`,
+                    borderRadius: '8px',
+                    padding: '12px',
+                    zIndex: 9999,
+                    pointerEvents: 'none',
+                    boxShadow: `0 4px 30px rgba(0,0,0,0.8)`,
+                    minWidth: '220px',
+                    maxWidth: '300px',
+                    animation: 'fadeIn 0.1s ease-out'
+                }}
+            >
+                <h4 style={{margin: '0 0 8px 0', color: tooltipData.color, fontSize: '1rem', textShadow: `0 0 10px ${tooltipData.color}50`}}>
+                    {tooltipData.title}
+                </h4>
+                <p style={{margin: 0, fontSize: '0.85rem', color: '#d4d4d8', lineHeight: '1.5'}}>
+                    {tooltipData.desc}
+                </p>
+            </div>
+        )}
+
       </div>
     </div>
   );

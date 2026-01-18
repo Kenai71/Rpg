@@ -135,7 +135,10 @@ export default function PlayerPanel() {
     const rect = e.currentTarget.getBoundingClientRect();
     setTooltipData({ x: rect.right + 15, y: rect.top, title, desc: cleanDescription(desc), color });
   };
-  const handleMouseLeave = () => setTooltipData(null);
+  
+  const handleMouseLeave = () => {
+    setTooltipData(null); 
+  };
 
   function getRarityFromItem(item) {
     const match = item.description?.match(/<([^>]+)>/);
@@ -168,11 +171,21 @@ export default function PlayerPanel() {
     return "consumable";
   }
 
+  // --- DRAG AND DROP (Modificado para bloquear Runas) ---
   const handleDragStart = (e, index) => { 
-      setTooltipData(null); 
+      const item = profile.inventory[index];
+      
+      // BLOQUEIO DE RUNA: Se for Runa, não deixa arrastar
+      if (item && item.name.includes("Runa")) {
+          e.preventDefault();
+          return;
+      }
+
+      setTooltipData(null);
       setDraggedItemIdx(index); 
       e.dataTransfer.effectAllowed = "move"; 
   };
+  
   const handleDragOver = (e) => { e.preventDefault(); };
 
   const handleDrop = async (e, slotName) => {
@@ -220,7 +233,7 @@ export default function PlayerPanel() {
 
     const maxSlots = profile.slots || 10;
     if ((profile.inventory?.length || 0) >= maxSlots) {
-        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar. Arraste outro item para substituir.");
+        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar.");
     }
 
     const newInv = [...profile.inventory];
@@ -315,7 +328,7 @@ export default function PlayerPanel() {
   const getXpProgress = () => { if (!profile) return { percent: 0, text: '0/0' }; const curr = profile.level || 1; if (curr >= 20) return { percent: 100, text: 'MAX' }; const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 }; const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 }; const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100)); return { percent, text: `${profile.xp} / ${nextData.xp}` }; };
   const xpData = getXpProgress();
 
-  // --- COMPONENTE DE EQUIPAMENTO MELHORADO ---
+  // Componente de Slot de Equipamento
   const EquipmentSlot = ({ slot, icon: Icon, label, style }) => {
     const item = profile?.equipment?.[slot];
     const color = item ? getRarityColor(getRarityFromItem(item)) : '#444';
@@ -336,10 +349,8 @@ export default function PlayerPanel() {
         onMouseLeave={handleMouseLeave}
       >
         {item ? (
-           // AQUI ESTÁ A CORREÇÃO: Div container centralizado
-           <div className={styles.equippedItem}>
-             <span className={styles.equippedName} style={{color: color}}>{item.name}</span>
-             <Icon size={28} color={color} strokeWidth={1.5} />
+           <div style={{color: color, textAlign:'center', width:'100%'}}>
+             <Icon size={32} strokeWidth={1.5} />
            </div>
         ) : (
            <div className={styles.slotIcon}>
@@ -426,19 +437,34 @@ export default function PlayerPanel() {
           {tab === 'inv' && (
             <div className={styles.invWrapper} style={{gridColumn:'1/-1', display: 'flex', gap: '20px', flexDirection: 'column'}}>
                <div className={styles.equipmentContainer}>
-                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'15px', letterSpacing:'2px'}}>EQUIPAMENTO</h3>
+                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'10px'}}>EQUIPAMENTO (Arraste para equipar)</h3>
                   
-                  {/* GRID PAPER DOLL (VISUAL NOVO) */}
-                  <div className={styles.dollGrid}>
-                      <EquipmentSlot slot="head" icon={Crown} label="Cabeça" />
-                      <EquipmentSlot slot="face" icon={Glasses} label="Rosto" />
-                      <EquipmentSlot slot="body" icon={Shirt} label="Armadura" />
-                      <EquipmentSlot slot="neck" icon={Circle} label="Pescoço" />
-                      <EquipmentSlot slot="hands" icon={Hand} label="Mãos" />
-                      <EquipmentSlot slot="waist" icon={RectangleHorizontal} label="Cinto" />
-                      <EquipmentSlot slot="feet" icon={Footprints} label="Pés" />
-                      <EquipmentSlot slot="ring1" icon={Gem} label="Anel 1" />
-                      <EquipmentSlot slot="ring2" icon={Gem} label="Anel 2" />
+                  {/* GRID DO BONECO MANTIDO */}
+                  <div className={styles.paperDoll}>
+                      {/* Coluna Esquerda: Anel 1, Mãos, Rosto */}
+                      <div className={styles.dollCol}>
+                          <EquipmentSlot slot="face" icon={Glasses} label="Rosto" />
+                          <EquipmentSlot slot="hands" icon={Hand} label="Mãos" />
+                          <EquipmentSlot slot="ring1" icon={Gem} label="Anel 1" />
+                      </div>
+                      
+                      {/* Coluna Meio: Cabeça, Corpo, [Cinto, Pés] */}
+                      <div className={styles.dollCol}>
+                          <EquipmentSlot slot="head" icon={Crown} label="Cabeça" />
+                          <EquipmentSlot slot="body" icon={Shirt} label="Armadura" />
+                          
+                          {/* LINHA DE BAIXO (CINTURA E PÉS) */}
+                          <div style={{ display: 'flex', gap: '15px' }}>
+                              <EquipmentSlot slot="waist" icon={RectangleHorizontal} label="Cinto" />
+                              <EquipmentSlot slot="feet" icon={Footprints} label="Pés" />
+                          </div>
+                      </div>
+
+                      {/* Coluna Direita: Anel 2, Pescoço */}
+                      <div className={styles.dollCol}>
+                          <EquipmentSlot slot="neck" icon={Circle} label="Pescoço" />
+                          <EquipmentSlot slot="ring2" icon={Gem} label="Anel 2" />
+                      </div>
                   </div>
                </div>
 
@@ -450,19 +476,34 @@ export default function PlayerPanel() {
                    <div className={styles.invGrid}>
                       {[...Array(profile?.slots || 10)].map((_, i) => {
                         const item = profile?.inventory?.[i];
-                        let rarity = "COMUM"; let color = "#fff";
+                        
+                        // LÓGICA DE DETECÇÃO DE RUNA AQUI
+                        let isRune = false;
+                        let rarity = "COMUM"; 
+                        let color = "#fff";
+                        
                         if (item) {
-                             if (item.description) rarity = getRarityFromItem(item);
-                             else if (item.name.includes("Runa")) rarity = item.name.split(" ")[1];
+                             if (item.name.includes("Runa")) {
+                                isRune = true;
+                                rarity = item.name.split(" ")[1];
+                             } else if (item.description) {
+                                rarity = getRarityFromItem(item);
+                             }
                              color = getRarityColor(rarity);
                         }
+
                         return (
                           <div 
                             key={i} 
-                            draggable={!!item}
+                            // AQUI ESTÁ A TRAVA: Se for Rune, draggable = false
+                            draggable={!!item && !isRune}
                             onDragStart={(e) => handleDragStart(e, i)}
                             className={`${styles.slot} ${!item ? styles.empty : ''}`} 
-                            style={item ? {borderColor: color, boxShadow:`inset 0 0 10px ${color}20`, cursor: 'grab'} : {}}
+                            style={item ? {
+                                borderColor: color, 
+                                boxShadow:`inset 0 0 10px ${color}20`, 
+                                cursor: isRune ? 'not-allowed' : 'grab' // Cursor muda se for Runa
+                            } : {}}
                             onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
                             onMouseLeave={handleMouseLeave}
                           >
@@ -490,7 +531,6 @@ export default function PlayerPanel() {
             </div>
         )}
 
-        {/* Modal Compra */}
         {buyModalOpen && selectedItemToBuy && (
             <div className={styles.modalOverlay} onClick={() => setBuyModalOpen(false)}>
                 <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{textAlign:'center', border: `1px solid ${getRarityColor(getRarityFromItem(selectedItemToBuy))}`}}>
@@ -512,7 +552,6 @@ export default function PlayerPanel() {
             </div>
         )}
 
-        {/* Modal Gacha */}
         {rouletteState !== 'idle' && (
           <div className={styles.modalOverlay}>
             <div className={`${styles.gachaCard} ${rouletteState === 'spinning' ? styles.isSpinning : styles.isResult}`} style={{borderColor: currentRarityDisplay.color, boxShadow: `0 0 60px ${currentRarityDisplay.color}80`}}>
