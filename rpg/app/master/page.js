@@ -15,7 +15,6 @@ const RANK_COLORS = {
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
 
-// --- AQUI ESTAVA FALTANDO: A LISTA DE RARIDADES ---
 const RARITIES = [
   { name: 'COMUM', color: '#9ca3af', chance: 50 },
   { name: 'INCOMUM', color: '#4ade80', chance: 30 },
@@ -57,17 +56,14 @@ export default function MasterPanel() {
   const [goldMod, setGoldMod] = useState({});
   const [xpMod, setXpMod] = useState({});
   
-  // States para Modais
   const [selectedPlayerForInv, setSelectedPlayerForInv] = useState(null);
   const [masterItemName, setMasterItemName] = useState('');
   const [masterItemQty, setMasterItemQty] = useState(1);
   const [slotAddQty, setSlotAddQty] = useState(1);
 
-  // State para Edição de Missão
   const [editingMission, setEditingMission] = useState(null);
   const [editForm, setEditForm] = useState({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
 
-  // Tooltip State
   const [tooltipData, setTooltipData] = useState(null);
 
   const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
@@ -117,7 +113,7 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { if (supabase) await supabase.auth.signOut(); router.push('/login'); };
 
-  // --- TOOLTIP ---
+  // --- TOOLTIP FIX (Mesma lógica do Player) ---
   const handleMouseEnter = (e, title, desc, color) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setTooltipData({
@@ -133,7 +129,6 @@ export default function MasterPanel() {
     setTooltipData(null);
   };
 
-  // --- Helpers de Raridade (Agora funcionam pois RARITIES existe) ---
   function getRarityFromItem(item) {
     const match = item.description?.match(/<([^>]+)>/);
     if (match) return match[1];
@@ -147,11 +142,6 @@ export default function MasterPanel() {
     return found ? found.color : '#fff';
   }
 
-  function cleanDescription(desc) {
-    return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
-  }
-
-  // --- EDIÇÃO DE MISSÃO ---
   function openEditMission(mission) {
     setEditingMission(mission);
     setEditForm({
@@ -181,15 +171,24 @@ export default function MasterPanel() {
     }
   }
 
-  // --- FUNÇÕES DE LÓGICA ---
   async function generateDailyContent() {
     setIsGenerating(true);
     try {
       const res = await fetch('/api/daily-generate');
       const data = await res.json();
-      if (data.success) { alert(`Sucesso! Criadas ${data.countMissions} missões e ${data.countItems} itens novos.`); fetchData(); } 
-      else { alert("Erro na IA: " + (data.error || JSON.stringify(data))); }
-    } catch (err) { alert("Erro ao conectar com o servidor."); console.error(err); } finally { setIsGenerating(false); }
+      
+      if (data.success) {
+        alert(`Sucesso! Criadas ${data.countMissions} missões e ${data.countItems} itens novos.`);
+        fetchData(); 
+      } else {
+        alert("Erro na IA: " + (data.error || JSON.stringify(data)));
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.");
+      console.error(err);
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   function calculateLevel(totalXp) {
@@ -202,6 +201,7 @@ export default function MasterPanel() {
     const newXp = Math.max(0, (player.xp || 0) + Number(amountXP));
     const newGold = Math.max(0, (player.gold || 0) + Number(amountGold));
     const newLevel = calculateLevel(newXp);
+    
     await supabase.from('profiles').update({ xp: newXp, gold: newGold, level: newLevel }).eq('id', playerId);
   }
 
@@ -209,11 +209,21 @@ export default function MasterPanel() {
     if (!partyForm.trim()) return alert("Nome necessário");
     if (!supabase) return;
     const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
-    if (error) return alert(error.message); setPartyForm(''); 
+    if (error) return alert(error.message);
+    setPartyForm(''); 
   }
 
-  async function assignToParty(playerId, partyId) { if (!supabase) return; const pid = partyId === "" ? null : partyId; await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId); }
-  async function makeLeader(partyId, playerId) { if (!supabase) return; await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId); fetchData(); }
+  async function assignToParty(playerId, partyId) {
+    if (!supabase) return;
+    const pid = partyId === "" ? null : partyId;
+    await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId);
+  }
+
+  async function makeLeader(partyId, playerId) {
+    if (!supabase) return;
+    await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId);
+    fetchData(); 
+  }
 
   async function updateMission(id, status, playerId, xpReward, goldReward) {
     if (!supabase) return;
@@ -228,11 +238,16 @@ export default function MasterPanel() {
           for (const member of members) await updatePlayerXpAndLevel(member.id, xpReward, goldSplit);
           alert(`Grupo recompensado!`);
         }
-      } else { await updatePlayerXpAndLevel(playerId, xpReward, goldReward); }
+      } else {
+        await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
+      }
     }
   }
 
-  async function deleteMission(id) { if (!confirm("Apagar?")) return; if (supabase) await supabase.from('missions').delete().eq('id', id); }
+  async function deleteMission(id) {
+    if (!confirm("Apagar?")) return;
+    if (supabase) await supabase.from('missions').delete().eq('id', id);
+  }
   
   async function handleRequest(request, approved) {
     if (!supabase) return;
@@ -242,8 +257,12 @@ export default function MasterPanel() {
       const itemToAddName = request.item_name === "SOLICITACAO_ROLETA" ? "Gacha Gift" : request.item_name;
       const existingIndex = newInv.findIndex(i => i.name.toLowerCase() === itemToAddName.toLowerCase());
       const qtyToAdd = request.quantity || 1; 
+
       if (existingIndex >= 0) newInv[existingIndex].qty += qtyToAdd; 
-      else { if (newInv.length >= (player.slots || 10)) return alert("Mochila cheia!"); newInv.push({ name: itemToAddName, qty: qtyToAdd }); }
+      else {
+        if (newInv.length >= (player.slots || 10)) return alert("Mochila cheia!");
+        newInv.push({ name: itemToAddName, qty: qtyToAdd });
+      }
       await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
     }
     await supabase.from('item_requests').delete().eq('id', request.id);
@@ -266,18 +285,26 @@ export default function MasterPanel() {
     fetchData(); 
   }
 
-  async function deleteShopItem(id) { if (!confirm("Remover?")) return; if (supabase) await supabase.from('shop_items').delete().eq('id', id); fetchData(); }
+  async function deleteShopItem(id) {
+    if (!confirm("Remover?")) return;
+    if (supabase) await supabase.from('shop_items').delete().eq('id', id);
+    fetchData();
+  }
 
   async function modifyGold(playerId, amount) { 
-    if (!amount) return; const val = Number(amount);
+    if (!amount) return; 
+    const val = Number(amount);
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, gold: Math.max(0, (p.gold||0) + val) } : p));
-    await updatePlayerXpAndLevel(playerId, 0, val); setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
+    await updatePlayerXpAndLevel(playerId, 0, val);
+    setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
   }
 
   async function modifyXp(playerId, amount) { 
-    if (!amount) return; const val = Number(amount);
+    if (!amount) return; 
+    const val = Number(amount);
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, xp: Math.max(0, (p.xp||0) + val) } : p));
-    await updatePlayerXpAndLevel(playerId, val, 0); setXpMod(prev => ({ ...prev, [playerId]: '' })); 
+    await updatePlayerXpAndLevel(playerId, val, 0);
+    setXpMod(prev => ({ ...prev, [playerId]: '' })); 
   }
 
   async function updateRank(playerId, newRank) { 
@@ -288,23 +315,31 @@ export default function MasterPanel() {
   function openInventory(player) { setSelectedPlayerForInv(player); setSlotAddQty(1); setMasterItemQty(1); setMasterItemName(''); }
   
   async function increaseSlots() { 
-    if (!selectedPlayerForInv || !supabase) return; const qtd = Number(slotAddQty); if (qtd <= 0) return; 
+    if (!selectedPlayerForInv || !supabase) return; 
+    const qtd = Number(slotAddQty); if (qtd <= 0) return; 
     const newSlots = (selectedPlayerForInv.slots||10) + qtd;
-    setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots}); await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
+    setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots});
+    await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
   }
   
   async function masterAddItemToPlayer() {
-    if (!masterItemName.trim() || !selectedPlayerForInv || !supabase) return; const qtd = Number(masterItemQty); if (qtd <= 0) return;
-    let newInv = [...(selectedPlayerForInv.inventory || [])]; const idx = newInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
+    if (!masterItemName.trim() || !selectedPlayerForInv || !supabase) return;
+    const qtd = Number(masterItemQty); if (qtd <= 0) return;
+    let newInv = [...(selectedPlayerForInv.inventory || [])];
+    const idx = newInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
     if (idx >= 0) newInv[idx].qty += qtd; 
     else { if (newInv.length >= (selectedPlayerForInv.slots||10)) return alert("Mochila cheia!"); newInv.push({ name: masterItemName, qty: qtd }); }
-    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv}); await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id); setMasterItemName(''); 
+    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
+    setMasterItemName(''); 
   }
   
   async function masterRemoveItemFromPlayer(index) {
-    if (!selectedPlayerForInv || !supabase) return; let newInv = [...(selectedPlayerForInv.inventory || [])];
+    if (!selectedPlayerForInv || !supabase) return;
+    let newInv = [...(selectedPlayerForInv.inventory || [])];
     if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
-    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv}); await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
+    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
+    await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
   }
 
   return (
@@ -317,8 +352,6 @@ export default function MasterPanel() {
       </div>
 
       <div className={styles.container}>
-        
-        {/* MODAL INVENTÁRIO (MANTIDO) */}
         {selectedPlayerForInv && (
           <div className={styles.modalOverlay} onClick={() => setSelectedPlayerForInv(null)}>
             <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
@@ -358,7 +391,6 @@ export default function MasterPanel() {
           </div>
         )}
 
-        {/* MODAL DE EDIÇÃO DE MISSÃO */}
         {editingMission && (
           <div className={styles.modalOverlay} onClick={() => setEditingMission(null)}>
             <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
@@ -414,7 +446,6 @@ export default function MasterPanel() {
         </header>
 
         <div className={styles.grid}>
-          {/* COLUNA 1: MISSÕES */}
           <div className={styles.column}>
             <section className={styles.card}>
               <h2 className={styles.cardTitle}><Scroll size={18} /> Nova Missão</h2>
@@ -431,8 +462,6 @@ export default function MasterPanel() {
               <h2 className={styles.cardTitle}><Zap size={18} /> Mural Ativo</h2>
               <div className={styles.scrollableListSmall}>
                 {missions.filter(m => m.status === 'open').length === 0 && <p style={{color:'#64748b', textAlign:'center', marginTop:'20px'}}>Nenhuma missão publicada.</p>}
-                
-                {/* LISTA DE MISSÕES ATIVAS COM TOOLTIP E EDIÇÃO */}
                 {missions.filter(m => m.status === 'open').map(m => (
                   <div 
                     key={m.id} 
@@ -456,7 +485,6 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
-            {/* LOJA E SOLICITAÇÕES */}
             <section className={styles.card}>
               <h2 className={styles.cardTitle}><ShoppingBag size={18} /> Loja & Itens</h2>
               <div className={styles.inputGroup}><label className={styles.label}>Item</label><input className={styles.input} placeholder="Nome" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} /></div>
@@ -472,8 +500,17 @@ export default function MasterPanel() {
                     {shopItems.map(item => {
                       const rarity = getRarityFromItem(item); const color = getRarityColor(rarity);
                       return (
-                        <div key={item.id} className={styles.requestItem} style={{borderLeft: `3px solid ${color}`}} onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)} onMouseLeave={handleMouseLeave}>
-                          <div style={{cursor: 'help'}}><strong style={{color: color, fontSize:'0.9rem'}}>{item.item_name}</strong><div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div></div>
+                        <div 
+                          key={item.id} 
+                          className={styles.requestItem} 
+                          style={{borderLeft: `3px solid ${color}`}} 
+                          onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)} 
+                          onMouseLeave={handleMouseLeave}
+                        >
+                          <div style={{cursor: 'help'}}>
+                              <strong style={{color: color, fontSize:'0.9rem'}}>{item.item_name}</strong>
+                              <div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div>
+                          </div>
                           <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject}><Trash2 size={14} /></button>
                         </div>
                       );
@@ -499,7 +536,6 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
-            {/* JOGADORES */}
             <section className={styles.card}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid rgba(255,255,255,0.08)', paddingBottom:'12px', marginBottom:'10px'}}>
                  <h2 className={styles.cardTitle} style={{margin:0, border:0, padding:0}}><Users size={18} /> Jogadores</h2>
@@ -559,7 +595,7 @@ export default function MasterPanel() {
           </div>
         </div>
 
-        {/* TOOLTIP FLUTUANTE (VISUAL FIXO) */}
+        {/* TOOLTIP FLUTUANTE DO MESTRE COM POINTER EVENTS */}
         {tooltipData && (
             <div 
                 style={{
@@ -572,7 +608,7 @@ export default function MasterPanel() {
                     borderRadius: '8px',
                     padding: '12px',
                     zIndex: 9999,
-                    pointerEvents: 'none',
+                    pointerEvents: 'none', // CORREÇÃO AQUI
                     boxShadow: `0 4px 30px rgba(0,0,0,0.8)`,
                     minWidth: '250px',
                     maxWidth: '320px',
