@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
+// 1. Configuração
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -10,44 +11,70 @@ const supabaseAdmin = createClient(
 
 export async function GET(request) {
   try {
-    // Vamos direto no modelo mais estável e padrão do mercado hoje
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Usando o modelo padrão e estável
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      // Força a resposta a ser JSON puro
+      generationConfig: { responseMimeType: "application/json" }
+    });
 
-    console.log("Tentando conectar com Gemini 1.5 Flash...");
-    
-    // Teste de conexão simples (Ping)
-    // Se a chave estiver errada, vai estourar o erro AQUI e mostrar na tela
-    await model.generateContent("Teste de conexão."); 
+    console.log("Conectando ao Gemini 1.5 Flash...");
 
-    console.log("Conexão OK! Gerando missões...");
-
+    // 2. O Prompt
     const prompt = `
-      Gere um JSON válido com 2 missões de RPG e 10 itens de loja.
-      Formato JSON estrito:
+      Você é o Mestre do RPG Astralis.
+      Gere 2 Missões Novas e 10 Itens de Loja para hoje.
+
+      Requisitos:
+      - Missões com ranks variados (F a S) e recompensas justas.
+      - Itens com raridades [Comum] a [Mítico] no nome.
+      
+      Responda APENAS com este JSON:
       {
-        "missions": [{"title": "T", "description": "D", "rank": "F", "xp_reward": 100, "gold_reward": 50, "status": "open"}],
-        "shop_items": [{"item_name": "I [Comum]", "description": "D", "price": 10, "quantity": 1}]
+        "missions": [
+          { "title": "T", "description": "D", "rank": "F", "xp_reward": 100, "gold_reward": 50, "status": "open" }
+        ],
+        "shop_items": [
+          { "item_name": "Nome [Raridade]", "description": "D", "price": 100, "quantity": 1 }
+        ]
       }
     `;
 
+    // 3. Geração
     const result = await model.generateContent(prompt);
-    const text = result.response.text().replace(/```json|```/g, '').trim();
+    const text = result.response.text(); // O texto já vem limpo por causa do responseMimeType
     
-    const data = JSON.parse(text);
+    console.log("IA respondeu. Processando...");
+    
+    // 4. Parse e Salvamento
+    let data = JSON.parse(text);
 
-    // Salvar no Banco
-    if (data.missions?.length) await supabaseAdmin.from('missions').insert(data.missions);
-    if (data.shop_items?.length) await supabaseAdmin.from('shop_items').insert(data.shop_items);
+    // Validação de segurança se vier array vazio
+    if (!data.missions || !data.shop_items) throw new Error("JSON incompleto");
 
-    return NextResponse.json({ success: true, message: "Gerado com sucesso!" });
+    // Salvar Missões
+    if (data.missions.length > 0) {
+        const { error } = await supabaseAdmin.from('missions').insert(data.missions);
+        if (error) console.error("Erro Supabase Missões:", error.message);
+    }
+
+    // Salvar Itens
+    if (data.shop_items.length > 0) {
+        const { error } = await supabaseAdmin.from('shop_items').insert(data.shop_items);
+        if (error) console.error("Erro Supabase Itens:", error.message);
+    }
+
+    return NextResponse.json({ 
+        success: true, 
+        countMissions: data.missions.length, 
+        countItems: data.shop_items.length 
+    });
 
   } catch (error) {
-    console.error("ERRO DETALHADO:", error);
-    // Isso vai mostrar o motivo real do erro na sua tela
+    console.error("ERRO ROTA:", error);
     return NextResponse.json({ 
-      error: "Falha na IA", 
-      reason: error.message, // Ex: "API Key not valid" ou "404 Not Found"
-      hint: "Verifique se criou a chave em um PROJETO NOVO no Google AI Studio."
+        error: "Falha ao gerar", 
+        details: error.message 
     }, { status: 500 });
   }
 }
