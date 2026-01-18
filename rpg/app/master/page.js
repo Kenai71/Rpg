@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import styles from './master.module.css';
 import Logo from '../components/Logo';
 import { 
-  RefreshCw, LogOut, Plus, Trash2, 
+  RefreshCw, LogOut, Plus, Trash2, Pencil,
   Check, X, ShoppingBag, Scroll, Users, Backpack, 
   Crown, Coins, Sparkles, Zap, MessageSquare, Bot
 } from 'lucide-react';
@@ -14,15 +14,6 @@ const RANK_COLORS = {
   'F': '#94a3b8', 'E': '#4ade80', 'D': '#60a5fa',
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
-
-const RARITIES = [
-  { name: 'COMUM', color: '#9ca3af', chance: 50 },
-  { name: 'INCOMUM', color: '#4ade80', chance: 30 },
-  { name: 'RARO', color: '#60a5fa', chance: 15 },
-  { name: 'ÉPICO', color: '#a78bfa', chance: 4 },
-  { name: 'LENDÁRIO', color: '#fbbf24', chance: 0.9 },
-  { name: 'MÍTICO', color: '#ef4444', chance: 0.1 }
-];
 
 const XP_TABLE = [
   { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
@@ -56,12 +47,17 @@ export default function MasterPanel() {
   const [goldMod, setGoldMod] = useState({});
   const [xpMod, setXpMod] = useState({});
   
+  // States para Modais
   const [selectedPlayerForInv, setSelectedPlayerForInv] = useState(null);
   const [masterItemName, setMasterItemName] = useState('');
   const [masterItemQty, setMasterItemQty] = useState(1);
   const [slotAddQty, setSlotAddQty] = useState(1);
 
-  // --- TOOLTIP STATE ---
+  // State para Edição de Missão
+  const [editingMission, setEditingMission] = useState(null);
+  const [editForm, setEditForm] = useState({ title: '', description: '', rank: 'F', xp_reward: 0, gold_reward: 0 });
+
+  // Tooltip State
   const [tooltipData, setTooltipData] = useState(null);
 
   const RANKS = ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
@@ -109,31 +105,14 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  // --- HELPERS DE RARIDADE E TOOLTIP ---
-  function getRarityFromItem(item) {
-    const match = item.description?.match(/<([^>]+)>/);
-    if (match) return match[1];
-    if (item.name?.includes("Runa")) return item.name.split(" ")[1];
-    return "COMUM";
-  }
-
-  function getRarityColor(rarityName) {
-    const upper = rarityName?.toUpperCase();
-    const found = RARITIES.find(r => r.name === upper);
-    return found ? found.color : '#fff';
-  }
-
-  function cleanDescription(desc) {
-    return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
-  }
-
+  // --- TOOLTIP ---
   const handleMouseEnter = (e, title, desc, color) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setTooltipData({
-      x: rect.right + 15, // Lateral direita
+      x: rect.right + 15, 
       y: rect.top,
       title,
-      desc: cleanDescription(desc),
+      desc: desc || "Sem descrição",
       color
     });
   };
@@ -142,61 +121,67 @@ export default function MasterPanel() {
     setTooltipData(null);
   };
 
-  // --- FUNÇÕES DO MESTRE ---
+  // --- EDIÇÃO DE MISSÃO ---
+  function openEditMission(mission) {
+    setEditingMission(mission);
+    setEditForm({
+      title: mission.title,
+      description: mission.description,
+      rank: mission.rank,
+      xp_reward: mission.xp_reward,
+      gold_reward: mission.gold_reward
+    });
+  }
+
+  async function saveEditMission() {
+    if (!editingMission) return;
+    
+    const { error } = await supabase.from('missions').update({
+        title: editForm.title,
+        description: editForm.description,
+        rank: editForm.rank,
+        xp_reward: Number(editForm.xp_reward),
+        gold_reward: Number(editForm.gold_reward)
+    }).eq('id', editingMission.id);
+
+    if (error) alert("Erro ao editar: " + error.message);
+    else {
+        setEditingMission(null);
+        fetchData();
+    }
+  }
+
+  // --- FUNÇÕES DE LÓGICA (Mantidas) ---
   async function generateDailyContent() {
     setIsGenerating(true);
     try {
       const res = await fetch('/api/daily-generate');
       const data = await res.json();
-      
-      if (data.success) {
-        alert(`Sucesso! Criadas ${data.countMissions} missões e ${data.countItems} itens novos.`);
-        fetchData(); 
-      } else {
-        alert("Erro na IA: " + (data.error || JSON.stringify(data)));
-      }
-    } catch (err) {
-      alert("Erro ao conectar com o servidor.");
-      console.error(err);
-    } finally {
-      setIsGenerating(false);
-    }
+      if (data.success) { alert(`Sucesso! Criadas ${data.countMissions} missões e ${data.countItems} itens novos.`); fetchData(); } 
+      else { alert("Erro na IA: " + (data.error || JSON.stringify(data))); }
+    } catch (err) { alert("Erro ao conectar com o servidor."); console.error(err); } finally { setIsGenerating(false); }
   }
 
   function calculateLevel(totalXp) {
-    let newLevel = 1;
-    for (let i = 0; i < XP_TABLE.length; i++) {
-      if (totalXp >= XP_TABLE[i].xp) newLevel = XP_TABLE[i].lvl; else break; 
-    }
-    return newLevel;
+    let newLevel = 1; for (let i = 0; i < XP_TABLE.length; i++) { if (totalXp >= XP_TABLE[i].xp) newLevel = XP_TABLE[i].lvl; else break; } return newLevel;
   }
 
   async function updatePlayerXpAndLevel(playerId, amountXP, amountGold = 0) {
-    const player = players.find(p => p.id === playerId);
-    if (!player) return;
+    const player = players.find(p => p.id === playerId); if (!player) return;
     const newXp = Math.max(0, (player.xp || 0) + Number(amountXP));
     const newGold = Math.max(0, (player.gold || 0) + Number(amountGold));
     const newLevel = calculateLevel(newXp);
-    
     await supabase.from('profiles').update({ xp: newXp, gold: newGold, level: newLevel }).eq('id', playerId);
   }
 
   async function createParty() {
     if (!partyForm.trim()) return alert("Nome necessário");
     const { error } = await supabase.from('parties').insert([{ name: partyForm }]);
-    if (error) return alert(error.message);
-    setPartyForm(''); 
+    if (error) return alert(error.message); setPartyForm(''); 
   }
 
-  async function assignToParty(playerId, partyId) {
-    const pid = partyId === "" ? null : partyId;
-    await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId);
-  }
-
-  async function makeLeader(partyId, playerId) {
-    await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId);
-    fetchData(); 
-  }
+  async function assignToParty(playerId, partyId) { const pid = partyId === "" ? null : partyId; await supabase.from('profiles').update({ party_id: pid }).eq('id', playerId); }
+  async function makeLeader(partyId, playerId) { await supabase.from('parties').update({ leader_id: playerId }).eq('id', partyId); fetchData(); }
 
   async function updateMission(id, status, playerId, xpReward, goldReward) {
     const { error } = await supabase.from('missions').update({ status }).eq('id', id);
@@ -210,16 +195,11 @@ export default function MasterPanel() {
           for (const member of members) await updatePlayerXpAndLevel(member.id, xpReward, goldSplit);
           alert(`Grupo recompensado!`);
         }
-      } else {
-        await updatePlayerXpAndLevel(playerId, xpReward, goldReward);
-      }
+      } else { await updatePlayerXpAndLevel(playerId, xpReward, goldReward); }
     }
   }
 
-  async function deleteMission(id) {
-    if (!confirm("Apagar?")) return;
-    await supabase.from('missions').delete().eq('id', id);
-  }
+  async function deleteMission(id) { if (!confirm("Apagar?")) return; await supabase.from('missions').delete().eq('id', id); }
   
   async function handleRequest(request, approved) {
     if (approved) {
@@ -228,12 +208,8 @@ export default function MasterPanel() {
       const itemToAddName = request.item_name === "SOLICITACAO_ROLETA" ? "Gacha Gift" : request.item_name;
       const existingIndex = newInv.findIndex(i => i.name.toLowerCase() === itemToAddName.toLowerCase());
       const qtyToAdd = request.quantity || 1; 
-
       if (existingIndex >= 0) newInv[existingIndex].qty += qtyToAdd; 
-      else {
-        if (newInv.length >= (player.slots || 10)) return alert("Mochila cheia!");
-        newInv.push({ name: itemToAddName, qty: qtyToAdd });
-      }
+      else { if (newInv.length >= (player.slots || 10)) return alert("Mochila cheia!"); newInv.push({ name: itemToAddName, qty: qtyToAdd }); }
       await supabase.from('profiles').update({ inventory: newInv }).eq('id', request.player_id);
     }
     await supabase.from('item_requests').delete().eq('id', request.id);
@@ -254,26 +230,18 @@ export default function MasterPanel() {
     fetchData(); 
   }
 
-  async function deleteShopItem(id) {
-    if (!confirm("Remover?")) return;
-    await supabase.from('shop_items').delete().eq('id', id);
-    fetchData();
-  }
+  async function deleteShopItem(id) { if (!confirm("Remover?")) return; await supabase.from('shop_items').delete().eq('id', id); fetchData(); }
 
   async function modifyGold(playerId, amount) { 
-    if (!amount) return; 
-    const val = Number(amount);
+    if (!amount) return; const val = Number(amount);
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, gold: Math.max(0, (p.gold||0) + val) } : p));
-    await updatePlayerXpAndLevel(playerId, 0, val);
-    setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
+    await updatePlayerXpAndLevel(playerId, 0, val); setGoldMod(prev => ({ ...prev, [playerId]: '' })); 
   }
 
   async function modifyXp(playerId, amount) { 
-    if (!amount) return; 
-    const val = Number(amount);
+    if (!amount) return; const val = Number(amount);
     setPlayers(curr => curr.map(p => p.id === playerId ? { ...p, xp: Math.max(0, (p.xp||0) + val) } : p));
-    await updatePlayerXpAndLevel(playerId, val, 0);
-    setXpMod(prev => ({ ...prev, [playerId]: '' })); 
+    await updatePlayerXpAndLevel(playerId, val, 0); setXpMod(prev => ({ ...prev, [playerId]: '' })); 
   }
 
   async function updateRank(playerId, newRank) { 
@@ -284,32 +252,28 @@ export default function MasterPanel() {
   function openInventory(player) { setSelectedPlayerForInv(player); setSlotAddQty(1); setMasterItemQty(1); setMasterItemName(''); }
   
   async function increaseSlots() { 
-    if (!selectedPlayerForInv) return; 
-    const qtd = Number(slotAddQty); if (qtd <= 0) return; 
+    if (!selectedPlayerForInv) return; const qtd = Number(slotAddQty); if (qtd <= 0) return; 
     const newSlots = (selectedPlayerForInv.slots||10) + qtd;
-    setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots});
-    await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
+    setSelectedPlayerForInv({...selectedPlayerForInv, slots: newSlots}); await supabase.from('profiles').update({ slots: newSlots }).eq('id', selectedPlayerForInv.id); 
   }
   
   async function masterAddItemToPlayer() {
-    if (!masterItemName.trim() || !selectedPlayerForInv) return;
-    const qtd = Number(masterItemQty); if (qtd <= 0) return;
-    let newInv = [...(selectedPlayerForInv.inventory || [])];
-    const idx = newInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
+    if (!masterItemName.trim() || !selectedPlayerForInv) return; const qtd = Number(masterItemQty); if (qtd <= 0) return;
+    let newInv = [...(selectedPlayerForInv.inventory || [])]; const idx = newInv.findIndex(i => i.name.toLowerCase() === masterItemName.toLowerCase());
     if (idx >= 0) newInv[idx].qty += qtd; 
     else { if (newInv.length >= (selectedPlayerForInv.slots||10)) return alert("Mochila cheia!"); newInv.push({ name: masterItemName, qty: qtd }); }
-    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
-    setMasterItemName(''); 
+    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv}); await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id); setMasterItemName(''); 
   }
   
   async function masterRemoveItemFromPlayer(index) {
-    if (!selectedPlayerForInv) return;
-    let newInv = [...(selectedPlayerForInv.inventory || [])];
+    if (!selectedPlayerForInv) return; let newInv = [...(selectedPlayerForInv.inventory || [])];
     if (newInv[index].qty > 1) newInv[index].qty -= 1; else newInv.splice(index, 1);
-    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv});
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
+    setSelectedPlayerForInv({...selectedPlayerForInv, inventory: newInv}); await supabase.from('profiles').update({ inventory: newInv }).eq('id', selectedPlayerForInv.id);
   }
+
+  // Helpers para Tooltip de Item
+  function getRarityFromItem(item) { const match = item.description?.match(/<([^>]+)>/); if (match) return match[1]; if (item.name?.includes("Runa")) return item.name.split(" ")[1]; return "COMUM"; }
+  function getRarityColor(rarityName) { const upper = rarityName?.toUpperCase(); const found = RARITIES.find(r => r.name === upper); return found ? found.color : '#fff'; }
 
   return (
     <div className={styles.wrapper} data-theme={currentTheme}>
@@ -321,12 +285,15 @@ export default function MasterPanel() {
       </div>
 
       <div className={styles.container}>
+        
+        {/* MODAL INVENTÁRIO (Mantido) */}
         {selectedPlayerForInv && (
           <div className={styles.modalOverlay} onClick={() => setSelectedPlayerForInv(null)}>
             <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
               <h2 style={{color:'var(--accent-glow)', margin:'0 0 20px 0', fontSize:'1.4rem', display:'flex', alignItems:'center', gap:'10px'}}>
                 <Backpack size={24} /> Mochila: <span style={{color:'#fff'}}>{selectedPlayerForInv.username}</span>
               </h2>
+              {/* ... (Conteúdo do inventário mantido) ... */}
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#18181b', padding:'12px', borderRadius:'8px', marginBottom:'20px', border:'1px solid #27272a'}}>
                   <span style={{color:'#a1a1aa', fontSize:'0.9rem'}}>Capacidade: <strong style={{color:'#fff'}}>{selectedPlayerForInv.slots || 10}</strong> slots</span>
                   <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
@@ -360,32 +327,63 @@ export default function MasterPanel() {
           </div>
         )}
 
-        <header className={styles.header}>
-          <div className={styles.titleGroup}>
-             <Logo size={42} showText={true} /> 
+        {/* MODAL DE EDIÇÃO DE MISSÃO (NOVO) */}
+        {editingMission && (
+          <div className={styles.modalOverlay} onClick={() => setEditingMission(null)}>
+            <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
+              <h2 style={{color: RANK_COLORS[editForm.rank], marginBottom:'20px', display:'flex', gap:'10px', alignItems:'center'}}>
+                <Pencil size={24} /> Editar Missão
+              </h2>
+              
+              <div className={styles.inputGroup}>
+                <label className={styles.label}>Título</label>
+                <input className={styles.input} value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})} />
+              </div>
+              
+              <div className={styles.inputGroup}>
+                <label className={styles.label}>Descrição</label>
+                <textarea className={styles.input} rows={4} value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} />
+              </div>
+
+              <div className={styles.row}>
+                <div className={styles.inputGroup}>
+                  <label className={styles.label}>Rank</label>
+                  <select className={styles.input} value={editForm.rank} onChange={e => setEditForm({...editForm, rank: e.target.value})}>
+                    {RANKS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div className={styles.inputGroup}>
+                  <label className={styles.label}>XP</label>
+                  <input type="number" className={styles.input} value={editForm.xp_reward} onChange={e => setEditForm({...editForm, xp_reward: e.target.value})} />
+                </div>
+                <div className={styles.inputGroup}>
+                  <label className={styles.label}>Ouro</label>
+                  <input type="number" className={styles.input} value={editForm.gold_reward} onChange={e => setEditForm({...editForm, gold_reward: e.target.value})} />
+                </div>
+              </div>
+
+              <div style={{display:'flex', gap:'10px', marginTop:'20px'}}>
+                <button onClick={saveEditMission} className={styles.btnPrimary}>SALVAR ALTERAÇÕES</button>
+                <button onClick={() => setEditingMission(null)} className={styles.btnReject} style={{width:'auto'}}>CANCELAR</button>
+              </div>
+            </div>
           </div>
-          
+        )}
+
+        <header className={styles.header}>
+          <div className={styles.titleGroup}><Logo size={42} showText={true} /></div>
           <div className={styles.actions}>
-            <button 
-              onClick={generateDailyContent} 
-              disabled={isGenerating}
-              className={`${styles.btnIcon} ${styles.btnMagic}`} 
-              style={{ background: 'linear-gradient(45deg, #8b5cf6, #d946ef)', border: 'none', color: 'white' }}
-            >
+            <button onClick={generateDailyContent} disabled={isGenerating} className={`${styles.btnIcon} ${styles.btnMagic}`} style={{ background: 'linear-gradient(45deg, #8b5cf6, #d946ef)', border: 'none', color: 'white' }}>
               {isGenerating ? <RefreshCw className="animate-spin" size={18} /> : <Bot size={18} />} 
               <span className="hidden md:inline">{isGenerating ? 'Criando...' : 'Gerar Diária'}</span>
             </button>
-
-            <button onClick={fetchData} className={`${styles.btnIcon} ${styles.btnRefresh}`}>
-              <RefreshCw size={18} /> <span className="hidden md:inline">Atualizar</span>
-            </button>
-            <button onClick={handleLogout} className={`${styles.btnIcon} ${styles.btnLogout}`}>
-              <LogOut size={18} /> <span className="hidden md:inline">Sair</span>
-            </button>
+            <button onClick={fetchData} className={`${styles.btnIcon} ${styles.btnRefresh}`}><RefreshCw size={18} /> <span className="hidden md:inline">Atualizar</span></button>
+            <button onClick={handleLogout} className={`${styles.btnIcon} ${styles.btnLogout}`}><LogOut size={18} /> <span className="hidden md:inline">Sair</span></button>
           </div>
         </header>
 
         <div className={styles.grid}>
+          {/* COLUNA 1: MISSÕES */}
           <div className={styles.column}>
             <section className={styles.card}>
               <h2 className={styles.cardTitle}><Scroll size={18} /> Nova Missão</h2>
@@ -402,10 +400,29 @@ export default function MasterPanel() {
               <h2 className={styles.cardTitle}><Zap size={18} /> Mural Ativo</h2>
               <div className={styles.scrollableListSmall}>
                 {missions.filter(m => m.status === 'open').length === 0 && <p style={{color:'#64748b', textAlign:'center', marginTop:'20px'}}>Nenhuma missão publicada.</p>}
+                
+                {/* LISTA DE MISSÕES ATIVAS COM TOOLTIP E EDIÇÃO */}
                 {missions.filter(m => m.status === 'open').map(m => (
-                  <div key={m.id} className={styles.requestItem} style={{borderLeft: `3px solid ${RANK_COLORS[m.rank]}`}}>
-                    <div><strong style={{color:'#f1f5f9', display:'block', fontSize:'0.95rem'}}>{m.title}</strong><div style={{fontSize:'0.75rem', color:'#94a3b8', marginTop:'4px'}}>Rank {m.rank} • {m.xp_reward}XP • {m.gold_reward}G</div></div>
-                    <button onClick={() => deleteMission(m.id)} className={styles.btnReject}><Trash2 size={16} /></button>
+                  <div 
+                    key={m.id} 
+                    className={styles.requestItem} 
+                    style={{borderLeft: `3px solid ${RANK_COLORS[m.rank]}`}}
+                    onMouseEnter={(e) => handleMouseEnter(e, m.title, m.description, RANK_COLORS[m.rank])}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <div style={{cursor: 'help', flex: 1}}>
+                      <strong style={{color:'#f1f5f9', display:'block', fontSize:'0.95rem'}}>{m.title}</strong>
+                      <div style={{fontSize:'0.75rem', color:'#94a3b8', marginTop:'4px'}}>Rank {m.rank} • {m.xp_reward}XP • {m.gold_reward}G</div>
+                    </div>
+                    <div style={{display:'flex', gap:'5px'}}>
+                      {/* BOTÃO EDITAR */}
+                      <button onClick={() => openEditMission(m)} className={styles.miniBtn} title="Editar">
+                        <Pencil size={14} />
+                      </button>
+                      <button onClick={() => deleteMission(m.id)} className={styles.btnReject}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -413,6 +430,7 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
+            {/* LOJA E SOLICITAÇÕES (Mantido) */}
             <section className={styles.card}>
               <h2 className={styles.cardTitle}><ShoppingBag size={18} /> Loja & Itens</h2>
               <div className={styles.inputGroup}><label className={styles.label}>Item</label><input className={styles.input} placeholder="Nome" value={shopForm.name} onChange={e => setShopForm({...shopForm, name: e.target.value})} /></div>
@@ -425,24 +443,11 @@ export default function MasterPanel() {
               <div style={{marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '15px'}}>
                  <div className={styles.scrollableListSmall} style={{maxHeight: '180px'}}>
                     {shopItems.length === 0 && <p style={{color:'#64748b', textAlign:'center', fontSize:'0.85rem'}}>Estoque vazio.</p>}
-                    
-                    {/* LISTA DE ITENS COM TOOLTIP */}
                     {shopItems.map(item => {
-                      const rarity = getRarityFromItem(item);
-                      const color = getRarityColor(rarity);
-                      
+                      const rarity = getRarityFromItem(item); const color = getRarityColor(rarity);
                       return (
-                        <div 
-                          key={item.id} 
-                          className={styles.requestItem}
-                          style={{borderLeft: `3px solid ${color}`}}
-                          onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)}
-                          onMouseLeave={handleMouseLeave}
-                        >
-                          <div style={{cursor: 'help'}}>
-                              <strong style={{color: color, fontSize:'0.9rem'}}>{item.item_name}</strong>
-                              <div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div>
-                          </div>
+                        <div key={item.id} className={styles.requestItem} style={{borderLeft: `3px solid ${color}`}} onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)} onMouseLeave={handleMouseLeave}>
+                          <div style={{cursor: 'help'}}><strong style={{color: color, fontSize:'0.9rem'}}>{item.item_name}</strong><div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div></div>
                           <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject}><Trash2 size={14} /></button>
                         </div>
                       );
@@ -458,10 +463,7 @@ export default function MasterPanel() {
                   const isRoulette = req.item_name === "SOLICITACAO_ROLETA";
                   return (
                     <div key={req.id} className={styles.requestItem} style={isRoulette ? {borderColor: 'var(--accent-glow)', background: 'rgba(var(--accent-rgb), 0.05)'} : {}}>
-                      <div>
-                        {isRoulette ? (<strong style={{color:'var(--accent-glow)', display:'flex', alignItems:'center', gap:'5px', fontSize:'0.9rem'}}><Sparkles size={14} /> ROLETA GACHA</strong>) : (<strong style={{color:'#f1f5f9', display:'block', fontSize:'0.9rem'}}>{req.quantity}x {req.item_name}</strong>)}
-                        <span style={{fontSize:'0.75rem', color:'#94a3b8'}}>{req.profiles?.username}</span>
-                      </div>
+                      <div>{isRoulette ? (<strong style={{color:'var(--accent-glow)', display:'flex', alignItems:'center', gap:'5px', fontSize:'0.9rem'}}><Sparkles size={14} /> ROLETA GACHA</strong>) : (<strong style={{color:'#f1f5f9', display:'block', fontSize:'0.9rem'}}>{req.quantity}x {req.item_name}</strong>)}<span style={{fontSize:'0.75rem', color:'#94a3b8'}}>{req.profiles?.username}</span></div>
                       <div style={{display:'flex', gap:'8px'}}><button onClick={() => handleRequest(req, true)} className={styles.btnApprove}><Check size={16} /></button><button onClick={() => handleRequest(req, false)} className={styles.btnReject}><X size={16} /></button></div>
                     </div>
                   );
@@ -471,6 +473,7 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
+            {/* JOGADORES (Mantido) */}
             <section className={styles.card}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid rgba(255,255,255,0.08)', paddingBottom:'12px', marginBottom:'10px'}}>
                  <h2 className={styles.cardTitle} style={{margin:0, border:0, padding:0}}><Users size={18} /> Jogadores</h2>
@@ -530,7 +533,7 @@ export default function MasterPanel() {
           </div>
         </div>
 
-        {/* TOOLTIP FLUTUANTE (FINALMENTE NO MESTRE) */}
+        {/* TOOLTIP FLUTUANTE */}
         {tooltipData && (
             <div 
                 style={{
@@ -545,15 +548,15 @@ export default function MasterPanel() {
                     zIndex: 9999,
                     pointerEvents: 'none',
                     boxShadow: `0 4px 30px rgba(0,0,0,0.8)`,
-                    minWidth: '220px',
-                    maxWidth: '300px',
+                    minWidth: '250px',
+                    maxWidth: '320px',
                     animation: 'fadeIn 0.1s ease-out'
                 }}
             >
                 <h4 style={{margin: '0 0 8px 0', color: tooltipData.color, fontSize: '1rem', textShadow: `0 0 10px ${tooltipData.color}50`}}>
                     {tooltipData.title}
                 </h4>
-                <p style={{margin: 0, fontSize: '0.85rem', color: '#d4d4d8', lineHeight: '1.5'}}>
+                <p style={{margin: 0, fontSize: '0.85rem', color: '#d4d4d8', lineHeight: '1.5', whiteSpace: 'pre-wrap'}}>
                     {tooltipData.desc}
                 </p>
             </div>
