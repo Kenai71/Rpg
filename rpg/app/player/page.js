@@ -3,24 +3,17 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './player.module.css';
-import Logo from '../components/Logo'; // Certifique-se que o arquivo existe em app/components/Logo.js
+import Logo from '../components/Logo'; 
 import { 
   User, Shield, ShoppingBag, Scroll, Package, LogOut, 
-  RefreshCw, Sparkles, Coins, Gift, Plus, X, Check 
+  RefreshCw, Sparkles, Coins, Gift, Plus, X, Check, Hexagon,
+  Shirt, Crown, Hand, Footprints, Gem, Glasses, RectangleHorizontal, Circle
 } from 'lucide-react';
 
 const RANK_COLORS = {
   'F': '#9ca3af', 'E': '#4ade80', 'D': '#60a5fa',
   'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
 };
-
-const XP_TABLE = [
-  { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
-  { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
-  { lvl: 9, xp: 48000 }, { lvl: 10, xp: 64000 }, { lvl: 11, xp: 85000 }, { lvl: 12, xp: 100000 },
-  { lvl: 13, xp: 120000 }, { lvl: 14, xp: 140000 }, { lvl: 15, xp: 165000 }, { lvl: 16, xp: 195000 },
-  { lvl: 17, xp: 225000 }, { lvl: 18, xp: 265000 }, { lvl: 19, xp: 305000 }, { lvl: 20, xp: 355000 }
-];
 
 const RARITIES = [
   { name: 'COMUM', color: '#9ca3af', chance: 50 },
@@ -29,6 +22,14 @@ const RARITIES = [
   { name: 'ÉPICO', color: '#a78bfa', chance: 4 },
   { name: 'LENDÁRIO', color: '#fbbf24', chance: 0.9 },
   { name: 'MÍTICO', color: '#ef4444', chance: 0.1 }
+];
+
+const XP_TABLE = [
+  { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
+  { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
+  { lvl: 9, xp: 48000 }, { lvl: 10, xp: 64000 }, { lvl: 11, xp: 85000 }, { lvl: 12, xp: 100000 },
+  { lvl: 13, xp: 120000 }, { lvl: 14, xp: 140000 }, { lvl: 15, xp: 165000 }, { lvl: 16, xp: 195000 },
+  { lvl: 17, xp: 225000 }, { lvl: 18, xp: 265000 }, { lvl: 19, xp: 305000 }, { lvl: 20, xp: 355000 }
 ];
 
 const themes = [
@@ -57,6 +58,12 @@ export default function PlayerPanel() {
   const [currentRarityDisplay, setCurrentRarityDisplay] = useState(RARITIES[0]);
   const [finalResult, setFinalResult] = useState(null);
 
+  const [buyModalOpen, setBuyModalOpen] = useState(false);
+  const [selectedItemToBuy, setSelectedItemToBuy] = useState(null);
+  const [playerHasRune, setPlayerHasRune] = useState(false);
+
+  const [tooltipData, setTooltipData] = useState(null);
+
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferType, setTransferType] = useState('gold'); 
@@ -72,27 +79,21 @@ export default function PlayerPanel() {
 
   const RANK_VALUES = { 'F': 0, 'E': 1, 'D': 2, 'C': 3, 'B': 4, 'A': 5, 'S': 6 };
 
+  const [draggedItemIdx, setDraggedItemIdx] = useState(null);
+
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
 
   useEffect(() => {
     loadData();
-
-    // REALTIME ATIVADO
-    const channel = supabase
-      .channel('player-realtime')
+    const channel = supabase.channel('player-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_items' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .subscribe();
-
-    const interval = setInterval(loadData, 30000); // Backup
-    
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(interval);
-    };
+    const interval = setInterval(loadData, 30000);
+    return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, []);
 
   async function loadData() {
@@ -108,26 +109,20 @@ export default function PlayerPanel() {
 
     const prof = profRes.data;
     if (prof) {
-      if (prevLevelRef.current === 1 && prof.level > 1 && !profile) {
-         prevLevelRef.current = prof.level;
-      } else if (prof.level > prevLevelRef.current) {
-        setLeveledUpTo(prof.level);
-        setShowLevelUp(true);
-        prevLevelRef.current = prof.level;
-      }
-      
-      if (rouletteState === 'idle') {
-        setProfile(prof);
+      if (!prof.equipment) {
+          prof.equipment = { face: null, head: null, neck: null, body: null, hands: null, waist: null, feet: null, ring1: null, ring2: null };
       }
 
+      if (prevLevelRef.current === 1 && prof.level > 1 && !profile) prevLevelRef.current = prof.level;
+      else if (prof.level > prevLevelRef.current) {
+        setLeveledUpTo(prof.level); setShowLevelUp(true); prevLevelRef.current = prof.level;
+      }
+      if (rouletteState === 'idle') setProfile(prof);
       if (prof.party_id) {
         const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
         setMyParty(party);
-      } else {
-        setMyParty(null);
-      }
+      } else setMyParty(null);
     }
-
     setMissions(missionsRes.data || []);
     setShop(shopRes.data || []);
     setAllPlayers(playersRes.data || []);
@@ -135,177 +130,238 @@ export default function PlayerPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  async function acceptMission(mission) {
-    if (!profile) return;
-    const pRank = RANK_VALUES[profile.rank || 'F'];
-    const mRank = RANK_VALUES[mission.rank || 'F'];
-    if (mRank > pRank + 1) return alert("Seu Rank é muito baixo para esta missão.");
-    
-    setMissions(current => current.filter(m => m.id !== mission.id));
-    const { error } = await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id);
-    if(error) { alert("Erro ao aceitar"); loadData(); }
+  const handleMouseEnter = (e, title, desc, color) => {
+    if (!title) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setTooltipData({ x: rect.right + 15, y: rect.top, title, desc: cleanDescription(desc), color });
+  };
+  const handleMouseLeave = () => setTooltipData(null);
+
+  function getRarityFromItem(item) {
+    const match = item.description?.match(/<([^>]+)>/);
+    if (match) return match[1];
+    if (item.name?.includes("Runa")) return item.name.split(" ")[1];
+    return "COMUM";
   }
 
-  async function buyItem(item) {
-    let qtyToBuy = 1;
-    const input = prompt(`Quantos "${item.name || item.item_name}"?`, "1");
-    if (input === null) return; 
-    qtyToBuy = parseInt(input);
-    if (isNaN(qtyToBuy) || qtyToBuy <= 0) return alert("Qtd inválida.");
+  function getRarityColor(rarityName) {
+    const upper = rarityName?.toUpperCase();
+    const found = RARITIES.find(r => r.name === upper);
+    return found ? found.color : '#fff';
+  }
 
-    const totalPrice = item.price * qtyToBuy;
-    if (item.quantity < qtyToBuy) return alert("Sem estoque.");
-    if (profile.gold < totalPrice) return alert("Ouro insuficiente.");
+  function cleanDescription(desc) {
+    return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
+  }
 
-    const itemName = item.name || item.item_name;
-    const currentInv = [...(profile.inventory || [])];
-    const idx = currentInv.findIndex(i => i.name.toLowerCase() === itemName.toLowerCase());
+  function getItemType(item) {
+    if (item.type) return item.type;
+    const name = item.name.toLowerCase();
+    if (name.includes("anel")) return "ring";
+    if (name.includes("colar") || name.includes("amuleto") || name.includes("pingente")) return "neck";
+    if (name.includes("capacete") || name.includes("elmo") || name.includes("chapéu") || name.includes("coroa")) return "head";
+    if (name.includes("armadura") || name.includes("manto") || name.includes("túnica") || name.includes("traje")) return "body";
+    if (name.includes("luva") || name.includes("manopla") || name.includes("bracelete")) return "hands";
+    if (name.includes("bota") || name.includes("sapato") || name.includes("greva")) return "feet";
+    if (name.includes("cinto") || name.includes("faixa") || name.includes("algibeira")) return "waist";
+    if (name.includes("óculos") || name.includes("mascara") || name.includes("brinco")) return "face";
+    return "consumable";
+  }
+
+  const handleDragStart = (e, index) => { 
+      setTooltipData(null); 
+      setDraggedItemIdx(index); 
+      e.dataTransfer.effectAllowed = "move"; 
+  };
+  const handleDragOver = (e) => { e.preventDefault(); };
+
+  const handleDrop = async (e, slotName) => {
+    e.preventDefault();
+    if (draggedItemIdx === null) return;
+
+    const item = profile.inventory[draggedItemIdx];
+    const itemType = getItemType(item);
+
+    let isValid = false;
+    if (slotName === 'ring1' || slotName === 'ring2') isValid = (itemType === 'ring');
+    else isValid = (itemType === slotName);
+
+    if (!isValid) {
+        alert(`Este item (${itemType}) não cabe no slot ${slotName.toUpperCase()}!`);
+        setDraggedItemIdx(null);
+        return;
+    }
+
+    const newInv = [...profile.inventory];
+    const newEquip = { ...profile.equipment };
     
-    if (idx >= 0) currentInv[idx].qty += qtyToBuy; 
-    else currentInv.push({ name: itemName, qty: qtyToBuy });
+    const itemToEquip = newInv[draggedItemIdx];
+    if (itemToEquip.qty > 1) {
+        newInv[draggedItemIdx].qty--;
+        itemToEquip.qty = 1; 
+    } else {
+        newInv.splice(draggedItemIdx, 1);
+    }
 
-    setProfile(prev => ({ ...prev, gold: prev.gold - totalPrice, inventory: currentInv }));
-    setShop(currentShop => currentShop.map(s => 
-        s.id === item.id ? { ...s, quantity: s.quantity - qtyToBuy } : s
-    ).filter(s => s.quantity > 0));
+    if (newEquip[slotName]) {
+        newInv.push(newEquip[slotName]);
+    }
 
-    await supabase.from('profiles').update({ gold: profile.gold - totalPrice, inventory: currentInv }).eq('id', profile.id);
-    const remaining = item.quantity - qtyToBuy;
+    newEquip[slotName] = { ...itemToEquip, qty: 1 };
+
+    setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
+    await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
+    setDraggedItemIdx(null);
+  };
+
+  const handleUnequip = async (slotName) => {
+    const item = profile.equipment[slotName];
+    if (!item) return;
+
+    const maxSlots = profile.slots || 10;
+    if ((profile.inventory?.length || 0) >= maxSlots) {
+        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar. Arraste outro item para substituir.");
+    }
+
+    const newInv = [...profile.inventory];
+    const newEquip = { ...profile.equipment };
+
+    newEquip[slotName] = null;
+    
+    const existingIdx = newInv.findIndex(i => i.name === item.name);
+    if (existingIdx >= 0) newInv[existingIdx].qty++;
+    else newInv.push(item);
+
+    setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
+    await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
+  };
+
+  function openBuyModal(item) {
+    const rarity = getRarityFromItem(item);
+    const runeName = `Runa ${rarity}`;
+    const hasRune = profile.inventory?.some(i => i.name === runeName && i.qty > 0);
+    setSelectedItemToBuy(item); setPlayerHasRune(hasRune); setBuyModalOpen(true);
+  }
+
+  async function confirmBuy(useRune) {
+    if (!selectedItemToBuy) return;
+    const item = selectedItemToBuy;
+    const inv = [...(profile.inventory || [])];
+    const maxSlots = profile.slots || 10;
+    const itemIdx = inv.findIndex(i => i.name === item.item_name);
+    const isStacking = itemIdx >= 0;
+
+    if (!isStacking && inv.length >= maxSlots) return alert("MOCHILA CHEIA!");
+
+    const itemToSave = { name: item.item_name, qty: 1, description: item.description, type: item.type }; 
+
+    if (useRune) {
+      const rarity = getRarityFromItem(item);
+      const runeName = `Runa ${rarity}`;
+      const runeIdx = inv.findIndex(i => i.name === runeName);
+      if (runeIdx === -1 || inv[runeIdx].qty < 1) return alert("Erro: Runa sumiu!");
+      if (inv[runeIdx].qty > 1) inv[runeIdx].qty--; else inv.splice(runeIdx, 1);
+      if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
+      await supabase.from('profiles').update({ inventory: inv }).eq('id', profile.id);
+    } else {
+      if (profile.gold < item.price) return alert("Ouro insuficiente.");
+      if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
+      const newGold = profile.gold - item.price;
+      await supabase.from('profiles').update({ gold: newGold, inventory: inv }).eq('id', profile.id);
+      setProfile(prev => ({...prev, gold: newGold, inventory: inv}));
+    }
+    const remaining = item.quantity - 1;
     if (remaining > 0) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
     else await supabase.from('shop_items').delete().eq('id', item.id);
-  }
-
-  async function removeItem(index) {
-    if(!confirm("Jogar fora?")) return;
-    const currentInv = [...profile.inventory];
-    if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1);
-    
-    setProfile(prev => ({ ...prev, inventory: currentInv }));
-    await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
-  }
-
-  async function requestItem() {
-    if (!newItemName.trim()) return;
-    await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]);
-    setNewItemName(''); 
-    setIsModalOpen(false);
-  }
-
-  async function requestSpin() {
-    await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]);
+    setBuyModalOpen(false); loadData();
   }
 
   async function useGachaGift(index) {
-    const currentInv = [...profile.inventory];
-    const item = currentInv[index];
-
-    if (item.qty > 1) {
-      item.qty -= 1;
-    } else {
-      currentInv.splice(index, 1);
-    }
-
+    const currentInv = [...(profile.inventory || [])];
+    const giftItem = currentInv[index];
+    const maxSlots = profile.slots || 10;
+    if (giftItem.qty > 1 && currentInv.length >= maxSlots) return alert("MOCHILA CHEIA! Libere espaço para a Runa.");
+    if (giftItem.qty > 1) giftItem.qty -= 1; else currentInv.splice(index, 1);
     setProfile(prev => ({ ...prev, inventory: currentInv }));
-
-    supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id).then(({error}) => {
-       if(error) console.error("Erro ao atualizar inventário:", error);
-    });
-
+    await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
     startSpinAnimation();
   }
-
-  function openTransfer(target) {
-    setTransferTarget(target); setTransferType('gold'); setTransferAmount(''); setTransferItemQty(1); setTransferModalOpen(true);
-  }
-
-  async function handleTransfer() {
-    if (!transferTarget || !profile) return;
-    if (transferType === 'gold') {
-      const amount = Math.floor(Number(transferAmount)); 
-      if (amount <= 0 || amount > profile.gold) return alert("Inválido.");
-      
-      setProfile(prev => ({ ...prev, gold: prev.gold - amount }));
-      setTransferModalOpen(false);
-
-      await supabase.from('profiles').update({ gold: profile.gold - amount }).eq('id', profile.id);
-      const { data: tData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single();
-      await supabase.from('profiles').update({ gold: (tData.gold || 0) + amount }).eq('id', transferTarget.id);
-    } else {
-        const inv = profile.inventory || [];
-        const itemToGive = inv[transferItemIdx];
-        const qtd = Math.floor(Number(transferItemQty));
-        if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido");
-        
-        await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd });
-        setTransferModalOpen(false);
-    }
-  }
-
+  async function requestSpin() { await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]); alert("Solicitação enviada!"); }
+  
   function startSpinAnimation() {
     setRouletteState('spinning');
     let speed = 50; let counter = 0; const maxSpins = 30; 
     const rand = Math.random() * 100;
     let accumulated = 0; let resultObj = RARITIES[0];
     for (let r of RARITIES) { accumulated += r.chance; if (rand <= accumulated) { resultObj = r; break; } }
-
-    const spinInterval = () => {
-      setCurrentRarityDisplay(RARITIES[Math.floor(Math.random() * RARITIES.length)]);
-      counter++;
-      if (counter < maxSpins) { speed += 10; setTimeout(spinInterval, speed); } 
-      else { finishSpin(resultObj); }
-    };
+    const spinInterval = () => { setCurrentRarityDisplay(RARITIES[Math.floor(Math.random() * RARITIES.length)]); counter++; if (counter < maxSpins) { speed += 10; setTimeout(spinInterval, speed); } else { finishSpin(resultObj); } };
     spinInterval();
   }
-
   async function finishSpin(result) {
-    setCurrentRarityDisplay(result); 
-    setFinalResult(result); 
-    setRouletteState('result');
-
-    const currentProf = profileRef.current;
-    if (!currentProf) return;
-
-    const itemName = `Item ${result.name}`;
-    const newInv = [...currentProf.inventory]; 
-    const idx = newInv.findIndex(i => i.name === itemName);
-    
-    if (idx >= 0) newInv[idx].qty += 1; 
-    else newInv.push({ name: itemName, qty: 1 });
-    
-    setProfile(prev => ({...prev, inventory: newInv}));
-    await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
+    setCurrentRarityDisplay(result); setFinalResult(result); setRouletteState('result');
+    const currentProf = profileRef.current; if (!currentProf) return;
+    const runeName = `Runa ${result.name}`; const newInv = [...currentProf.inventory]; const idx = newInv.findIndex(i => i.name === runeName);
+    const runeItem = { name: runeName, qty: 1, description: `<${result.name}> Item mágico usado para trocar por equipamentos desta raridade na loja.` };
+    if (idx >= 0) newInv[idx].qty += 1; else newInv.push(runeItem);
+    setProfile(prev => ({...prev, inventory: newInv})); await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
   }
 
+  async function acceptMission(mission) { if (!profile) return; const pRank = RANK_VALUES[profile.rank || 'F']; const mRank = RANK_VALUES[mission.rank || 'F']; if (mRank > pRank + 1) return alert("Rank muito baixo."); setMissions(current => current.filter(m => m.id !== mission.id)); await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id); loadData(); }
+  async function requestItem() { if (!newItemName.trim()) return; await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]); setNewItemName(''); setIsModalOpen(false); }
+  async function removeItem(index) { if(!confirm("Jogar fora?")) return; const currentInv = [...profile.inventory]; if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1); setProfile(prev => ({ ...prev, inventory: currentInv })); await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id); }
+  function openTransfer(target) { setTransferTarget(target); setTransferType('gold'); setTransferAmount(''); setTransferModalOpen(true); }
+  async function handleTransfer() { if (!transferTarget || !profile) return; if (transferType === 'gold') { const amount = Math.floor(Number(transferAmount)); if (amount <= 0 || amount > profile.gold) return alert("Inválido."); setProfile(prev => ({ ...prev, gold: prev.gold - amount })); await supabase.from('profiles').update({ gold: profile.gold - amount }).eq('id', profile.id); const { data: tData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single(); await supabase.from('profiles').update({ gold: (tData.gold || 0) + amount }).eq('id', transferTarget.id); } else { const inv = profile.inventory || []; const itemToGive = inv[transferItemIdx]; const qtd = Math.floor(Number(transferItemQty)); if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido"); await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd }); } setTransferModalOpen(false); }
   const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
-  const getXpProgress = () => {
-    if (!profile) return { percent: 0, text: '0/0' };
-    const curr = profile.level || 1;
-    if (curr >= 20) return { percent: 100, text: 'MAX' };
-    const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 };
-    const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 };
-    const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100));
-    return { percent, text: `${profile.xp} / ${nextData.xp}` };
-  };
+  const getXpProgress = () => { if (!profile) return { percent: 0, text: '0/0' }; const curr = profile.level || 1; if (curr >= 20) return { percent: 100, text: 'MAX' }; const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 }; const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 }; const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100)); return { percent, text: `${profile.xp} / ${nextData.xp}` }; };
   const xpData = getXpProgress();
+
+  // --- COMPONENTE DE EQUIPAMENTO MELHORADO ---
+  const EquipmentSlot = ({ slot, icon: Icon, label, style }) => {
+    const item = profile?.equipment?.[slot];
+    const color = item ? getRarityColor(getRarityFromItem(item)) : '#444';
+    
+    return (
+      <div 
+        className={`${styles.equipSlot} ${item ? styles.filled : styles.empty}`} 
+        onDragOver={handleDragOver}
+        onDrop={(e) => handleDrop(e, slot)}
+        onClick={() => item && handleUnequip(slot)}
+        style={{ 
+            gridArea: slot, 
+            borderColor: item ? color : '#333', 
+            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none',
+            ...style 
+        }}
+        onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
+        onMouseLeave={handleMouseLeave}
+      >
+        {item ? (
+           // AQUI ESTÁ A CORREÇÃO: Div container centralizado
+           <div className={styles.equippedItem}>
+             <span className={styles.equippedName} style={{color: color}}>{item.name}</span>
+             <Icon size={28} color={color} strokeWidth={1.5} />
+           </div>
+        ) : (
+           <div className={styles.slotIcon}>
+             <Icon size={24} color="#333" />
+             <span className={styles.slotLabel}>{label}</span>
+           </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={styles.wrapper} data-theme={currentTheme}>
       <div className={styles.themeSwitcher}>
-          {themes.map(t => (
-              <button key={t.id} className={`${styles.themeDot} ${currentTheme === t.id ? styles.activeDot : ''}`}
-                style={{backgroundColor: t.color}} onClick={() => setCurrentTheme(t.id)} title={t.label} />
-          ))}
+          {themes.map(t => <button key={t.id} className={`${styles.themeDot} ${currentTheme === t.id ? styles.activeDot : ''}`} style={{backgroundColor: t.color}} onClick={() => setCurrentTheme(t.id)} />)}
       </div>
 
       <div className={styles.container}>
         {profile && (
           <div className={styles.hud}>
-            
-            {/* --- ÁREA DO PERSONAGEM (ATUALIZADA) --- */}
-            {/* Agora o logo fica ao lado esquerdo, separado do nome */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '25px' }}>
-              <Logo size={45} showText={false} /> {/* Logo Dourado */}
-              
+              <Logo size={45} showText={false} />
               <div className={styles.charInfo}>
                 <h1><User size={32} /> {profile.username}</h1>
                 <div className={styles.charDetails}>
@@ -315,18 +371,13 @@ export default function PlayerPanel() {
                 </div>
               </div>
             </div>
-            
             <div className={styles.hudRight}>
                <button onClick={requestSpin} className={`${styles.btnIcon} ${styles.btnMagic}`}><Sparkles size={16}/> Gift</button>
-               
                <div className={styles.statsGroup}>
                  <div className={styles.goldDisplay}><Coins size={18} color="#fbbf24" /> {profile.gold}</div>
-                 <div className={styles.xpContainer} title={xpData.text}>
-                    <div className={styles.xpFill} style={{width: `${xpData.percent}%`}}></div>
-                 </div>
+                 <div className={styles.xpContainer} title={xpData.text}><div className={styles.xpFill} style={{width: `${xpData.percent}%`}}></div></div>
                  <span className={styles.xpText}>XP {xpData.text}</span>
                </div>
-
                <div className={styles.hudActions}>
                  <button onClick={loadData} className={`${styles.btnIcon} ${styles.btnRefresh}`}><RefreshCw size={18}/></button>
                  <button onClick={handleLogout} className={`${styles.btnIcon} ${styles.btnLogout}`}><LogOut size={18}/></button>
@@ -336,132 +387,139 @@ export default function PlayerPanel() {
         )}
 
         <nav className={styles.nav}>
-          <button onClick={() => setTab('missions')} className={`${styles.navBtn} ${tab === 'missions' ? styles.active : ''}`}>Mural</button>
-          <button onClick={() => setTab('shop')} className={`${styles.navBtn} ${tab === 'shop' ? styles.active : ''}`}>Loja</button>
-          <button onClick={() => setTab('players')} className={`${styles.navBtn} ${tab === 'players' ? styles.active : ''}`}>Aliados</button>
-          <button onClick={() => setTab('inv')} className={`${styles.navBtn} ${tab === 'inv' ? styles.active : ''}`}>Mochila</button>
+          {['missions', 'shop', 'players', 'inv'].map(t => (
+             <button key={t} onClick={() => setTab(t)} className={`${styles.navBtn} ${tab === t ? styles.active : ''}`}>{t === 'missions' ? 'Mural' : t === 'shop' ? 'Loja' : t === 'players' ? 'Aliados' : 'Personagem'}</button>
+          ))}
         </nav>
 
         <main className={styles.grid}>
-          {tab === 'missions' && (
-            <>
-              {missions.length === 0 && <p className={styles.emptyMsg}>Nenhuma missão disponível.</p>}
-              {missions.map(m => (
+          {tab === 'missions' && missions.map(m => (
                 <div key={m.id} className={styles.card} style={{borderLeft:`4px solid ${getRankColor(m.rank)}`}}>
-                  <div className={styles.missionHeader}>
-                    <h3><Scroll size={18}/> {m.title}</h3>
-                    <span style={{color: getRankColor(m.rank)}}>RANK {m.rank}</span>
-                  </div>
+                  <div className={styles.missionHeader}><h3><Scroll size={18}/> {m.title}</h3><span style={{color: getRankColor(m.rank)}}>RANK {m.rank}</span></div>
+                  <div style={{fontSize: '0.8rem', color: '#fbbf24', marginBottom:'5px'}}>RECOMPENSA: {m.xp_reward} XP • {m.gold_reward} Ouro</div>
                   <p className={styles.cardDesc}>"{m.desc || m.description}"</p>
                   <button onClick={() => acceptMission(m)} className={styles.btnAction}><Check size={16}/> ACEITAR</button>
                 </div>
-              ))}
-            </>
-          )}
+          ))}
 
-          {tab === 'shop' && (
-            <>
-              {shop.length === 0 && <p className={styles.emptyMsg}>(Nada para comprar no momento...)</p>}
-              {shop.map(item => (
-                <div key={item.id} className={styles.card}>
-                  <div className={styles.cardHeader}><h3><ShoppingBag size={18}/> {item.name || item.item_name}</h3><span>x{item.quantity}</span></div>
-                  <p className={styles.cardDesc}>{item.desc || item.description}</p>
-                  <button onClick={() => buyItem(item)} className={styles.btnAction}><Coins size={16}/> {item.price}g</button>
-                </div>
-              ))}
-            </>
-          )}
+          {tab === 'shop' && shop.map(item => {
+                const rarity = getRarityFromItem(item);
+                const color = getRarityColor(rarity);
+                return (
+                  <div key={item.id} className={styles.card} style={{borderColor: `${color}40`}} onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)} onMouseLeave={handleMouseLeave}>
+                    <div className={styles.cardHeader}><h3 style={{color: color, textShadow: `0 0 10px ${color}40`}}><ShoppingBag size={18}/> {item.name || item.item_name}</h3><span>x{item.quantity}</span></div>
+                    <div style={{height: '10px'}}></div> 
+                    <button onClick={() => openBuyModal(item)} className={styles.btnAction} style={{background: 'linear-gradient(45deg, #18181b, #27272a)'}}>COMPRAR</button>
+                  </div>
+                )
+          })}
 
-          {tab === 'players' && (
-             allPlayers.map(p => {
-               const isMe = p.id === profile?.id;
-               return (
-                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: isMe ? '1px solid var(--accent-primary)' : ''}}>
+          {tab === 'players' && allPlayers.map(p => (
+                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: p.id === profile?.id ? '1px solid var(--accent-primary)' : ''}}>
                    <div style={{fontSize:'2.5rem', marginBottom:'10px'}}><Shield size={40} color={getRankColor(p.rank)}/></div>
                    <h3 style={{color:'#fff', margin:0}}>{p.username}</h3>
                    <span style={{color: getRankColor(p.rank), fontSize:'0.8rem', marginTop:'5px'}}>RANK {p.rank}</span>
-                   {!isMe && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px'}}><Gift size={16}/> Enviar</button>}
+                   {p.id !== profile?.id && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px'}}><Gift size={16}/> Enviar</button>}
                  </div>
-               );
-             })
-          )}
+          ))}
 
           {tab === 'inv' && (
-            <div className={styles.invWrapper} style={{gridColumn:'1/-1'}}>
-               <div className={styles.invHeader}>
-                 <h2 style={{margin:0, display:'flex', alignItems:'center', gap:'10px'}}><Package/> Inventário</h2>
-                 <span style={{color:'var(--text-muted)'}}>{profile?.inventory?.length || 0} / {profile?.slots || 10}</span>
+            <div className={styles.invWrapper} style={{gridColumn:'1/-1', display: 'flex', gap: '20px', flexDirection: 'column'}}>
+               <div className={styles.equipmentContainer}>
+                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'15px', letterSpacing:'2px'}}>EQUIPAMENTO</h3>
+                  
+                  {/* GRID PAPER DOLL (VISUAL NOVO) */}
+                  <div className={styles.dollGrid}>
+                      <EquipmentSlot slot="head" icon={Crown} label="Cabeça" />
+                      <EquipmentSlot slot="face" icon={Glasses} label="Rosto" />
+                      <EquipmentSlot slot="body" icon={Shirt} label="Armadura" />
+                      <EquipmentSlot slot="neck" icon={Circle} label="Pescoço" />
+                      <EquipmentSlot slot="hands" icon={Hand} label="Mãos" />
+                      <EquipmentSlot slot="waist" icon={RectangleHorizontal} label="Cinto" />
+                      <EquipmentSlot slot="feet" icon={Footprints} label="Pés" />
+                      <EquipmentSlot slot="ring1" icon={Gem} label="Anel 1" />
+                      <EquipmentSlot slot="ring2" icon={Gem} label="Anel 2" />
+                  </div>
                </div>
-               <div className={styles.invGrid}>
-                  {[...Array(profile?.slots || 10)].map((_, i) => {
-                    const item = profile?.inventory?.[i];
-                    return (
-                      <div key={i} className={`${styles.slot} ${!item ? styles.empty : ''}`}>
-                        {item ? (
-                          <>
-                            <div onClick={(e) => {e.stopPropagation(); removeItem(i);}} className={styles.removeBtn}><X size={12}/></div>
-                            <span className={styles.itemName}>{item.name}</span>
-                            <span className={styles.itemQty}>x{item.qty}</span>
-                            
-                            {item.name === 'Gacha Gift' && (
-                                <button onClick={(e)=>{e.stopPropagation(); useGachaGift(i)}} className={styles.btnUseItem}>
-                                    USAR
-                                </button>
-                            )}
-                          </>
-                        ) : (
-                          <Plus size={20} color="#444" onClick={() => setIsModalOpen(true)}/>
-                        )}
-                      </div>
-                    )
-                  })}
+
+               <div>
+                   <div className={styles.invHeader}>
+                     <h2 style={{margin:0}}><Package/> Mochila</h2>
+                     <span style={{color:'var(--text-muted)'}}>{profile?.inventory?.length || 0} / {profile?.slots || 10}</span>
+                   </div>
+                   <div className={styles.invGrid}>
+                      {[...Array(profile?.slots || 10)].map((_, i) => {
+                        const item = profile?.inventory?.[i];
+                        let rarity = "COMUM"; let color = "#fff";
+                        if (item) {
+                             if (item.description) rarity = getRarityFromItem(item);
+                             else if (item.name.includes("Runa")) rarity = item.name.split(" ")[1];
+                             color = getRarityColor(rarity);
+                        }
+                        return (
+                          <div 
+                            key={i} 
+                            draggable={!!item}
+                            onDragStart={(e) => handleDragStart(e, i)}
+                            className={`${styles.slot} ${!item ? styles.empty : ''}`} 
+                            style={item ? {borderColor: color, boxShadow:`inset 0 0 10px ${color}20`, cursor: 'grab'} : {}}
+                            onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
+                            onMouseLeave={handleMouseLeave}
+                          >
+                            {item ? (
+                              <>
+                                <div onClick={(e) => {e.stopPropagation(); removeItem(i);}} className={styles.removeBtn}><X size={12}/></div>
+                                <span className={styles.itemName} style={{color: color}}>{item.name}</span>
+                                <span className={styles.itemQty}>x{item.qty}</span>
+                                {item.name === 'Gacha Gift' && <button onClick={(e)=>{e.stopPropagation(); useGachaGift(i)}} className={styles.btnUseItem}>USAR</button>}
+                              </>
+                            ) : (<Plus size={20} color="#444" onClick={() => setIsModalOpen(true)}/>)}
+                          </div>
+                        )
+                      })}
+                   </div>
                </div>
             </div>
           )}
         </main>
 
-        {/* MODAL GACHA/ROLETA */}
-        {rouletteState !== 'idle' && (
-          <div className={styles.modalOverlay}>
-            <div 
-              className={`${styles.gachaCard} ${rouletteState === 'spinning' ? styles.isSpinning : styles.isResult}`} 
-              style={{
-                borderColor: currentRarityDisplay.color, 
-                boxShadow: `0 0 60px ${currentRarityDisplay.color}80` 
-              }}
-            >
-               {rouletteState === 'spinning' ? (
-                 <>
-                   <div className={styles.gachaIconSpin}><Sparkles size={48} color="#fff"/></div>
-                   <h2 style={{color: '#fff', opacity: 0.8}}>Sorteando...</h2>
-                 </>
-               ) : (
-                 <h2 style={{color: '#fff'}}>VOCÊ GANHOU</h2>
-               )}
-
-               <div className={styles.rarityText} style={{ color: currentRarityDisplay.color }}>
-                 {currentRarityDisplay.name}
-               </div>
-
-               {rouletteState === 'result' && (
-                 <div className={styles.resultItemName}>Item {currentRarityDisplay.name}</div>
-               )}
-
-               {rouletteState === 'result' && (
-                 <button onClick={() => {setRouletteState('idle'); setFinalResult(null);}} className={styles.btnAction} style={{marginTop: 'auto'}}>
-                   COLETAR
-                 </button>
-               )}
+        {tooltipData && (
+            <div style={{position: 'fixed', top: tooltipData.y, left: tooltipData.x, transform: 'translate(0, 0)', background: 'rgba(20, 20, 25, 0.98)', border: `1px solid ${tooltipData.color}`, borderRadius: '8px', padding: '12px', zIndex: 9999, pointerEvents: 'none', boxShadow: `0 4px 30px rgba(0,0,0,0.8)`, minWidth: '220px', maxWidth: '300px', animation: 'fadeIn 0.1s ease-out'}}>
+                <h4 style={{margin: '0 0 8px 0', color: tooltipData.color, fontSize: '1rem', textShadow: `0 0 10px ${tooltipData.color}50`}}>{tooltipData.title}</h4>
+                <p style={{margin: 0, fontSize: '0.85rem', color: '#d4d4d8', lineHeight: '1.5'}}>{tooltipData.desc}</p>
             </div>
-          </div>
         )}
 
-        {showLevelUp && (
-          <div className={styles.modalOverlay} onClick={() => setShowLevelUp(false)}>
-            <div className={styles.levelUpCard}>
-              <h1 style={{fontSize:'3rem', margin:0, color:'#fbbf24'}}>LEVEL UP!</h1>
-              <div className={styles.levelBadge}>{leveledUpTo}</div>
-              <button className={styles.btnAction} onClick={() => setShowLevelUp(false)}>CONTINUAR</button>
+        {/* Modal Compra */}
+        {buyModalOpen && selectedItemToBuy && (
+            <div className={styles.modalOverlay} onClick={() => setBuyModalOpen(false)}>
+                <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{textAlign:'center', border: `1px solid ${getRarityColor(getRarityFromItem(selectedItemToBuy))}`}}>
+                    <h2 style={{color: getRarityColor(getRarityFromItem(selectedItemToBuy)), marginBottom: '5px'}}>{selectedItemToBuy.item_name}</h2>
+                    <p style={{fontSize:'0.9rem', color:'#a1a1aa', marginBottom:'20px'}}>{cleanDescription(selectedItemToBuy.description)}</p>
+                    <p style={{color:'#fff', marginBottom:'15px'}}>Forma de Pagamento:</p>
+                    <div style={{display:'flex', gap:'15px', justifyContent:'center'}}>
+                        <button onClick={() => confirmBuy(false)} className={styles.card} style={{width:'140px', cursor: profile.gold >= selectedItemToBuy.price ? 'pointer' : 'not-allowed', opacity: profile.gold >= selectedItemToBuy.price ? 1 : 0.5, border: '1px solid #fbbf24', background: 'rgba(251, 191, 36, 0.1)'}}>
+                            <Coins size={24} color="#fbbf24" style={{display:'block', margin:'0 auto 10px'}}/>
+                            <span style={{display:'block', fontSize:'1.2rem', fontWeight:'bold', color:'#fbbf24'}}>{selectedItemToBuy.price}g</span>
+                        </button>
+                        <button onClick={() => playerHasRune && confirmBuy(true)} className={styles.card} style={{width:'140px', cursor: playerHasRune ? 'pointer' : 'not-allowed', opacity: playerHasRune ? 1 : 0.5, borderColor: getRarityColor(getRarityFromItem(selectedItemToBuy)), background: `rgba(255,255,255,0.05)`}}>
+                            <Hexagon size={24} color={getRarityColor(getRarityFromItem(selectedItemToBuy))} style={{display:'block', margin:'0 auto 10px'}}/>
+                            <span style={{display:'block', fontSize:'0.8rem', color:'#fff'}}>Runa {getRarityFromItem(selectedItemToBuy)}</span>
+                            <span style={{display:'block', color: playerHasRune ? '#4ade80' : '#ef4444', fontSize:'0.7rem', marginTop:'5px', fontWeight:'bold'}}>{playerHasRune ? "USAR RUNA" : "SEM RUNA"}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Modal Gacha */}
+        {rouletteState !== 'idle' && (
+          <div className={styles.modalOverlay}>
+            <div className={`${styles.gachaCard} ${rouletteState === 'spinning' ? styles.isSpinning : styles.isResult}`} style={{borderColor: currentRarityDisplay.color, boxShadow: `0 0 60px ${currentRarityDisplay.color}80`}}>
+               {rouletteState === 'spinning' ? <><div className={styles.gachaIconSpin}><Sparkles size={48} color="#fff"/></div><h2 style={{color: '#fff', opacity: 0.8}}>Sorteando...</h2></> : <h2 style={{color: '#fff'}}>VOCÊ OBTEVE</h2>}
+               <div className={styles.rarityText} style={{ color: currentRarityDisplay.color }}>{currentRarityDisplay.name}</div>
+               {rouletteState === 'result' && <div style={{display:'flex', flexDirection:'column', alignItems:'center', marginTop:'10px'}}><Hexagon size={48} color={currentRarityDisplay.color} /><div className={styles.resultItemName} style={{color:'#fff', marginTop:'10px'}}>RUNA {currentRarityDisplay.name}</div><span style={{fontSize:'0.8rem', color:'#a1a1aa'}}>Use para trocar por itens na Loja!</span></div>}
+               {rouletteState === 'result' && <button onClick={() => {setRouletteState('idle'); setFinalResult(null);}} className={styles.btnAction} style={{marginTop: 'auto'}}>COLETAR</button>}
             </div>
           </div>
         )}
@@ -476,31 +534,6 @@ export default function PlayerPanel() {
             </div>
           </div>
         )}
-
-        {transferModalOpen && transferTarget && (
-          <div className={styles.modalOverlay} onClick={() => setTransferModalOpen(false)}>
-            <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
-              <h2 style={{color:'var(--accent-glow)', marginBottom:'20px'}}>Enviar para {transferTarget.username}</h2>
-              <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
-                <button onClick={() => setTransferType('gold')} className={styles.navBtn} style={{background: transferType === 'gold' ? 'var(--accent-primary)' : '', color: transferType === 'gold' ? '#fff' : ''}}>Ouro</button>
-                <button onClick={() => setTransferType('item')} className={styles.navBtn} style={{background: transferType === 'item' ? 'var(--accent-primary)' : '', color: transferType === 'item' ? '#fff' : ''}}>Item</button>
-              </div>
-              
-              {transferType === 'gold' ? (
-                <input type="number" className={styles.input} value={transferAmount} onChange={e => setTransferAmount(e.target.value)} placeholder="Quantidade de Ouro" />
-              ) : (
-                <>
-                  <select className={styles.input} value={transferItemIdx} onChange={e => {setTransferItemIdx(e.target.value); setTransferItemQty(1);}}>
-                    {profile?.inventory?.map((item, idx) => <option key={idx} value={idx}>{item.name} (x{item.qty})</option>)}
-                  </select>
-                  <input type="number" className={styles.input} value={transferItemQty} onChange={e => setTransferItemQty(e.target.value)} placeholder="Qtd" />
-                </>
-              )}
-              <button onClick={handleTransfer} className={styles.btnAction}>CONFIRMAR</button>
-            </div>
-          </div>
-        )}
-
       </div>
     </div>
   );

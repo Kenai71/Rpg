@@ -2,7 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-// 1. Configuração
+const MODELS_TO_TRY = ["gemini-2.0-flash-exp", "gemini-2.5-flash", "gemini-1.5-flash"];
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -10,71 +11,57 @@ const supabaseAdmin = createClient(
 );
 
 export async function GET(request) {
+  if (!process.env.GEMINI_API_KEY) return NextResponse.json({ error: "No API Key" }, { status: 500 });
+
+  let model = null;
+  for (const name of MODELS_TO_TRY) {
+    try {
+      const m = genAI.getGenerativeModel({ model: name, generationConfig: { responseMimeType: "application/json" } });
+      await m.generateContent("Test");
+      model = m; break;
+    } catch (e) {}
+  }
+  if (!model) return NextResponse.json({ error: "No Model Available" }, { status: 500 });
+
   try {
-    // Usando o modelo padrão e estável
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      // Força a resposta a ser JSON puro
-      generationConfig: { responseMimeType: "application/json" }
-    });
-
-    console.log("Conectando ao Gemini 1.5 Flash...");
-
-    // 2. O Prompt
     const prompt = `
-      Você é o Mestre do RPG Astralis.
-      Gere 2 Missões Novas e 10 Itens de Loja para hoje.
+      Você é o Mestre de um RPG de FANTASIA MEDIEVAL.
+      Gere 2 Missões e 10 Itens de Loja.
 
-      Requisitos:
-      - Missões com ranks variados (F a S) e recompensas justas.
-      - Itens com raridades [Comum] a [Mítico] no nome.
+      REGRAS DE ITENS:
+      1. Descrição: DEVE começar com a raridade entre tags: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO>, <MÍTICO>.
+      2. Nome: Limpo (Ex: "Cinto de Couro").
+      3. Type (Tipo) - Escolha um:
+         - "face" (Máscara, Óculos, Brinco Mágico)
+         - "head" (Capacete, Elmo, Chapéu, Coroa)
+         - "neck" (Colar, Amuleto, Pingente)
+         - "body" (IMPORTANTE: Apenas Armaduras Completas. Ex: "Armadura de Placas", "Túnica de Mago", "Traje de Ladino")
+         - "hands" (Luvas, Manoplas, Braceletes)
+         - "waist" (Cinto, Faixa, Algibeira)
+         - "feet" (Botas, Sapatos, Grevas)
+         - "ring" (Anel)
+         - "consumable" (Poção, Pergaminho)
       
-      Responda APENAS com este JSON:
+      Responda JSON:
       {
         "missions": [
-          { "title": "T", "description": "D", "rank": "F", "xp_reward": 100, "gold_reward": 50, "status": "open" }
+          { "title": "...", "description": "...", "rank": "S", "xp_reward": 15000, "gold_reward": 8000, "status": "open" }
         ],
         "shop_items": [
-          { "item_name": "Nome [Raridade]", "description": "D", "price": 100, "quantity": 1 }
+          { "item_name": "Nome", "description": "<RARO> Descrição...", "price": 1000, "quantity": 1, "type": "waist" }
         ]
       }
     `;
 
-    // 3. Geração
     const result = await model.generateContent(prompt);
-    const text = result.response.text(); // O texto já vem limpo por causa do responseMimeType
-    
-    console.log("IA respondeu. Processando...");
-    
-    // 4. Parse e Salvamento
-    let data = JSON.parse(text);
+    const data = JSON.parse(result.response.text());
 
-    // Validação de segurança se vier array vazio
-    if (!data.missions || !data.shop_items) throw new Error("JSON incompleto");
+    if (data.missions?.length) await supabaseAdmin.from('missions').insert(data.missions);
+    if (data.shop_items?.length) await supabaseAdmin.from('shop_items').insert(data.shop_items);
 
-    // Salvar Missões
-    if (data.missions.length > 0) {
-        const { error } = await supabaseAdmin.from('missions').insert(data.missions);
-        if (error) console.error("Erro Supabase Missões:", error.message);
-    }
-
-    // Salvar Itens
-    if (data.shop_items.length > 0) {
-        const { error } = await supabaseAdmin.from('shop_items').insert(data.shop_items);
-        if (error) console.error("Erro Supabase Itens:", error.message);
-    }
-
-    return NextResponse.json({ 
-        success: true, 
-        countMissions: data.missions.length, 
-        countItems: data.shop_items.length 
-    });
+    return NextResponse.json({ success: true, count: data.shop_items.length });
 
   } catch (error) {
-    console.error("ERRO ROTA:", error);
-    return NextResponse.json({ 
-        error: "Falha ao gerar", 
-        details: error.message 
-    }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
