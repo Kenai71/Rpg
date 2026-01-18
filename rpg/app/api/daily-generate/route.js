@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'; // Garante que só roda quando chamado
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
@@ -28,58 +29,37 @@ export async function GET(request) {
     } catch (e) {}
   }
 
-  if (!model) return NextResponse.json({ error: "IA indisponível. Verifique a chave API." }, { status: 500 });
+  if (!model) return NextResponse.json({ error: "IA indisponível" }, { status: 500 });
 
   try {
-    // Adicionamos Date.now() para forçar conteúdo novo sempre
     const prompt = `
       Seed: ${Date.now()}
-      Você é Mestre de RPG Medieval. Gere conteúdo novo.
+      Você é Mestre de RPG Medieval.
+      TAREFA: 2 Missões (Ranks F-S) e 10 Itens de Loja.
       
-      TAREFA:
-      - 2 Missões (Ranks F a S).
-      - 10 Itens de Loja.
-      
-      ESTRUTURA OBRIGATÓRIA (JSON):
+      JSON OBRIGATÓRIO:
       {
-        "missions": [
-          { "title": "T", "description": "D", "rank": "S", "xp_reward": 5000, "gold_reward": 2000, "status": "open" }
-        ],
-        "shop_items": [
-          { "item_name": "N", "description": "<RARO> Desc...", "price": 100, "quantity": 1, "type": "waist" }
-        ]
+        "missions": [{"title": "T", "description": "D", "rank": "S", "xp_reward": 5000, "gold_reward": 2000, "status": "open"}],
+        "shop_items": [{"item_name": "N", "description": "<RARO> D", "price": 100, "quantity": 1, "type": "waist"}]
       }
-      
-      Tipos de Item (type): head, face, neck, body, hands, waist, feet, ring, consumable.
     `;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const data = JSON.parse(text);
+    const data = JSON.parse(result.response.text());
 
-    // Validação
-    if (!data.missions || !data.shop_items) throw new Error("JSON incompleto da IA");
-
-    // 2. SALVAR NO BANCO COM TRATAMENTO DE ERRO REAL
-    if (data.missions.length > 0) {
+    if (data.missions?.length > 0) {
         const { error } = await supabaseAdmin.from('missions').insert(data.missions);
-        if (error) throw new Error("Erro ao salvar Missões: " + error.message);
+        if (error) throw new Error("Erro Missões: " + error.message);
     }
 
-    if (data.shop_items.length > 0) {
+    if (data.shop_items?.length > 0) {
         const { error } = await supabaseAdmin.from('shop_items').insert(data.shop_items);
-        // Se der erro aqui (ex: coluna 'type' faltando), o código para e avisa você
-        if (error) throw new Error("Erro ao salvar Itens: " + error.message);
+        if (error) throw new Error("Erro Itens: " + error.message);
     }
 
-    return NextResponse.json({ 
-        success: true, 
-        countMissions: data.missions.length, 
-        countItems: data.shop_items.length 
-    });
+    return NextResponse.json({ success: true, count: data.shop_items.length });
 
   } catch (error) {
-    console.error("ERRO API:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
