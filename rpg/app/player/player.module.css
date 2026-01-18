@@ -23,18 +23,12 @@
 .wrapper::after { content: ''; position: fixed; bottom: 0; left: 0; width: 100%; height: 40%; background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%); z-index: -1; pointer-events: none; }
 
 /* THEME SWITCHER */
-.themeSwitcher { position: fixed; left: 20px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 15px; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(12px); padding: 15px 10px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.1); z-index: 50; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-.themeDot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); cursor: pointer; transition: all 0.3s ease; }
-.themeDot:hover { transform: scale(1.1); }
-.themeDot.activeDot { border-color: #fff; box-shadow: 0 0 15px var(--accent-primary); transform: scale(1.15); }
-
-/* SCROLLBAR */
-.wrapper::-webkit-scrollbar, .wrapper *::-webkit-scrollbar { width: 6px; }
-.wrapper::-webkit-scrollbar-track, .wrapper *::-webkit-scrollbar-track { background: transparent; }
-.wrapper::-webkit-scrollbar-thumb, .wrapper *::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+.themeSwitcher { position: absolute; top: 20px; right: 20px; display: flex; gap: 8px; z-index: 50; }
+.themeDot { width: 12px; height: 12px; border-radius: 50%; border: none; cursor: pointer; opacity: 0.3; transition: 0.2s; }
+.activeDot, .themeDot:hover { opacity: 1; transform: scale(1.2); }
 
 /* CONTAINER */
-.container { max-width: 1600px; width: 100%; margin: 0 auto; padding: 2rem; position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; padding-left: 90px; box-sizing: border-box; gap: 2rem; }
+.container { max-width: 1400px; width: 100%; margin: 0 auto; padding: 2rem; padding-left: 90px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2rem; }
 
 /* HUD */
 .hud { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 2.5rem; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; width: 100%; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.3); flex-wrap: wrap; gap: 20px; }
@@ -77,7 +71,7 @@
 .btnAction:hover { background: var(--accent-primary); color: #fff; box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.4); }
 
 /* ========================================================= */
-/* ÁREA DE EQUIPAMENTOS (ESTILO PAPER DOLL RESTAURADO)      */
+/* ÁREA DE EQUIPAMENTOS (VISUAL BONECO / PAPER DOLL)        */
 /* ========================================================= */
 
 .invWrapper {
@@ -99,20 +93,21 @@
   border-bottom: 1px solid #27272a;
 }
 
-/* O GRID ORGANIZADO (CABEÇA, CORPO, PÉS, ETC) */
 .dollGrid {
   display: grid;
+  /* Grid exato do corpo humano */
   grid-template-areas:
-    ".     head  ."
-    "face  body  neck"
-    "hands waist feet"
-    "ring1 .     ring2";
+    ".      head   ."
+    "face   body   neck"
+    "weapon hands  shield"
+    "ring1  waist  ring2"
+    ".      feet   .";
   gap: 15px;
   justify-items: center;
   margin-top: 10px;
 }
 
-/* O SLOT DO EQUIPAMENTO (QUADRADO BONITO) */
+/* O SLOT DE EQUIPAMENTO - OTIMIZADO PARA CENTRALIZAR */
 .equipSlot {
   width: 75px; 
   height: 75px;
@@ -120,14 +115,13 @@
   border: 1px solid #333;
   border-radius: 12px;
   display: flex;
-  flex-direction: column; /* IMPORTANTE: Mantém ícone em cima, texto embaixo */
+  flex-direction: column; /* Fundamental para empilhar ícone e texto */
   align-items: center;    /* Centraliza horizontalmente */
   justify-content: center; /* Centraliza verticalmente */
   transition: all 0.2s ease;
   cursor: pointer;
   position: relative;
   box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
-  padding: 2px;
 }
 
 .equipSlot.empty { opacity: 0.5; border-style: dashed; }
@@ -135,7 +129,7 @@
 .equipSlot.filled { background: rgba(30, 30, 35, 0.9); border-color: #555; }
 .equipSlot.filled:hover { transform: scale(1.05); box-shadow: 0 0 15px rgba(255,255,255,0.1); border-color: #fff; }
 
-/* ÍCONE QUANDO VAZIO */
+/* Ícone dentro do slot (Vazio) */
 .slotIcon { 
   display: flex; 
   flex-direction: column; 
@@ -146,7 +140,7 @@
 }
 .slotLabel { font-size: 0.55rem; text-transform: uppercase; color: #777; letter-spacing: 1px; font-weight: bold; }
 
-/* ITEM QUANDO EQUIPADO (CENTRALIZADO) */
+/* Item dentro do slot (Equipado) - NOME CENTRALIZADO AQUI */
 .equippedItem {
   display: flex;
   flex-direction: column;
@@ -154,26 +148,28 @@
   justify-content: center;
   width: 100%;
   height: 100%;
+  padding: 4px;
+  box-sizing: border-box;
 }
 .equippedName {
   font-size: 0.6rem;
   text-align: center;
-  width: 95%;
+  margin-bottom: 2px;
+  width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: bold;
   line-height: 1.2;
-  margin-bottom: 2px;
 }
 
 /* ========================================================= */
-/* MOCHILA (ESTILO ANTIGO MANTIDO - GRANDE E FLEX)          */
+/* MOCHILA (VISUAL MELHORADO)                               */
 /* ========================================================= */
 
 .invHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; color: #fff; border-bottom: 1px solid #333; padding-bottom: 10px; }
 
-/* Usando FLEX para manter o estilo de "preencher" que você tinha antes */
+/* Grid da Mochila - Mais limpo */
 .invGrid { 
   display: flex; 
   flex-wrap: wrap; 
@@ -182,7 +178,7 @@
 }
 
 .slot {
-  width: 90px; height: 90px; /* Tamanho fixo grande como pedido */
+  width: 90px; height: 90px;
   background: rgba(255,255,255,0.03);
   border: 1px solid #333;
   border-radius: 10px;
@@ -193,38 +189,40 @@
   position: relative;
   cursor: pointer;
   transition: 0.2s;
-  padding: 5px;
-  box-sizing: border-box;
+  overflow: hidden; /* Garante que nada saia do quadrado */
 }
 .slot:hover { border-color: var(--accent-primary); background: rgba(255,255,255,0.06); }
 .slot.empty { border-style: dashed; opacity: 0.3; }
 
-/* Botão de Remover e Usar na Mochila */
+.itemName { 
+  font-size: 0.65rem; 
+  text-align: center; 
+  color: #e2e8f0; 
+  width: 90%; 
+  margin-top: auto; 
+  margin-bottom: 4px;
+  white-space: nowrap; 
+  overflow: hidden; 
+  text-overflow: ellipsis; 
+  font-weight: 500;
+}
+
+.itemQty { 
+  position: absolute; top: 4px; left: 4px; 
+  font-size: 0.7rem; color: var(--accent-primary); font-weight: bold; 
+  background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 4px; 
+}
+
 .removeBtn { 
-  position: absolute; top: -6px; right: -6px; 
-  width: 20px; height: 20px; 
+  position: absolute; top: 4px; right: 4px; 
+  width: 18px; height: 18px; 
   background: #ef4444; color: white; border-radius: 50%; 
   display: flex; align-items: center; justify-content: center; 
-  font-size: 10px; border: 2px solid #101014;
+  font-size: 10px; border: none; 
   opacity: 0; transition: opacity 0.2s; z-index: 10; 
 }
 .slot:hover .removeBtn { opacity: 1; }
-
-.itemName { 
-  font-size: 0.65rem; text-align: center; color: #e2e8f0; 
-  width: 100%; margin-top: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
-  font-weight: 600; padding-bottom: 2px;
-}
-.itemQty { 
-  position: absolute; top: 4px; left: 4px; 
-  font-size: 0.75rem; color: var(--accent-primary); font-weight: bold; 
-  background: rgba(0,0,0,0.6); padding: 1px 5px; border-radius: 4px; 
-}
-.btnUseItem { 
-  position: absolute; bottom: 25px; font-size: 0.6rem; 
-  background: var(--accent-primary); border:none; color:#000; font-weight:bold; 
-  padding: 2px 8px; border-radius:4px; cursor:pointer; 
-}
+.btnUseItem { position: absolute; bottom: 30px; font-size: 0.6rem; background: var(--accent-primary); border:none; color:#000; font-weight:bold; padding: 2px 6px; border-radius:4px; cursor:pointer; }
 
 /* MODAIS E GACHA */
 .modalOverlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -246,5 +244,5 @@
   .hud { flex-direction: column; text-align: center; gap: 1.5rem; }
   .hudRight { justify-content: center; }
   .themeSwitcher { top: auto; bottom: 20px; left: 50%; transform: translateX(-50%); flex-direction: row; }
-  .invGrid { justify-content: center; }
+  .invGrid { justify-content: center; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); }
 }

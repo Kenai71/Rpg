@@ -7,7 +7,8 @@ import Logo from '../components/Logo';
 import { 
   User, Shield, ShoppingBag, Scroll, Package, LogOut, 
   RefreshCw, Sparkles, Coins, Gift, Plus, X, Check, Hexagon,
-  Shirt, Crown, Hand, Footprints, Gem, Glasses, RectangleHorizontal, Circle
+  Shirt, Crown, Hand, Footprints, Gem, Glasses, RectangleHorizontal, Circle,
+  Sword, Shield as ShieldIcon
 } from 'lucide-react';
 
 const RANK_COLORS = {
@@ -112,7 +113,12 @@ export default function PlayerPanel() {
     const prof = profRes.data;
     if (prof) {
       if (!prof.equipment) {
-          prof.equipment = { face: null, head: null, neck: null, body: null, hands: null, waist: null, feet: null, ring1: null, ring2: null };
+          prof.equipment = { 
+            face: null, head: null, neck: null, 
+            body: null, hands: null, waist: null, 
+            feet: null, ring1: null, ring2: null, 
+            weapon: null, shield: null 
+          };
       }
 
       if (prevLevelRef.current === 1 && prof.level > 1 && !profile) prevLevelRef.current = prof.level;
@@ -130,7 +136,7 @@ export default function PlayerPanel() {
     setAllPlayers(playersRes.data || []);
   }
 
-  const handleLogout = async () => { if(supabase) await supabase.auth.signOut(); router.push('/login'); };
+  const handleLogout = async () => { if (supabase) await supabase.auth.signOut(); router.push('/login'); };
 
   const handleMouseEnter = (e, title, desc, color) => {
     if (!title) return;
@@ -160,6 +166,11 @@ export default function PlayerPanel() {
   function getItemType(item) {
     if (item.type) return item.type;
     const name = item.name.toLowerCase();
+    
+    // Armas e Escudos
+    if (name.includes("espada") || name.includes("katana") || name.includes("adaga") || name.includes("machado") || name.includes("cajado") || name.includes("lança") || name.includes("arco") || name.includes("besta") || name.includes("arlabasta") || name.includes("foice")) return "weapon";
+    if (name.includes("escudo") || name.includes("broquel")) return "shield";
+
     if (name.includes("anel")) return "ring";
     if (name.includes("colar") || name.includes("amuleto") || name.includes("pingente")) return "neck";
     if (name.includes("capacete") || name.includes("elmo") || name.includes("chapéu") || name.includes("coroa")) return "head";
@@ -168,6 +179,7 @@ export default function PlayerPanel() {
     if (name.includes("bota") || name.includes("sapato") || name.includes("greva")) return "feet";
     if (name.includes("cinto") || name.includes("faixa") || name.includes("algibeira")) return "waist";
     if (name.includes("óculos") || name.includes("mascara") || name.includes("brinco")) return "face";
+    
     return "consumable";
   }
 
@@ -175,7 +187,7 @@ export default function PlayerPanel() {
   const handleDragStart = (e, index) => { 
       const item = profile.inventory[index];
       
-      // TRAVA DE SEGURANÇA: Itens Especiais não se movem
+      // BLOQUEIO: Não arrasta Runa nem Gacha Gift
       if (item && (item.name.includes("Runa") || item.name === "Gacha Gift")) {
           e.preventDefault();
           return;
@@ -228,7 +240,6 @@ export default function PlayerPanel() {
     // Se já tem item, devolve pra mochila (Troca)
     if (hasItemInSlot) {
         const oldItem = newEquip[slotName];
-        // Tenta empilhar o antigo se já existir na mochila
         const existingIdx = newInv.findIndex(i => i.name === oldItem.name);
         if (existingIdx >= 0) newInv[existingIdx].qty++;
         else newInv.push(oldItem);
@@ -343,8 +354,8 @@ export default function PlayerPanel() {
   const getXpProgress = () => { if (!profile) return { percent: 0, text: '0/0' }; const curr = profile.level || 1; if (curr >= 20) return { percent: 100, text: 'MAX' }; const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 }; const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 }; const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100)); return { percent, text: `${profile.xp} / ${nextData.xp}` }; };
   const xpData = getXpProgress();
 
-  // Componente de Slot de Equipamento (Grid Style)
-  const EquipmentSlot = ({ slot, icon: Icon, label }) => {
+  // Componente de Slot de Equipamento
+  const EquipmentSlot = ({ slot, icon: Icon, label, style }) => {
     const item = profile?.equipment?.[slot];
     const color = item ? getRarityColor(getRarityFromItem(item)) : '#444';
     
@@ -357,7 +368,8 @@ export default function PlayerPanel() {
         style={{ 
             gridArea: slot, 
             borderColor: item ? color : '#333', 
-            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none'
+            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none',
+            ...style 
         }}
         onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
         onMouseLeave={handleMouseLeave}
@@ -461,6 +473,11 @@ export default function PlayerPanel() {
                       <EquipmentSlot slot="body" icon={Shirt} label="Armadura" />
                       <EquipmentSlot slot="neck" icon={Circle} label="Pescoço" />
                       <EquipmentSlot slot="hands" icon={Hand} label="Mãos" />
+                      
+                      {/* NOVOS SLOTS: Arma e Escudo */}
+                      <EquipmentSlot slot="weapon" icon={Sword} label="Arma" />
+                      <EquipmentSlot slot="shield" icon={ShieldIcon} label="Escudo" />
+
                       <EquipmentSlot slot="waist" icon={RectangleHorizontal} label="Cinto" />
                       <EquipmentSlot slot="feet" icon={Footprints} label="Pés" />
                       <EquipmentSlot slot="ring1" icon={Gem} label="Anel 1" />
