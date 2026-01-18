@@ -38,7 +38,7 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   const [shopItems, setShopItems] = useState([]); 
-  const [isGenerating, setIsGenerating] = useState(false); // Estado para o loading da IA
+  const [isGenerating, setIsGenerating] = useState(false);
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: '', quantity: 1, desc: '' });
@@ -97,19 +97,17 @@ export default function MasterPanel() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  // --- FUNÇÃO NOVA: CHAMAR A IA ---
   async function generateDailyContent() {
     setIsGenerating(true);
     try {
-      // Chama a rota da API que criamos
       const res = await fetch('/api/daily-generate');
       const data = await res.json();
       
       if (data.success) {
-        alert(`Sucesso!\nMissão: "${data.created.mission.title}"\nItem: "${data.created.shop_item.item_name}"`);
-        fetchData(); // Atualiza a tela imediatamente
+        alert(`Sucesso! Criadas ${data.countMissions} missões e ${data.countItems} itens novos.`);
+        fetchData(); 
       } else {
-        alert("Erro na IA: " + (data.error || "Desconhecido"));
+        alert("Erro na IA: " + (data.error || JSON.stringify(data)));
       }
     } catch (err) {
       alert("Erro ao conectar com o servidor.");
@@ -322,7 +320,7 @@ export default function MasterPanel() {
           </div>
           
           <div className={styles.actions}>
-            {/* BOTÃO DA INTELIGÊNCIA ARTIFICIAL */}
+            {/* BOTÃO DA IA */}
             <button 
               onClick={generateDailyContent} 
               disabled={isGenerating}
@@ -382,9 +380,13 @@ export default function MasterPanel() {
               <div style={{marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '15px'}}>
                  <div className={styles.scrollableListSmall} style={{maxHeight: '180px'}}>
                     {shopItems.length === 0 && <p style={{color:'#64748b', textAlign:'center', fontSize:'0.85rem'}}>Estoque vazio.</p>}
+                    {/* AQUI ESTÁ A LÓGICA DO MOUSE PASSANDO (TOOLTIP) */}
                     {shopItems.map(item => (
-                      <div key={item.id} className={styles.requestItem}>
-                        <div><strong style={{color: '#e2e8f0', fontSize:'0.9rem'}}>{item.item_name}</strong><div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div></div>
+                      <div key={item.id} className={styles.requestItem} title={item.description || "Sem descrição"}>
+                        <div style={{cursor: 'help'}}>
+                            <strong style={{color: '#e2e8f0', fontSize:'0.9rem'}}>{item.item_name}</strong>
+                            <div style={{fontSize:'0.75rem', color:'#64748b'}}>{item.price}g • Est: {item.quantity}</div>
+                        </div>
                         <button onClick={() => deleteShopItem(item.id)} className={styles.btnReject}><Trash2 size={14} /></button>
                       </div>
                     ))}
@@ -412,6 +414,7 @@ export default function MasterPanel() {
           </div>
 
           <div className={styles.column}>
+            {/* Seção Jogadores e Contratos mantida igual... */}
             <section className={styles.card}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid rgba(255,255,255,0.08)', paddingBottom:'12px', marginBottom:'10px'}}>
                  <h2 className={styles.cardTitle} style={{margin:0, border:0, padding:0}}><Users size={18} /> Jogadores</h2>

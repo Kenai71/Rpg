@@ -2,11 +2,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-// Garante que a chave da IA existe, senão avisa no console
-if (!process.env.GEMINI_API_KEY) {
-  console.error("ERRO: GEMINI_API_KEY não encontrada no .env.local");
-}
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -15,58 +10,44 @@ const supabaseAdmin = createClient(
 
 export async function GET(request) {
   try {
-    // Tenta usar o modelo Flash.
+    // Vamos direto no modelo mais estável e padrão do mercado hoje
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
+    console.log("Tentando conectar com Gemini 1.5 Flash...");
+    
+    // Teste de conexão simples (Ping)
+    // Se a chave estiver errada, vai estourar o erro AQUI e mostrar na tela
+    await model.generateContent("Teste de conexão."); 
+
+    console.log("Conexão OK! Gerando missões...");
+
     const prompt = `
-      Você é o Game Master do RPG 'Astralis'.
-      Gere 1 Missão Nova e 1 Item de Loja Exótico.
-      
-      Regras:
-      - Responda APENAS com um JSON válido.
-      - Sem blocos de código markdown (\`\`\`json).
-      
-      Estrutura JSON obrigatória:
+      Gere um JSON válido com 2 missões de RPG e 10 itens de loja.
+      Formato JSON estrito:
       {
-        "mission": {
-          "title": "Texto", "description": "Texto", "rank": "S", 
-          "xp_reward": 1000, "gold_reward": 500, "status": "open"
-        },
-        "shop_item": {
-          "item_name": "Texto", "description": "Texto", 
-          "price": 500, "quantity": 1
-        }
+        "missions": [{"title": "T", "description": "D", "rank": "F", "xp_reward": 100, "gold_reward": 50, "status": "open"}],
+        "shop_items": [{"item_name": "I [Comum]", "description": "D", "price": 10, "quantity": 1}]
       }
     `;
 
-    console.log("Iniciando geração com IA...");
     const result = await model.generateContent(prompt);
-    const response = await result.response;
+    const text = result.response.text().replace(/```json|```/g, '').trim();
     
-    // Limpeza forçada do texto para evitar erros de JSON
-    const text = response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    console.log("IA respondeu. Processando JSON...");
+    const data = JSON.parse(text);
 
-    let data;
-    try {
-        data = JSON.parse(text);
-    } catch (e) {
-        console.error("A IA não devolveu um JSON válido:", text);
-        return NextResponse.json({ error: "Erro de formato JSON da IA" }, { status: 500 });
-    }
+    // Salvar no Banco
+    if (data.missions?.length) await supabaseAdmin.from('missions').insert(data.missions);
+    if (data.shop_items?.length) await supabaseAdmin.from('shop_items').insert(data.shop_items);
 
-    // Salvando no Banco
-    const { error: err1 } = await supabaseAdmin.from('missions').insert([data.mission]);
-    if (err1) throw new Error("Erro ao salvar Missão: " + err1.message);
-
-    const { error: err2 } = await supabaseAdmin.from('shop_items').insert([data.shop_item]);
-    if (err2) throw new Error("Erro ao salvar Item: " + err2.message);
-
-    console.log("Sucesso! Conteúdo gerado.");
-    return NextResponse.json({ success: true, created: data });
+    return NextResponse.json({ success: true, message: "Gerado com sucesso!" });
 
   } catch (error) {
-    console.error("ERRO FATAL NA API:", error);
-    return NextResponse.json({ error: error.message || "Erro interno" }, { status: 500 });
+    console.error("ERRO DETALHADO:", error);
+    // Isso vai mostrar o motivo real do erro na sua tela
+    return NextResponse.json({ 
+      error: "Falha na IA", 
+      reason: error.message, // Ex: "API Key not valid" ou "404 Not Found"
+      hint: "Verifique se criou a chave em um PROJETO NOVO no Google AI Studio."
+    }, { status: 500 });
   }
 }
