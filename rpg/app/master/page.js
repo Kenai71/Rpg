@@ -3,11 +3,11 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './master.module.css';
-import Logo from '../components/Logo'; // Importando o Logo
+import Logo from '../components/Logo';
 import { 
   RefreshCw, LogOut, Plus, Trash2, 
   Check, X, ShoppingBag, Scroll, Users, Backpack, 
-  Crown, Coins, Sparkles, Zap, MessageSquare
+  Crown, Coins, Sparkles, Zap, MessageSquare, Bot
 } from 'lucide-react';
 
 const RANK_COLORS = {
@@ -38,6 +38,7 @@ export default function MasterPanel() {
   const [parties, setParties] = useState([]); 
   const [requests, setRequests] = useState([]); 
   const [shopItems, setShopItems] = useState([]); 
+  const [isGenerating, setIsGenerating] = useState(false); // Estado para o loading da IA
   
   const [form, setForm] = useState({ title: '', desc: '', rank: 'F', xp: '', gold: '' });
   const [shopForm, setShopForm] = useState({ seller: '', name: '', price: '', quantity: 1, desc: '' });
@@ -56,12 +57,12 @@ export default function MasterPanel() {
   useEffect(() => {
     fetchData();
 
-    // --- REALTIME ---
     const channel = supabase
       .channel('master-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'item_requests' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_items' }, () => fetchData())
       .subscribe();
 
     const interval = setInterval(fetchData, 30000);
@@ -95,6 +96,28 @@ export default function MasterPanel() {
   }
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
+
+  // --- FUNÇÃO NOVA: CHAMAR A IA ---
+  async function generateDailyContent() {
+    setIsGenerating(true);
+    try {
+      // Chama a rota da API que criamos
+      const res = await fetch('/api/daily-generate');
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Sucesso!\nMissão: "${data.created.mission.title}"\nItem: "${data.created.shop_item.item_name}"`);
+        fetchData(); // Atualiza a tela imediatamente
+      } else {
+        alert("Erro na IA: " + (data.error || "Desconhecido"));
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.");
+      console.error(err);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   function calculateLevel(totalXp) {
     let newLevel = 1;
@@ -294,12 +317,22 @@ export default function MasterPanel() {
         )}
 
         <header className={styles.header}>
-          {/* LOGO NOVO AQUI NO HEADER DO MESTRE */}
           <div className={styles.titleGroup}>
              <Logo size={42} showText={true} /> 
           </div>
           
           <div className={styles.actions}>
+            {/* BOTÃO DA INTELIGÊNCIA ARTIFICIAL */}
+            <button 
+              onClick={generateDailyContent} 
+              disabled={isGenerating}
+              className={`${styles.btnIcon} ${styles.btnMagic}`} 
+              style={{ background: 'linear-gradient(45deg, #8b5cf6, #d946ef)', border: 'none', color: 'white' }}
+            >
+              {isGenerating ? <RefreshCw className="animate-spin" size={18} /> : <Bot size={18} />} 
+              <span className="hidden md:inline">{isGenerating ? 'Criando...' : 'Gerar Diária'}</span>
+            </button>
+
             <button onClick={fetchData} className={`${styles.btnIcon} ${styles.btnRefresh}`}>
               <RefreshCw size={18} /> <span className="hidden md:inline">Atualizar</span>
             </button>
