@@ -86,6 +86,7 @@ export default function PlayerPanel() {
   }, [profile]);
 
   useEffect(() => {
+    if (!supabase) return;
     loadData();
     const channel = supabase.channel('player-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => loadData())
@@ -97,6 +98,7 @@ export default function PlayerPanel() {
   }, []);
 
   async function loadData() {
+    if (!supabase) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
@@ -128,7 +130,7 @@ export default function PlayerPanel() {
     setAllPlayers(playersRes.data || []);
   }
 
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
+  const handleLogout = async () => { if(supabase) await supabase.auth.signOut(); router.push('/login'); };
 
   const handleMouseEnter = (e, title, desc, color) => {
     if (!title) return;
@@ -154,6 +156,7 @@ export default function PlayerPanel() {
     return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
   }
 
+  // --- LÓGICA DE TIPO DE ITEM ---
   function getItemType(item) {
     if (item.type) return item.type;
     const name = item.name.toLowerCase();
@@ -172,7 +175,7 @@ export default function PlayerPanel() {
   const handleDragStart = (e, index) => { 
       const item = profile.inventory[index];
       
-      // BLOQUEIO DUPLO: RUNAS E GACHA GIFT
+      // TRAVA DE SEGURANÇA: Itens Especiais não se movem
       if (item && (item.name.includes("Runa") || item.name === "Gacha Gift")) {
           e.preventDefault();
           return;
@@ -203,23 +206,39 @@ export default function PlayerPanel() {
 
     const newInv = [...profile.inventory];
     const newEquip = { ...profile.equipment };
-    
-    const itemToEquip = newInv[draggedItemIdx];
-    if (itemToEquip.qty > 1) {
+    const maxSlots = profile.slots || 10;
+    const hasItemInSlot = !!newEquip[slotName];
+    const isStack = item.qty > 1;
+
+    // Se for Swap de Stack, precisamos de +1 espaço livre para o item antigo
+    if (isStack && hasItemInSlot && newInv.length >= maxSlots) {
+       alert("MOCHILA CHEIA! Para substituir usando um item de pilha, você precisa de 1 slot livre para o item antigo.");
+       setDraggedItemIdx(null);
+       return;
+    }
+
+    // Retira da mochila
+    const itemToEquip = { ...newInv[draggedItemIdx], qty: 1 };
+    if (item.qty > 1) {
         newInv[draggedItemIdx].qty--;
-        itemToEquip.qty = 1; 
     } else {
         newInv.splice(draggedItemIdx, 1);
     }
 
-    if (newEquip[slotName]) {
-        newInv.push(newEquip[slotName]);
+    // Se já tem item, devolve pra mochila (Troca)
+    if (hasItemInSlot) {
+        const oldItem = newEquip[slotName];
+        // Tenta empilhar o antigo se já existir na mochila
+        const existingIdx = newInv.findIndex(i => i.name === oldItem.name);
+        if (existingIdx >= 0) newInv[existingIdx].qty++;
+        else newInv.push(oldItem);
     }
 
-    newEquip[slotName] = { ...itemToEquip, qty: 1 };
+    // Equipa o novo
+    newEquip[slotName] = itemToEquip;
 
     setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
-    await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
+    if(supabase) await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
     setDraggedItemIdx(null);
   };
 
@@ -227,9 +246,9 @@ export default function PlayerPanel() {
     const item = profile.equipment[slotName];
     if (!item) return;
 
-    const maxSlots = profile.slots || 10;
-    if ((profile.inventory?.length || 0) >= maxSlots) {
-        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar.");
+    // TRAVA: Mochila Cheia
+    if ((profile.inventory?.length || 0) >= (profile.slots || 10)) {
+        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar. Arraste outro item para substituir.");
     }
 
     const newInv = [...profile.inventory];
@@ -242,7 +261,7 @@ export default function PlayerPanel() {
     else newInv.push(item);
 
     setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
-    await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
+    if(supabase) await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
   };
 
   function openBuyModal(item) {
@@ -271,17 +290,17 @@ export default function PlayerPanel() {
       if (runeIdx === -1 || inv[runeIdx].qty < 1) return alert("Erro: Runa sumiu!");
       if (inv[runeIdx].qty > 1) inv[runeIdx].qty--; else inv.splice(runeIdx, 1);
       if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
-      await supabase.from('profiles').update({ inventory: inv }).eq('id', profile.id);
+      if(supabase) await supabase.from('profiles').update({ inventory: inv }).eq('id', profile.id);
     } else {
       if (profile.gold < item.price) return alert("Ouro insuficiente.");
       if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
       const newGold = profile.gold - item.price;
-      await supabase.from('profiles').update({ gold: newGold, inventory: inv }).eq('id', profile.id);
+      if(supabase) await supabase.from('profiles').update({ gold: newGold, inventory: inv }).eq('id', profile.id);
       setProfile(prev => ({...prev, gold: newGold, inventory: inv}));
     }
     const remaining = item.quantity - 1;
-    if (remaining > 0) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
-    else await supabase.from('shop_items').delete().eq('id', item.id);
+    if (remaining > 0 && supabase) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
+    else if (supabase) await supabase.from('shop_items').delete().eq('id', item.id);
     setBuyModalOpen(false); loadData();
   }
 
@@ -292,10 +311,10 @@ export default function PlayerPanel() {
     if (giftItem.qty > 1 && currentInv.length >= maxSlots) return alert("MOCHILA CHEIA! Libere espaço para a Runa.");
     if (giftItem.qty > 1) giftItem.qty -= 1; else currentInv.splice(index, 1);
     setProfile(prev => ({ ...prev, inventory: currentInv }));
-    await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
+    if(supabase) await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
     startSpinAnimation();
   }
-  async function requestSpin() { await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]); alert("Solicitação enviada!"); }
+  async function requestSpin() { if(supabase) await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]); alert("Solicitação enviada!"); }
   
   function startSpinAnimation() {
     setRouletteState('spinning');
@@ -312,21 +331,20 @@ export default function PlayerPanel() {
     const runeName = `Runa ${result.name}`; const newInv = [...currentProf.inventory]; const idx = newInv.findIndex(i => i.name === runeName);
     const runeItem = { name: runeName, qty: 1, description: `<${result.name}> Item mágico usado para trocar por equipamentos desta raridade na loja.` };
     if (idx >= 0) newInv[idx].qty += 1; else newInv.push(runeItem);
-    setProfile(prev => ({...prev, inventory: newInv})); await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
+    setProfile(prev => ({...prev, inventory: newInv})); if(supabase) await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
   }
 
-  async function acceptMission(mission) { if (!profile) return; const pRank = RANK_VALUES[profile.rank || 'F']; const mRank = RANK_VALUES[mission.rank || 'F']; if (mRank > pRank + 1) return alert("Rank muito baixo."); setMissions(current => current.filter(m => m.id !== mission.id)); await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id); loadData(); }
-  async function requestItem() { if (!newItemName.trim()) return; await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]); setNewItemName(''); setIsModalOpen(false); }
-  async function removeItem(index) { if(!confirm("Jogar fora?")) return; const currentInv = [...profile.inventory]; if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1); setProfile(prev => ({ ...prev, inventory: currentInv })); await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id); }
+  async function acceptMission(mission) { if (!profile) return; const pRank = RANK_VALUES[profile.rank || 'F']; const mRank = RANK_VALUES[mission.rank || 'F']; if (mRank > pRank + 1) return alert("Rank muito baixo."); setMissions(current => current.filter(m => m.id !== mission.id)); if(supabase) await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id); loadData(); }
+  async function requestItem() { if (!newItemName.trim()) return; if(supabase) await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]); setNewItemName(''); setIsModalOpen(false); }
+  async function removeItem(index) { if(!confirm("Jogar fora?")) return; const currentInv = [...profile.inventory]; if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1); setProfile(prev => ({ ...prev, inventory: currentInv })); if(supabase) await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id); }
   function openTransfer(target) { setTransferTarget(target); setTransferType('gold'); setTransferAmount(''); setTransferModalOpen(true); }
-  async function handleTransfer() { if (!transferTarget || !profile) return; if (transferType === 'gold') { const amount = Math.floor(Number(transferAmount)); if (amount <= 0 || amount > profile.gold) return alert("Inválido."); setProfile(prev => ({ ...prev, gold: prev.gold - amount })); await supabase.from('profiles').update({ gold: profile.gold - amount }).eq('id', profile.id); const { data: tData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single(); await supabase.from('profiles').update({ gold: (tData.gold || 0) + amount }).eq('id', transferTarget.id); } else { const inv = profile.inventory || []; const itemToGive = inv[transferItemIdx]; const qtd = Math.floor(Number(transferItemQty)); if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido"); await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd }); } setTransferModalOpen(false); }
+  async function handleTransfer() { if (!transferTarget || !profile) return; if (transferType === 'gold') { const amount = Math.floor(Number(transferAmount)); if (amount <= 0 || amount > profile.gold) return alert("Inválido."); setProfile(prev => ({ ...prev, gold: prev.gold - amount })); if(supabase) await supabase.from('profiles').update({ gold: profile.gold - amount }).eq('id', profile.id); const { data: tData } = await supabase.from('profiles').select('gold').eq('id', transferTarget.id).single(); await supabase.from('profiles').update({ gold: (tData.gold || 0) + amount }).eq('id', transferTarget.id); } else { const inv = profile.inventory || []; const itemToGive = inv[transferItemIdx]; const qtd = Math.floor(Number(transferItemQty)); if (!itemToGive || qtd > itemToGive.qty) return alert("Inválido"); if(supabase) await supabase.from('trade_requests').insert({ sender_id: profile.id, receiver_id: transferTarget.id, item_name: itemToGive.name, quantity: qtd }); } setTransferModalOpen(false); }
   const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
   const getXpProgress = () => { if (!profile) return { percent: 0, text: '0/0' }; const curr = profile.level || 1; if (curr >= 20) return { percent: 100, text: 'MAX' }; const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 }; const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 }; const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100)); return { percent, text: `${profile.xp} / ${nextData.xp}` }; };
   const xpData = getXpProgress();
 
-  // --- COMPONENTE DE EQUIPAMENTO OTIMIZADO ---
-  // Usa "dollGrid" para posicionar e "equippedItem" para centralizar o texto
-  const EquipmentSlot = ({ slot, icon: Icon, label, style }) => {
+  // Componente de Slot de Equipamento (Grid Style)
+  const EquipmentSlot = ({ slot, icon: Icon, label }) => {
     const item = profile?.equipment?.[slot];
     const color = item ? getRarityColor(getRarityFromItem(item)) : '#444';
     
@@ -339,8 +357,7 @@ export default function PlayerPanel() {
         style={{ 
             gridArea: slot, 
             borderColor: item ? color : '#333', 
-            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none',
-            ...style 
+            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none'
         }}
         onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
         onMouseLeave={handleMouseLeave}
@@ -435,9 +452,9 @@ export default function PlayerPanel() {
           {tab === 'inv' && (
             <div className={styles.invWrapper} style={{gridColumn:'1/-1', display: 'flex', gap: '20px', flexDirection: 'column'}}>
                <div className={styles.equipmentContainer}>
-                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'15px', letterSpacing:'2px'}}>EQUIPAMENTO</h3>
+                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'10px', letterSpacing:'2px'}}>EQUIPAMENTO</h3>
                   
-                  {/* LAYOUT GRID (BONECO) */}
+                  {/* GRID PAPER DOLL (VISUAL NOVO) */}
                   <div className={styles.dollGrid}>
                       <EquipmentSlot slot="head" icon={Crown} label="Cabeça" />
                       <EquipmentSlot slot="face" icon={Glasses} label="Rosto" />
@@ -460,11 +477,9 @@ export default function PlayerPanel() {
                       {[...Array(profile?.slots || 10)].map((_, i) => {
                         const item = profile?.inventory?.[i];
                         let rarity = "COMUM"; let color = "#fff";
-                        let isRune = false; // Flag para Runas e Gacha
-
+                        let isRune = false;
                         if (item) {
                              if (item.name.includes("Runa") || item.name === "Gacha Gift") isRune = true;
-                             
                              if (item.description) rarity = getRarityFromItem(item);
                              else if (item.name.includes("Runa")) rarity = item.name.split(" ")[1];
                              color = getRarityColor(rarity);
@@ -472,14 +487,14 @@ export default function PlayerPanel() {
                         return (
                           <div 
                             key={i} 
-                            // Bloqueio no Draggable
+                            // Bloqueio de Drag para Runas e Gacha Gift
                             draggable={!!item && !isRune}
                             onDragStart={(e) => handleDragStart(e, i)}
                             className={`${styles.slot} ${!item ? styles.empty : ''}`} 
                             style={item ? {
                                 borderColor: color, 
-                                boxShadow:`inset 0 0 10px ${color}20`, 
-                                cursor: isRune ? 'not-allowed' : 'grab' 
+                                boxShadow:`inset 0 0 10px ${color}20`,
+                                cursor: isRune ? 'not-allowed' : 'grab'
                             } : {}}
                             onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
                             onMouseLeave={handleMouseLeave}
@@ -508,7 +523,6 @@ export default function PlayerPanel() {
             </div>
         )}
 
-        {/* Modais omitidos para economizar espaço (são iguais aos anteriores) */}
         {buyModalOpen && selectedItemToBuy && (
             <div className={styles.modalOverlay} onClick={() => setBuyModalOpen(false)}>
                 <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{textAlign:'center', border: `1px solid ${getRarityColor(getRarityFromItem(selectedItemToBuy))}`}}>
