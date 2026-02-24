@@ -3,141 +3,160 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import styles from './login.module.css';
+import Logo from '../components/Logo';
+import { Mail, Lock, LogIn, UserPlus, AlertCircle, User } from 'lucide-react';
 
-export default function LoginPage() {
+const themes = [
+    { id: 'purple', color: '#8b5cf6', label: 'Nebula Violet' },
+    { id: 'green',  color: '#10b981', label: 'Toxic Emerald' },
+    { id: 'blue',   color: '#0ea5e9', label: 'Cyber Sky' },
+    { id: 'red',    color: '#ef4444', label: 'Crimson Core' },
+];
+
+export default function Login() {
+  const router = useRouter();
+  const [currentTheme, setCurrentTheme] = useState('purple');
+  const [isLogin, setIsLogin] = useState(true);
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [loading, setLoading] = useState(true); // Para evitar piscar o form
-  const router = useRouter();
+  
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  // --- NOVO: Verifica se já está logado ao abrir essa página ---
   useEffect(() => {
-    const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        // Se já tem sessão, busca o perfil para saber para onde mandar
-        const { data: prof } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-        if (prof) {
-          router.push(prof.role === 'master' ? '/master' : '/player');
-        }
-      } else {
-        setLoading(false); // Libera o form se não tiver usuário
-      }
-    };
-    checkUser();
+    if (!supabase) return;
+    // Se já estiver logado, manda direto pro painel correspondente
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) router.push('/'); 
+    });
   }, [router]);
 
   const handleAuth = async (e) => {
-    if (e) e.preventDefault();
+    e.preventDefault();
+    if (!supabase) return setError("Conexão com o banco falhou.");
+    setLoading(true);
+    setError('');
 
     try {
-      if (isSignUp) {
-        if (password !== confirmPassword) {
-          return alert("As senhas não coincidem!");
-        }
-
-        const { data, error } = await supabase.auth.signUp({ email, password });
+      if (isLogin) {
+        // --- LOGIN ---
+        const { error } = await supabase.auth.signInWithPassword({ 
+            email, 
+            password 
+        });
         if (error) throw error;
         
-        if (data.user) {
-          const { error: profileError } = await supabase.from('profiles').insert([
-            { 
-              id: data.user.id, 
-              username, 
-              role: 'player',
-              gold: 100, 
-              xp: 0, 
-              level: 1, 
-              slots: 10,
-              inventory: [] 
-            }
-          ]);
-
-          if (profileError) throw profileError;
-
-          alert("Herói registrado! Verifique seu email para confirmar.");
-          setIsSignUp(false);
-        }
+        router.push('/'); // Redireciona e a Home decide pra onde vai (Master/Player)
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        // --- REGISTRO ---
+        if (!username.trim()) throw new Error("O nome de usuário é obrigatório.");
+        
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { 
+                username: username, 
+                role: 'player' // Todo mundo que registra é player por padrão
+            }
+          }
+        });
         if (error) throw error;
         
-        if (data.user) {
-          const { data: prof, error: profError } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
-          
-          if (profError || !prof) {
-            alert("Erro: Perfil não encontrado. Contate o administrador.");
-            return;
-          }
-
-          router.push(prof.role === 'master' ? '/master' : '/player');
-        }
+        alert('Conta criada com sucesso! Faça o login para entrar.');
+        setIsLogin(true); // Volta pra tela de login
       }
-    } catch (error) {
-      alert("Erro na autenticação: " + error.message);
+    } catch (err) {
+      setError(err.message === "Invalid login credentials" ? "Email ou senha incorretos." : err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Enquanto verifica o login, mostra um carregando simples ou nada
-  if (loading) return null; 
-
   return (
-    <div className={styles.container}>
-      <div className={styles.card}>
-        <div>
-          <h1 className={styles.title}>Astralis</h1>
-          <p className={styles.subtitle}>Portal dos Aventureiros</p>
+    <div className={styles.wrapper} data-theme={currentTheme}>
+      {/* Botões de Troca de Tema (No Canto Superior Direito) */}
+      <div className={styles.themeSwitcher}>
+          {themes.map(t => (
+              <button 
+                  key={t.id} 
+                  className={`${styles.themeDot} ${currentTheme === t.id ? styles.activeDot : ''}`}
+                  style={{ backgroundColor: t.color }} 
+                  onClick={() => setCurrentTheme(t.id)} 
+                  title={t.label} 
+              />
+          ))}
+      </div>
+
+      <div className={styles.loginCard}>
+        <div className={styles.logoContainer}>
+            <Logo size={60} showText={false} />
         </div>
 
-        <form onSubmit={handleAuth} className={styles.inputGroup}>
-          {isSignUp && (
-            <input 
-              className={styles.input} 
-              placeholder="Nome do Personagem" 
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              required={isSignUp}
-            />
-          )}
-          
-          <input 
-            className={styles.input} 
-            type="email" 
-            placeholder="Seu E-mail" 
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            required 
-          />
-          <input 
-            className={styles.input} 
-            type="password" 
-            placeholder="Sua Senha" 
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required 
-          />
+        <div className={styles.headerGroup}>
+            <h1 className={styles.title}>{isLogin ? 'Bem-vindo(a) de volta' : 'Crie sua Lenda'}</h1>
+            <p className={styles.subtitle}>{isLogin ? 'Entre na sua conta para continuar' : 'Registre-se para iniciar a jornada'}</p>
+        </div>
 
-          {isSignUp && (
+        {error && (
+            <div className={styles.errorBox}>
+                <AlertCircle size={18} />
+                <span>{error}</span>
+            </div>
+        )}
+
+        <form onSubmit={handleAuth} className={styles.formGroup}>
+          {!isLogin && (
+            <div className={styles.inputWrapper}>
+              <User size={20} className={styles.inputIcon} />
+              <input 
+                type="text" 
+                placeholder="Nome do Personagem" 
+                className={styles.input} 
+                value={username} 
+                onChange={(e) => setUsername(e.target.value)} 
+                required 
+              />
+            </div>
+          )}
+
+          <div className={styles.inputWrapper}>
+            <Mail size={20} className={styles.inputIcon} />
             <input 
+              type="email" 
+              placeholder="E-mail" 
               className={styles.input} 
-              type="password" 
-              placeholder="Confirme a Senha" 
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
               required 
             />
-          )}
+          </div>
 
-          <button type="submit" className={styles.button}>
-            {isSignUp ? "Criar Lenda" : "Entrar no Reino"}
+          <div className={styles.inputWrapper}>
+            <Lock size={20} className={styles.inputIcon} />
+            <input 
+              type="password" 
+              placeholder="Senha secreta" 
+              className={styles.input} 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              required 
+            />
+          </div>
+
+          <button type="submit" className={styles.btnAction} disabled={loading}>
+            {loading ? <RefreshCw className="animate-spin" size={20} /> : (isLogin ? <LogIn size={20} /> : <UserPlus size={20} />)}
+            {loading ? 'Aguarde...' : (isLogin ? 'ENTRAR' : 'REGISTRAR')}
           </button>
         </form>
 
-        <p className={styles.toggle} onClick={() => setIsSignUp(!isSignUp)}>
-          {isSignUp ? "Já possuo um registro" : "Desejo criar uma nova conta"}
+        <p className={styles.toggleText}>
+          {isLogin ? "Ainda não tem uma conta?" : "Já possui um personagem?"}
+          <button type="button" onClick={() => { setIsLogin(!isLogin); setError(''); }} className={styles.toggleLink}>
+            {isLogin ? 'Criar conta' : 'Fazer login'}
+          </button>
         </p>
       </div>
     </div>
