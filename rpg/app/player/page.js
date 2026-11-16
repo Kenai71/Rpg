@@ -1,654 +1,179 @@
-"use client"
-import { useState, useEffect, useRef } from 'react';
-import { supabase } from '../../lib/supabase';
-import { useRouter } from 'next/navigation';
-import styles from './player.module.css';
-import Logo from '../components/Logo'; 
-import { 
-  User, Shield, ShoppingBag, Scroll, Package, LogOut, 
-  RefreshCw, Sparkles, Coins, Gift, Plus, X, Check, Hexagon,
-  Shirt, Crown, Hand, Footprints, Gem, Glasses, RectangleHorizontal, Circle,
-  Sword, Shield as ShieldIcon
-} from 'lucide-react';
+'use client';
 
-const RANK_COLORS = {
-  'F': '#9ca3af', 'E': '#4ade80', 'D': '#60a5fa',
-  'C': '#a78bfa', 'B': '#f87171', 'A': '#fbbf24', 'S': '#22d3ee'
-};
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { orderBy, where } from 'firebase/firestore';
+import { Award } from 'lucide-react';
+import { toast } from 'sonner';
+import { isFirebaseConfigured } from '../../lib/firebase';
+import { requestRouletteGift, subscribeCollection } from '../../lib/rpg-service';
+import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { PageLoadingSkeleton } from '../../components/ui/Skeleton';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
+import { PlayerShell } from '../../components/player/PlayerShell';
+import { PlayerMissions } from '../../components/player/PlayerMissions';
+import { PlayerShop } from '../../components/player/PlayerShop';
+import { PlayerAllies } from '../../components/player/PlayerAllies';
+import { PlayerCharacter } from '../../components/player/PlayerCharacter';
 
-const RARITIES = [
-  { name: 'COMUM', color: '#9ca3af', chance: 50 },
-  { name: 'INCOMUM', color: '#4ade80', chance: 30 },
-  { name: 'RARO', color: '#60a5fa', chance: 15 },
-  { name: 'ÉPICO', color: '#a78bfa', chance: 4 },
-  { name: 'LENDÁRIO', color: '#fbbf24', chance: 0.9 },
-  { name: 'MÍTICO', color: '#ef4444', chance: 0.1 }
-];
+export default function PlayerPage() {
+  const { user, profile, loading, error, logout } = useAuthGuard();
 
-const XP_TABLE = [
-  { lvl: 1, xp: 0 }, { lvl: 2, xp: 300 }, { lvl: 3, xp: 900 }, { lvl: 4, xp: 2700 },
-  { lvl: 5, xp: 6500 }, { lvl: 6, xp: 14000 }, { lvl: 7, xp: 23000 }, { lvl: 8, xp: 34000 },
-  { lvl: 9, xp: 48000 }, { lvl: 10, xp: 64000 }, { lvl: 11, xp: 85000 }, { lvl: 12, xp: 100000 },
-  { lvl: 13, xp: 120000 }, { lvl: 14, xp: 140000 }, { lvl: 15, xp: 165000 }, { lvl: 16, xp: 195000 },
-  { lvl: 17, xp: 225000 }, { lvl: 18, xp: 265000 }, { lvl: 19, xp: 305000 }, { lvl: 20, xp: 355000 }
-];
-
-const themes = [
-    { id: 'purple', color: '#8b5cf6', label: 'Nebula Violet' },
-    { id: 'green',  color: '#10b981', label: 'Toxic Emerald' },
-    { id: 'blue',   color: '#0ea5e9', label: 'Cyber Sky' },
-    { id: 'red',    color: '#ef4444', label: 'Crimson Core' },
-];
-
-export default function PlayerPanel() {
-  const router = useRouter();
-  const [currentTheme, setCurrentTheme] = useState('purple');
-  
-  const [profile, setProfile] = useState(null);
-  const [missions, setMissions] = useState([]);
-  const [shop, setShop] = useState([]);
-  const [allPlayers, setAllPlayers] = useState([]);
-  const [myParty, setMyParty] = useState(null); 
-  
   const [tab, setTab] = useState('missions');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemQty, setNewItemQty] = useState(1);
+  const [missions, setMissions] = useState([]);
+  const [shopItems, setShopItems] = useState([]);
+  const [allProfiles, setAllProfiles] = useState([]);
+  const [parties, setParties] = useState([]);
+  const [incomingTrades, setIncomingTrades] = useState([]);
+  const [outgoingTrades, setOutgoingTrades] = useState([]);
+  const [requestingSpin, setRequestingSpin] = useState(false);
 
-  const [rouletteState, setRouletteState] = useState('idle'); 
-  const [currentRarityDisplay, setCurrentRarityDisplay] = useState(RARITIES[0]);
-  const [finalResult, setFinalResult] = useState(null);
-
-  const [buyModalOpen, setBuyModalOpen] = useState(false);
-  const [selectedItemToBuy, setSelectedItemToBuy] = useState(null);
-  const [playerHasRune, setPlayerHasRune] = useState(false);
-
-  const [tooltipData, setTooltipData] = useState(null);
-
-  const [transferModalOpen, setTransferModalOpen] = useState(false);
-  const [transferTarget, setTransferTarget] = useState(null);
-  const [transferType, setTransferType] = useState('gold'); 
-  const [transferAmount, setTransferAmount] = useState('');
-  
-  const prevLevelRef = useRef(1);
-  const profileRef = useRef(null);
-
-  const [draggedItemIdx, setDraggedItemIdx] = useState(null);
+  const [levelUpTo, setLevelUpTo] = useState(null);
+  const prevLevelRef = useRef(null);
+  const profileLevel = profile?.level;
 
   useEffect(() => {
-    profileRef.current = profile;
-  }, [profile]);
+    if (profileLevel === undefined || profileLevel === null) return;
+    if (prevLevelRef.current === null) {
+      prevLevelRef.current = profileLevel || 1;
+    } else if ((profileLevel || 1) > prevLevelRef.current) {
+      setLevelUpTo(profileLevel);
+      prevLevelRef.current = profileLevel;
+    } else {
+      prevLevelRef.current = profileLevel || 1;
+    }
+  }, [profileLevel]);
 
   useEffect(() => {
-    if (!supabase) return;
-    loadData();
-    const channel = supabase.channel('player-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => loadData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_items' }, () => loadData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
-      .subscribe();
-    const interval = setInterval(loadData, 30000);
-    return () => { supabase.removeChannel(channel); clearInterval(interval); };
-  }, []);
+    if (!isFirebaseConfigured || !user) return undefined;
 
-  async function loadData() {
-    if (!supabase) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const unsubs = [
+      subscribeCollection('missions', [orderBy('createdAt', 'desc')], setMissions, (err) =>
+        console.error('Erro ao ouvir missões:', err)
+      ),
+      subscribeCollection('shop_items', [orderBy('item_name', 'asc')], setShopItems, (err) =>
+        console.error('Erro ao ouvir loja:', err)
+      ),
+      subscribeCollection('profiles', [orderBy('username', 'asc')], setAllProfiles, (err) =>
+        console.error('Erro ao ouvir aventureiros:', err)
+      ),
+      subscribeCollection('parties', [orderBy('name', 'asc')], setParties, (err) =>
+        console.error('Erro ao ouvir grupos:', err)
+      ),
+      subscribeCollection(
+        'trade_requests',
+        [where('receiver_id', '==', user.uid)],
+        setIncomingTrades,
+        (err) => console.error('Erro ao ouvir ofertas recebidas:', err)
+      ),
+      subscribeCollection(
+        'trade_requests',
+        [where('sender_id', '==', user.uid)],
+        setOutgoingTrades,
+        (err) => console.error('Erro ao ouvir ofertas enviadas:', err)
+      ),
+    ];
 
-    const [profRes, missionsRes, shopRes, playersRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('missions').select('*').eq('status', 'open'),
-        supabase.from('shop_items').select('*').gt('quantity', 0).order('item_name', { ascending: true }),
-        supabase.from('profiles').select('*').eq('role', 'player')
-    ]);
+    return () => {
+      unsubs.forEach((unsub) => {
+        if (typeof unsub === 'function') unsub();
+      });
+    };
+  }, [user]);
 
-    const prof = profRes.data;
-    if (prof) {
-      if (!prof.equipment) prof.equipment = {};
-      
-      // Garante que todos os slots existam
-      const defaultEquipment = { 
-        face: null, head: null, neck: null, 
-        body: null, hands: null, waist: null, 
-        feet: null, ring1: null, ring2: null, 
-        weapon: null, shield: null 
-      };
-      prof.equipment = { ...defaultEquipment, ...prof.equipment };
+  const myParty = useMemo(
+    () => parties.find((p) => p.id === profile?.party_id) || null,
+    [parties, profile?.party_id]
+  );
 
-      if (prevLevelRef.current === 1 && prof.level > 1 && !profile) prevLevelRef.current = prof.level;
-      else if (prof.level > prevLevelRef.current) {
-        // setShowLevelUp(true); // Opcional
-        prevLevelRef.current = prof.level;
-      }
-      
-      if (rouletteState === 'idle') setProfile(prof);
-      
-      if (prof.party_id) {
-        const { data: party } = await supabase.from('parties').select('*').eq('id', prof.party_id).single();
-        setMyParty(party);
-      } else setMyParty(null);
+  const playerAllies = useMemo(
+    () => allProfiles.filter((p) => p.role !== 'master' || p.uid === profile?.uid),
+    [allProfiles, profile?.uid]
+  );
+
+  const pendingTradesCount = useMemo(
+    () => incomingTrades.filter((t) => t.status === 'pending').length,
+    [incomingTrades]
+  );
+
+  const handleRequestSpin = async () => {
+    if (!profile) return;
+    setRequestingSpin(true);
+    try {
+      await requestRouletteGift(profile);
+      toast.success('Solicitação de Roleta Gacha enviada ao Mestre!');
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao solicitar gift.');
+    } finally {
+      setRequestingSpin(false);
     }
-    setMissions(missionsRes.data || []);
-    setShop(shopRes.data || []);
-    setAllPlayers(playersRes.data || []);
-  }
-
-  const handleLogout = async () => { if (supabase) await supabase.auth.signOut(); router.push('/login'); };
-
-  // --- TOOLTIP ---
-  const handleMouseEnter = (e, title, desc, color) => {
-    if (!title) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    setTooltipData({ 
-        x: rect.right + 15, 
-        y: rect.top, 
-        title, 
-        desc: cleanDescription(desc), 
-        color 
-    });
-  };
-  
-  const handleMouseLeave = () => {
-    setTooltipData(null); 
   };
 
-  function getRarityFromItem(item) {
-    const match = item.description?.match(/<([^>]+)>/);
-    if (match) return match[1];
-    if (item.name?.includes("Runa")) return item.name.split(" ")[1];
-    return "COMUM";
+  if (loading || !profile) {
+    return <PageLoadingSkeleton message="Carregando Ficha do Herói..." />;
   }
 
-  function getRarityColor(rarityName) {
-    const upper = rarityName?.toUpperCase();
-    const found = RARITIES.find(r => r.name === upper);
-    return found ? found.color : '#fff';
-  }
-
-  function cleanDescription(desc) {
-    return desc?.replace(/<[^>]+>/, '').trim() || desc || "Sem descrição.";
-  }
-
-  function getItemType(item) {
-    if (item.type) return item.type;
-    const name = item.name.toLowerCase();
-    
-    // Armas e Escudos
-    if (name.includes("espada") || name.includes("katana") || name.includes("adaga") || name.includes("machado") || name.includes("cajado") || name.includes("lança") || name.includes("arco") || name.includes("besta") || name.includes("arlabasta") || name.includes("foice")) return "weapon";
-    if (name.includes("escudo") || name.includes("broquel")) return "shield";
-
-    if (name.includes("anel")) return "ring";
-    if (name.includes("colar") || name.includes("amuleto") || name.includes("pingente")) return "neck";
-    if (name.includes("capacete") || name.includes("elmo") || name.includes("chapéu") || name.includes("coroa")) return "head";
-    if (name.includes("armadura") || name.includes("manto") || name.includes("túnica") || name.includes("traje")) return "body";
-    if (name.includes("luva") || name.includes("manopla") || name.includes("bracelete")) return "hands";
-    if (name.includes("bota") || name.includes("sapato") || name.includes("greva")) return "feet";
-    if (name.includes("cinto") || name.includes("faixa") || name.includes("algibeira")) return "waist";
-    if (name.includes("óculos") || name.includes("mascara") || name.includes("brinco")) return "face";
-    
-    return "consumable";
-  }
-
-  const getRankColor = (rank) => RANK_COLORS[rank] || '#ccc';
-  const getXpProgress = () => { 
-      if (!profile) return { percent: 0, text: '0/0' }; 
-      const curr = profile.level || 1; 
-      if (curr >= 20) return { percent: 100, text: 'MAX' }; 
-      const currData = XP_TABLE.find(l => l.lvl === curr) || { xp: 0 }; 
-      const nextData = XP_TABLE.find(l => l.lvl === curr + 1) || { xp: 999999 }; 
-      const percent = Math.min(100, Math.max(0, ((profile.xp - currData.xp) / (nextData.xp - currData.xp)) * 100)); 
-      return { percent, text: `${profile.xp} / ${nextData.xp}` }; 
-  };
-  const xpData = getXpProgress();
-
-  // --- LÓGICA DE DRAG & DROP E EQUIPAMENTOS ---
-
-  const handleDragStart = (e, index) => { 
-      const item = profile.inventory[index];
-      // BLOQUEIO: Runas e Gacha Gift não podem ser arrastados
-      if (item && (item.name.includes("Runa") || item.name === "Gacha Gift")) {
-          e.preventDefault();
-          return;
-      }
-      setTooltipData(null);
-      setDraggedItemIdx(index); 
-      e.dataTransfer.effectAllowed = "move"; 
-  };
-  
-  const handleDragOver = (e) => { e.preventDefault(); };
-
-  const handleDrop = async (e, slotName) => {
-    e.preventDefault();
-    if (draggedItemIdx === null) return;
-
-    const item = profile.inventory[draggedItemIdx];
-    const itemType = getItemType(item);
-
-    // Validação de Slot
-    let isValid = false;
-    if (slotName === 'ring1' || slotName === 'ring2') isValid = (itemType === 'ring');
-    else isValid = (itemType === slotName);
-
-    if (!isValid) {
-        alert(`Este item (${itemType}) não cabe no slot ${slotName.toUpperCase()}!`);
-        setDraggedItemIdx(null);
-        return;
-    }
-
-    const newInv = [...profile.inventory];
-    const newEquip = { ...profile.equipment };
-    const maxSlots = profile.slots || 10;
-    const hasItemInSlot = !!newEquip[slotName];
-    const isStack = item.qty > 1;
-
-    // Regra de Substituição com Mochila Cheia
-    // Se o item que entra vem de uma pilha (ocupa 1 slot na mochila e continuará ocupando)
-    // E o item que sai precisa de um NOVO slot na mochila.
-    // Se a mochila estiver cheia, não cabe.
-    if (isStack && hasItemInSlot && newInv.length >= maxSlots) {
-       alert("MOCHILA CHEIA! Para substituir usando um item de pilha, você precisa de 1 slot livre para o item antigo.");
-       setDraggedItemIdx(null);
-       return;
-    }
-
-    // Processa a retirada da mochila
-    const itemToEquip = { ...newInv[draggedItemIdx], qty: 1 };
-    if (item.qty > 1) {
-        newInv[draggedItemIdx].qty--;
-    } else {
-        newInv.splice(draggedItemIdx, 1);
-    }
-
-    // Processa o item que estava equipado (se houver)
-    if (hasItemInSlot) {
-        const oldItem = newEquip[slotName];
-        // Tenta empilhar na mochila
-        const existingIdx = newInv.findIndex(i => i.name === oldItem.name);
-        if (existingIdx >= 0) newInv[existingIdx].qty++;
-        else newInv.push(oldItem);
-    }
-
-    // Equipa o novo item
-    newEquip[slotName] = itemToEquip;
-
-    setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
-    if(supabase) await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
-    setDraggedItemIdx(null);
-  };
-
-  const handleUnequip = async (slotName) => {
-    const item = profile.equipment[slotName];
-    if (!item) return;
-
-    // Verifica se vai empilhar ou criar novo slot
-    const existingIdx = profile.inventory.findIndex(i => i.name === item.name);
-    const isStacking = existingIdx >= 0;
-
-    // Se não for empilhar e a mochila estiver cheia -> BLOQUEIA
-    if (!isStacking && (profile.inventory?.length || 0) >= (profile.slots || 10)) {
-        return alert("MOCHILA CHEIA! Você não tem espaço para desequipar. Arraste outro item para substituir.");
-    }
-
-    const newInv = [...profile.inventory];
-    const newEquip = { ...profile.equipment };
-
-    newEquip[slotName] = null;
-    
-    if (isStacking) newInv[existingIdx].qty++;
-    else newInv.push(item);
-
-    setProfile(prev => ({ ...prev, inventory: newInv, equipment: newEquip }));
-    if(supabase) await supabase.from('profiles').update({ inventory: newInv, equipment: newEquip }).eq('id', profile.id);
-  };
-
-  // --- AÇÕES DO JOGO (LOJA, MISSÕES, ETC) ---
-
-  function openBuyModal(item) {
-    const rarity = getRarityFromItem(item);
-    const runeName = `Runa ${rarity}`;
-    const hasRune = profile.inventory?.some(i => i.name === runeName && i.qty > 0);
-    setSelectedItemToBuy(item); setPlayerHasRune(hasRune); setBuyModalOpen(true);
-  }
-
-  async function confirmBuy(useRune) {
-    if (!selectedItemToBuy) return;
-    const item = selectedItemToBuy;
-    const inv = [...(profile.inventory || [])];
-    const maxSlots = profile.slots || 10;
-    const itemIdx = inv.findIndex(i => i.name === item.item_name);
-    const isStacking = itemIdx >= 0;
-
-    if (!isStacking && inv.length >= maxSlots) return alert("MOCHILA CHEIA!");
-
-    const itemToSave = { name: item.item_name, qty: 1, description: item.description, type: item.type }; 
-
-    if (useRune) {
-      const rarity = getRarityFromItem(item);
-      const runeName = `Runa ${rarity}`;
-      const runeIdx = inv.findIndex(i => i.name === runeName);
-      if (runeIdx === -1 || inv[runeIdx].qty < 1) return alert("Erro: Runa sumiu!");
-      if (inv[runeIdx].qty > 1) inv[runeIdx].qty--; else inv.splice(runeIdx, 1);
-      if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
-      if(supabase) await supabase.from('profiles').update({ inventory: inv }).eq('id', profile.id);
-    } else {
-      if (profile.gold < item.price) return alert("Ouro insuficiente.");
-      if (isStacking) inv[itemIdx].qty++; else inv.push(itemToSave);
-      const newGold = profile.gold - item.price;
-      if(supabase) await supabase.from('profiles').update({ gold: newGold, inventory: inv }).eq('id', profile.id);
-      setProfile(prev => ({...prev, gold: newGold, inventory: inv}));
-    }
-    const remaining = item.quantity - 1;
-    if (remaining > 0 && supabase) await supabase.from('shop_items').update({ quantity: remaining }).eq('id', item.id);
-    else if (supabase) await supabase.from('shop_items').delete().eq('id', item.id);
-    setBuyModalOpen(false); loadData();
-  }
-
-  async function useGachaGift(index) {
-    const currentInv = [...(profile.inventory || [])];
-    const giftItem = currentInv[index];
-    const maxSlots = profile.slots || 10;
-    if (giftItem.qty > 1 && currentInv.length >= maxSlots) return alert("MOCHILA CHEIA! Libere espaço para a Runa.");
-    if (giftItem.qty > 1) giftItem.qty -= 1; else currentInv.splice(index, 1);
-    setProfile(prev => ({ ...prev, inventory: currentInv }));
-    if(supabase) await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id);
-    startSpinAnimation();
-  }
-
-  async function requestSpin() { 
-      if(supabase) await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: "SOLICITACAO_ROLETA", quantity: 1 }]); 
-      alert("Solicitação enviada!"); 
-  }
-  
-  function startSpinAnimation() {
-    setRouletteState('spinning');
-    let speed = 50; let counter = 0; const maxSpins = 30; 
-    const rand = Math.random() * 100;
-    let accumulated = 0; let resultObj = RARITIES[0];
-    for (let r of RARITIES) { accumulated += r.chance; if (rand <= accumulated) { resultObj = r; break; } }
-    const spinInterval = () => { setCurrentRarityDisplay(RARITIES[Math.floor(Math.random() * RARITIES.length)]); counter++; if (counter < maxSpins) { speed += 10; setTimeout(spinInterval, speed); } else { finishSpin(resultObj); } };
-    spinInterval();
-  }
-
-  async function finishSpin(result) {
-    setCurrentRarityDisplay(result); setFinalResult(result); setRouletteState('result');
-    const currentProf = profileRef.current; if (!currentProf) return;
-    const runeName = `Runa ${result.name}`; const newInv = [...currentProf.inventory]; const idx = newInv.findIndex(i => i.name === runeName);
-    const runeItem = { name: runeName, qty: 1, description: `<${result.name}> Item mágico usado para trocar por equipamentos desta raridade na loja.` };
-    if (idx >= 0) newInv[idx].qty += 1; else newInv.push(runeItem);
-    setProfile(prev => ({...prev, inventory: newInv})); if(supabase) await supabase.from('profiles').update({ inventory: newInv }).eq('id', currentProf.id);
-  }
-
-  async function acceptMission(mission) { 
-      if (!profile) return; 
-      setMissions(current => current.filter(m => m.id !== mission.id)); 
-      if(supabase) await supabase.from('missions').update({ status: 'in_progress', assigned_to: profile.id }).eq('id', mission.id); 
-      loadData(); 
-  }
-
-  async function requestItem() { 
-      if (!newItemName.trim()) return; 
-      if(supabase) await supabase.from('item_requests').insert([{ player_id: profile.id, item_name: newItemName, quantity: newItemQty }]); 
-      setNewItemName(''); setIsModalOpen(false); 
-  }
-
-  async function removeItem(index) { 
-      if(!confirm("Jogar fora?")) return; 
-      const currentInv = [...profile.inventory]; 
-      if (currentInv[index].qty > 1) currentInv[index].qty -= 1; else currentInv.splice(index, 1); 
-      setProfile(prev => ({ ...prev, inventory: currentInv })); 
-      if(supabase) await supabase.from('profiles').update({ inventory: currentInv }).eq('id', profile.id); 
-  }
-
-  function openTransfer(target) { 
-      setTransferTarget(target); setTransferType('gold'); setTransferAmount(''); setTransferModalOpen(true); 
-  }
-
-  // Componente de Slot de Equipamento
-  const EquipmentSlot = ({ slot, icon: Icon, label }) => {
-    const item = profile?.equipment?.[slot];
-    const color = item ? getRarityColor(getRarityFromItem(item)) : '#444';
-    
+  if (error) {
     return (
-      <div 
-        className={`${styles.equipSlot} ${item ? styles.filled : styles.empty}`} 
-        onDragOver={handleDragOver}
-        onDrop={(e) => handleDrop(e, slot)}
-        onClick={() => item && handleUnequip(slot)}
-        style={{ 
-            gridArea: slot, 
-            borderColor: item ? color : '#333', 
-            boxShadow: item ? `inset 0 0 20px ${color}20` : 'none'
-        }}
-        onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
-        onMouseLeave={handleMouseLeave}
-      >
-        {item ? (
-           <div className={styles.equippedItem}>
-             <span className={styles.equippedName} style={{color: color}}>{item.name}</span>
-             <Icon size={28} color={color} strokeWidth={1.5} />
-           </div>
-        ) : (
-           <div className={styles.slotIcon}>
-             <Icon size={24} color="#333" />
-             <span className={styles.slotLabel}>{label}</span>
-           </div>
-        )}
+      <div className="min-h-screen realm-backdrop flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-2xl border border-rose-500/30 bg-[var(--surface-1)] p-6 text-center space-y-3">
+          <h1 className="text-lg font-bold text-white">Erro ao carregar</h1>
+          <p className="text-sm text-slate-300">{error}</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className={styles.wrapper} data-theme={currentTheme}>
-      <div className={styles.themeSwitcher}>
-          {themes.map(t => <button key={t.id} className={`${styles.themeDot} ${currentTheme === t.id ? styles.activeDot : ''}`} style={{backgroundColor: t.color}} onClick={() => setCurrentTheme(t.id)} />)}
-      </div>
+    <PlayerShell
+      profile={profile}
+      myParty={myParty}
+      activeTab={tab}
+      onSelectTab={setTab}
+      pendingTradesCount={pendingTradesCount}
+      onRequestSpin={handleRequestSpin}
+      requestingSpin={requestingSpin}
+      onLogout={logout}
+    >
+      {tab === 'missions' && <PlayerMissions missions={missions} profile={profile} />}
 
-      <div className={styles.container}>
-        {profile && (
-          <div className={styles.hud}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '25px' }}>
-              <Logo size={45} showText={false} />
-              <div className={styles.charInfo}>
-                <h1><User size={32} /> {profile.username}</h1>
-                <div className={styles.charDetails}>
-                  <span className={styles.tag} style={{color: getRankColor(profile.rank), borderColor: getRankColor(profile.rank)}}>RANK {profile.rank || 'F'}</span>
-                  <span className={styles.tag}>LVL {profile.level || 1}</span>
-                  {myParty && <span className={styles.tag} style={{borderColor: '#10b981', color: '#10b981'}}>{myParty.name}</span>}
-                </div>
-              </div>
-            </div>
-            <div className={styles.hudRight}>
-               <button onClick={requestSpin} className={`${styles.btnIcon} ${styles.btnMagic}`}><Sparkles size={16}/> Gift</button>
-               <div className={styles.statsGroup}>
-                 <div className={styles.goldDisplay}><Coins size={18} color="#fbbf24" /> {profile.gold}</div>
-                 <div className={styles.xpContainer} title={xpData.text}><div className={styles.xpFill} style={{width: `${xpData.percent}%`}}></div></div>
-                 <span className={styles.xpText}>XP {xpData.text}</span>
-               </div>
-               <div className={styles.hudActions}>
-                 <button onClick={loadData} className={`${styles.btnIcon} ${styles.btnRefresh}`}><RefreshCw size={18}/></button>
-                 <button onClick={handleLogout} className={`${styles.btnIcon} ${styles.btnLogout}`}><LogOut size={18}/></button>
-               </div>
-            </div>
+      {tab === 'shop' && <PlayerShop shopItems={shopItems} profile={profile} />}
+
+      {tab === 'players' && (
+        <PlayerAllies
+          allPlayers={playerAllies}
+          parties={parties}
+          profile={profile}
+          incomingTrades={incomingTrades}
+          outgoingTrades={outgoingTrades}
+        />
+      )}
+
+      {tab === 'inv' && <PlayerCharacter profile={profile} />}
+
+      <Modal
+        open={Boolean(levelUpTo)}
+        onOpenChange={(open) => !open && setLevelUpTo(null)}
+        maxWidth="max-w-sm"
+      >
+        <div className="py-4 text-center space-y-4">
+          <div className="h-16 w-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center justify-center mx-auto">
+            <Award className="h-8 w-8" />
           </div>
-        )}
-
-        <nav className={styles.nav}>
-          {['missions', 'shop', 'players', 'inv'].map(t => (
-             <button key={t} onClick={() => setTab(t)} className={`${styles.navBtn} ${tab === t ? styles.active : ''}`}>{t === 'missions' ? 'Mural' : t === 'shop' ? 'Loja' : t === 'players' ? 'Aliados' : 'Personagem'}</button>
-          ))}
-        </nav>
-
-        <main className={styles.grid}>
-          {tab === 'missions' && missions.map(m => (
-                <div key={m.id} className={styles.card} style={{borderLeft:`4px solid ${getRankColor(m.rank)}`}}>
-                  <div className={styles.missionHeader}><h3><Scroll size={18}/> {m.title}</h3><span style={{color: getRankColor(m.rank)}}>RANK {m.rank}</span></div>
-                  <div style={{fontSize: '0.8rem', color: '#fbbf24', marginBottom:'5px'}}>RECOMPENSA: {m.xp_reward} XP • {m.gold_reward} Ouro</div>
-                  <p className={styles.cardDesc}>"{m.desc || m.description}"</p>
-                  <button onClick={() => acceptMission(m)} className={styles.btnAction}><Check size={16}/> ACEITAR</button>
-                </div>
-          ))}
-
-          {tab === 'shop' && shop.map(item => {
-                const rarity = getRarityFromItem(item);
-                const color = getRarityColor(rarity);
-                return (
-                  <div key={item.id} className={styles.card} style={{borderColor: `${color}40`}} onMouseEnter={(e) => handleMouseEnter(e, item.item_name, item.description, color)} onMouseLeave={handleMouseLeave}>
-                    <div className={styles.cardHeader}><h3 style={{color: color, textShadow: `0 0 10px ${color}40`}}><ShoppingBag size={18}/> {item.name || item.item_name}</h3><span>x{item.quantity}</span></div>
-                    <div style={{height: '10px'}}></div> 
-                    <button onClick={() => openBuyModal(item)} className={styles.btnAction} style={{background: 'linear-gradient(45deg, #18181b, #27272a)'}}>COMPRAR</button>
-                  </div>
-                )
-          })}
-
-          {tab === 'players' && allPlayers.map(p => (
-                 <div key={p.id} className={styles.card} style={{alignItems:'center', textAlign:'center', border: p.id === profile?.id ? '1px solid var(--accent-primary)' : ''}}>
-                   <div style={{fontSize:'2.5rem', marginBottom:'10px'}}><Shield size={40} color={getRankColor(p.rank)}/></div>
-                   <h3 style={{color:'#fff', margin:0}}>{p.username}</h3>
-                   <span style={{color: getRankColor(p.rank), fontSize:'0.8rem', marginTop:'5px'}}>RANK {p.rank}</span>
-                   {p.id !== profile?.id && <button onClick={() => openTransfer(p)} className={styles.btnAction} style={{marginTop:'15px'}}><Gift size={16}/> Enviar</button>}
-                 </div>
-          ))}
-
-          {tab === 'inv' && (
-            <div className={styles.invWrapper} style={{gridColumn:'1/-1', display: 'flex', gap: '20px', flexDirection: 'column'}}>
-               <div className={styles.equipmentContainer}>
-                  <h3 style={{width: '100%', textAlign:'center', color: '#a1a1aa', fontSize:'0.9rem', marginBottom:'10px', letterSpacing:'2px'}}>EQUIPAMENTO</h3>
-                  
-                  <div className={styles.dollGrid}>
-                      <EquipmentSlot slot="head" icon={Crown} label="Cabeça" />
-                      <EquipmentSlot slot="face" icon={Glasses} label="Rosto" />
-                      <EquipmentSlot slot="body" icon={Shirt} label="Armadura" />
-                      <EquipmentSlot slot="neck" icon={Circle} label="Pescoço" />
-                      
-                      {/* Slots de Arma e Escudo */}
-                      <EquipmentSlot slot="weapon" icon={Sword} label="Arma" />
-                      <EquipmentSlot slot="hands" icon={Hand} label="Mãos" />
-                      <EquipmentSlot slot="shield" icon={ShieldIcon} label="Escudo" />
-                      
-                      <EquipmentSlot slot="waist" icon={RectangleHorizontal} label="Cinto" />
-                      <EquipmentSlot slot="feet" icon={Footprints} label="Pés" />
-                      <EquipmentSlot slot="ring1" icon={Gem} label="Anel 1" />
-                      <EquipmentSlot slot="ring2" icon={Gem} label="Anel 2" />
-                  </div>
-               </div>
-
-               <div>
-                   <div className={styles.invHeader}>
-                     <h2 style={{margin:0}}><Package/> Mochila</h2>
-                     <span style={{color:'var(--text-muted)'}}>{profile?.inventory?.length || 0} / {profile?.slots || 10}</span>
-                   </div>
-                   <div className={styles.invGrid}>
-                      {[...Array(profile?.slots || 10)].map((_, i) => {
-                        const item = profile?.inventory?.[i];
-                        let rarity = "COMUM"; let color = "#fff";
-                        let isRune = false;
-                        
-                        if (item) {
-                             if (item.name.includes("Runa") || item.name === "Gacha Gift") isRune = true;
-                             if (item.description) rarity = getRarityFromItem(item);
-                             else if (item.name.includes("Runa")) rarity = item.name.split(" ")[1];
-                             color = getRarityColor(rarity);
-                        }
-
-                        return (
-                          <div 
-                            key={i} 
-                            // Bloqueio de arraste
-                            draggable={!!item && !isRune}
-                            onDragStart={(e) => handleDragStart(e, i)}
-                            className={`${styles.slot} ${!item ? styles.empty : ''}`} 
-                            style={item ? {
-                                borderColor: color, 
-                                boxShadow:`inset 0 0 10px ${color}20`, 
-                                cursor: isRune ? 'not-allowed' : 'grab'
-                            } : {}}
-                            onMouseEnter={(e) => item && handleMouseEnter(e, item.name, item.description, color)}
-                            onMouseLeave={handleMouseLeave}
-                          >
-                            {item ? (
-                              <>
-                                <div onClick={(e) => {e.stopPropagation(); removeItem(i);}} className={styles.removeBtn}><X size={12}/></div>
-                                <span className={styles.itemName} style={{color: color}}>{item.name}</span>
-                                <span className={styles.itemQty}>x{item.qty}</span>
-                                {item.name === 'Gacha Gift' && <button onClick={(e)=>{e.stopPropagation(); useGachaGift(i)}} className={styles.btnUseItem}>USAR</button>}
-                              </>
-                            ) : (<Plus size={20} color="#444" onClick={() => setIsModalOpen(true)}/>)}
-                          </div>
-                        )
-                      })}
-                   </div>
-               </div>
-            </div>
-          )}
-        </main>
-
-        {tooltipData && (
-            <div style={{
-                position: 'fixed', 
-                top: tooltipData.y, 
-                left: tooltipData.x, 
-                transform: 'translate(0, 0)', 
-                background: 'rgba(20, 20, 25, 0.98)', 
-                border: `1px solid ${tooltipData.color}`, 
-                borderRadius: '8px', 
-                padding: '12px', 
-                zIndex: 9999, 
-                pointerEvents: 'none', // CORREÇÃO DO BUG DO PISCA-PISCA
-                boxShadow: `0 4px 30px rgba(0,0,0,0.8)`, 
-                minWidth: '250px', 
-                maxWidth: '320px', 
-                animation: 'fadeIn 0.1s ease-out'
-            }}>
-                <h4 style={{margin: '0 0 8px 0', color: tooltipData.color, fontSize: '1rem', textShadow: `0 0 10px ${tooltipData.color}50`}}>{tooltipData.title}</h4>
-                <p style={{margin: 0, fontSize: '0.85rem', color: '#d4d4d8', lineHeight: '1.5'}}>{tooltipData.desc}</p>
-            </div>
-        )}
-
-        {/* ... (Modais de Compra, Gacha e Solicitação - Mantidos iguais) ... */}
-        {buyModalOpen && selectedItemToBuy && (
-            <div className={styles.modalOverlay} onClick={() => setBuyModalOpen(false)}>
-                <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{textAlign:'center', border: `1px solid ${getRarityColor(getRarityFromItem(selectedItemToBuy))}`}}>
-                    <h2 style={{color: getRarityColor(getRarityFromItem(selectedItemToBuy)), marginBottom: '5px'}}>{selectedItemToBuy.item_name}</h2>
-                    <p style={{fontSize:'0.9rem', color:'#a1a1aa', marginBottom:'20px'}}>{cleanDescription(selectedItemToBuy.description)}</p>
-                    <p style={{color:'#fff', marginBottom:'15px'}}>Forma de Pagamento:</p>
-                    <div style={{display:'flex', gap:'15px', justifyContent:'center'}}>
-                        <button onClick={() => confirmBuy(false)} className={styles.card} style={{width:'140px', cursor: profile.gold >= selectedItemToBuy.price ? 'pointer' : 'not-allowed', opacity: profile.gold >= selectedItemToBuy.price ? 1 : 0.5, border: '1px solid #fbbf24', background: 'rgba(251, 191, 36, 0.1)'}}>
-                            <Coins size={24} color="#fbbf24" style={{display:'block', margin:'0 auto 10px'}}/>
-                            <span style={{display:'block', fontSize:'1.2rem', fontWeight:'bold', color:'#fbbf24'}}>{selectedItemToBuy.price}g</span>
-                        </button>
-                        <button onClick={() => playerHasRune && confirmBuy(true)} className={styles.card} style={{width:'140px', cursor: playerHasRune ? 'pointer' : 'not-allowed', opacity: playerHasRune ? 1 : 0.5, borderColor: getRarityColor(getRarityFromItem(selectedItemToBuy)), background: `rgba(255,255,255,0.05)`}}>
-                            <Hexagon size={24} color={getRarityColor(getRarityFromItem(selectedItemToBuy))} style={{display:'block', margin:'0 auto 10px'}}/>
-                            <span style={{display:'block', fontSize:'0.8rem', color:'#fff'}}>Runa {getRarityFromItem(selectedItemToBuy)}</span>
-                            <span style={{display:'block', color: playerHasRune ? '#4ade80' : '#ef4444', fontSize:'0.7rem', marginTop:'5px', fontWeight:'bold'}}>{playerHasRune ? "USAR RUNA" : "SEM RUNA"}</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
-
-        {rouletteState !== 'idle' && (
-          <div className={styles.modalOverlay}>
-            <div className={`${styles.gachaCard} ${rouletteState === 'spinning' ? styles.isSpinning : styles.isResult}`} style={{borderColor: currentRarityDisplay.color, boxShadow: `0 0 60px ${currentRarityDisplay.color}80`}}>
-               {rouletteState === 'spinning' ? <><div className={styles.gachaIconSpin}><Sparkles size={48} color="#fff"/></div><h2 style={{color: '#fff', opacity: 0.8}}>Sorteando...</h2></> : <h2 style={{color: '#fff'}}>VOCÊ OBTEVE</h2>}
-               <div className={styles.rarityText} style={{ color: currentRarityDisplay.color }}>{currentRarityDisplay.name}</div>
-               {rouletteState === 'result' && <div style={{display:'flex', flexDirection:'column', alignItems:'center', marginTop:'10px'}}><Hexagon size={48} color={currentRarityDisplay.color} /><div className={styles.resultItemName} style={{color:'#fff', marginTop:'10px'}}>RUNA {currentRarityDisplay.name}</div><span style={{fontSize:'0.8rem', color:'#a1a1aa'}}>Use para trocar por itens na Loja!</span></div>}
-               {rouletteState === 'result' && <button onClick={() => {setRouletteState('idle'); setFinalResult(null);}} className={styles.btnAction} style={{marginTop: 'auto'}}>COLETAR</button>}
-            </div>
+          <div className="space-y-1">
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">
+              Subiu de Nível!
+            </p>
+            <h2 className="text-3xl font-black text-white font-mono">NÍVEL {levelUpTo}</h2>
+            <p className="text-sm text-slate-400">
+              Sua experiência cresceu e seu nome ecoa pelo Reino.
+            </p>
           </div>
-        )}
-
-        {isModalOpen && (
-          <div className={styles.modalOverlay} onClick={() => setIsModalOpen(false)}>
-            <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
-              <h2 style={{color:'var(--accent-glow)', marginBottom:'20px'}}>Solicitar Item</h2>
-              <input className={styles.input} placeholder="Nome do Item" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
-              <input type="number" min="1" className={styles.input} placeholder="Quantidade" value={newItemQty} onChange={e => setNewItemQty(e.target.value)} />
-              <button onClick={requestItem} className={styles.btnAction}>ENVIAR PEDIDO</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+          <Button className="w-full" onClick={() => setLevelUpTo(null)}>
+            Continuar Jornada
+          </Button>
+        </div>
+      </Modal>
+    </PlayerShell>
   );
 }
