@@ -34,7 +34,7 @@ function CustomChartTooltip({ active, payload, label }) {
     <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] px-3 py-2 shadow-xl text-xs">
       <p className="font-bold text-white mb-1">{label}</p>
       <p className="text-slate-300 font-mono tabular-nums">
-        Total: <span className="font-bold text-[var(--accent-glow)]">{payload[0].value}</span>
+        Total: <span className="font-bold text-slate-200">{payload[0].value}</span>
       </p>
     </div>
   );
@@ -291,7 +291,7 @@ export function MasterOverview({
                       <p className="text-sm font-bold text-white flex items-center gap-2 truncate">
                         {isRoulette ? (
                           <>
-                            <Dices className="h-4 w-4 text-[var(--accent-glow)] shrink-0" />
+                            <Dices className="h-4 w-4 text-slate-300 shrink-0" />
                             <span>Roleta Gacha (Gift)</span>
                           </>
                         ) : (

@@ -37,6 +37,7 @@ export function MasterShell({
   onSelectSection,
   pendingRequestsCount = 0,
   activeContractsCount = 0,
+  commandItems = [],
   isGenerating = false,
   onGenerateDaily,
   onLogout,
@@ -75,13 +76,13 @@ export function MasterShell({
               className={cn(
                 'w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all',
                 active
-                  ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40 shadow-sm'
+                  ? 'bg-white/10 text-white border border-white/20 shadow-sm'
                   : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.04] border border-transparent'
               )}
             >
               <span className="flex items-center gap-3 min-w-0">
                 <Icon
-                  className={cn('h-4 w-4 shrink-0', active ? 'text-[var(--accent-glow)]' : '')}
+                  className="h-4 w-4 shrink-0 text-slate-300"
                   aria-hidden="true"
                 />
                 <span className="truncate">{item.label}</span>
@@ -91,7 +92,7 @@ export function MasterShell({
                   className={cn(
                     'px-2 py-0.5 rounded-full text-[11px] font-mono font-bold tabular-nums',
                     item.id === 'requests'
-                      ? 'bg-[var(--accent-primary)] text-white'
+                      ? 'bg-white/20 text-white border border-white/10'
                       : 'bg-amber-500/20 text-amber-300'
                   )}
                 >
@@ -108,7 +109,7 @@ export function MasterShell({
           href="/player"
           className="flex items-center justify-center gap-2 w-full h-9 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)]/60 text-xs font-semibold text-slate-300 hover:text-white hover:border-[var(--border-strong)] transition-colors"
         >
-          <Compass className="h-3.5 w-3.5 text-[var(--accent-glow)]" aria-hidden="true" />
+          <Compass className="h-3.5 w-3.5 text-slate-300" aria-hidden="true" />
           Visão do Aventureiro
         </Link>
 
@@ -178,7 +179,7 @@ export function MasterShell({
                   {currentNav.label}
                 </h1>
                 <p className="hidden sm:block text-xs text-slate-400 truncate">
-                  Controle em tempo real do mundo, economia e aventureiros
+                  Painel Administrativo do Reino e Campanhas
                 </p>
               </div>
             </div>

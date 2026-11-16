@@ -365,7 +365,7 @@ export function MasterPlayers({ players, parties }) {
             onClick={() => setSubTab('heroes')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
               subTab === 'heroes'
-                ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40'
+                ? 'bg-white/10 text-white border border-white/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -378,7 +378,7 @@ export function MasterPlayers({ players, parties }) {
             onClick={() => setSubTab('parties')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
               subTab === 'parties'
-                ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40'
+                ? 'bg-white/10 text-white border border-white/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >

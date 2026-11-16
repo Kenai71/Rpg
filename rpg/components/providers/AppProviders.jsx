@@ -45,7 +45,7 @@ export function AppProviders({ children }) {
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, themes: THEMES }}>
-      <div className="min-h-screen bg-[var(--surface-0)] text-slate-100 antialiased selection:bg-[var(--accent-soft)] selection:text-white">
+      <div className="min-h-screen bg-[var(--surface-0)] text-slate-100 antialiased selection:bg-white/20 selection:text-white">
         {children}
       </div>
       <Toaster

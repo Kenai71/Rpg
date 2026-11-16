@@ -13,6 +13,7 @@ import {
   Hexagon,
   Plus,
   RectangleHorizontal,
+  Search,
   Shield,
   Shirt,
   Sword,
@@ -36,6 +37,7 @@ import {
 } from '../../lib/rpg-service';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
+import { DetailDrawer } from '../ui/DetailDrawer';
 import { ConfirmDialog, Modal } from '../ui/Modal';
 import { FormField, Input } from '../ui/Input';
 import { Badge, RarityBadge } from '../ui/Badge';
@@ -54,14 +56,15 @@ const SLOT_ICONS = {
   ring2: { icon: Gem, label: 'Anel 2', gridArea: 'ring2' },
 };
 
-export function PlayerCharacter({ profile }) {
+export function PlayerCharacter({ profile, onOpenRoulette }) {
   const [draggedIdx, setDraggedIdx] = useState(null);
+  const [bagSearch, setBagSearch] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Inspect modals (accessible for mobile tap + keyboard + desktop!)
+  // Split DetailDrawer inspectors
   const [inspectedInvIdx, setInspectedInvIdx] = useState(null);
   const [inspectedEquipSlot, setInspectedEquipSlot] = useState(null);
-  const [confirmDiscard, setConfirmDiscard] = useState(null); // { idx, item, all }
+  const [confirmDiscard, setConfirmDiscard] = useState(null);
 
   // Request item modal
   const [requestModalOpen, setRequestModalOpen] = useState(false);
@@ -69,13 +72,10 @@ export function PlayerCharacter({ profile }) {
   const [reqItemQty, setReqItemQty] = useState(1);
   const [sendingRequest, setSendingRequest] = useState(false);
 
-  // Gacha Roulette state
-  const [rouletteState, setRouletteState] = useState('idle'); // 'idle' | 'spinning' | 'result'
-  const [currentRarityDisplay, setCurrentRarityDisplay] = useState(RARITIES[0]);
-
   const inventory = profile?.inventory || [];
   const equipment = profile?.equipment || {};
   const maxSlots = profile?.slots || 10;
+  const equippedCount = Object.values(equipment).filter(Boolean).length;
 
   const inspectedItem = inspectedInvIdx !== null ? inventory[inspectedInvIdx] : null;
   const inspectedEquippedItem = inspectedEquipSlot ? equipment[inspectedEquipSlot] : null;
@@ -118,35 +118,6 @@ export function PlayerCharacter({ profile }) {
       toast.error(err?.message || 'Erro ao descartar item.');
     } finally {
       setBusy(false);
-    }
-  };
-
-  const handleUseGachaGift = async (giftIndex) => {
-    setInspectedInvIdx(null);
-    try {
-      setRouletteState('spinning');
-      const resultPromise = openGachaGiftTx(profile.uid, giftIndex);
-
-      let counter = 0;
-      const totalTicks = 22;
-      const interval = setInterval(() => {
-        setCurrentRarityDisplay(RARITIES[Math.floor(Math.random() * RARITIES.length)]);
-        counter += 1;
-        if (counter >= totalTicks) {
-          clearInterval(interval);
-        }
-      }, 95);
-
-      const finalRarity = await resultPromise;
-
-      setTimeout(() => {
-        clearInterval(interval);
-        setCurrentRarityDisplay(finalRarity);
-        setRouletteState('result');
-      }, 2200);
-    } catch (err) {
-      setRouletteState('idle');
-      toast.error(err?.message || 'Não foi possível abrir o Gacha Gift.');
     }
   };
 
@@ -193,7 +164,7 @@ export function PlayerCharacter({ profile }) {
         className={`h-20 w-full rounded-xl border flex flex-col items-center justify-center gap-1 p-2 transition-all ${
           item
             ? 'bg-[var(--surface-0)]/90 hover:scale-[1.03] cursor-pointer shadow-inner'
-            : 'border-dashed border-white/10 bg-white/[0.02] opacity-70 hover:opacity-100 hover:border-[var(--accent-primary)]/50'
+            : 'border-dashed border-white/10 bg-white/[0.02] opacity-70 hover:opacity-100 hover:border-white/25'
         }`}
         style={
           item
@@ -247,22 +218,29 @@ export function PlayerCharacter({ profile }) {
     );
   };
 
+  const bagFilterTerm = bagSearch.trim().toLowerCase();
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* Paper Doll Equipment */}
       <Card className="lg:col-span-5">
-        <CardHeader>
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-[var(--accent-glow)]" />
-              Equipamento
-            </CardTitle>
-            <CardDescription>
-              Arraste um item da mochila ou toque em um item para equipar/inspecionar.
-            </CardDescription>
+        <CardHeader className="border-b border-[var(--border-subtle)] pb-4">
+          <div className="w-full flex items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5 text-slate-300" />
+                Equipamento
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Arraste um item ou toque em qualquer card para equipar/desequipar.
+              </CardDescription>
+            </div>
+            <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono shrink-0">
+              {equippedCount} / 11
+            </Badge>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-5">
           <div className="grid grid-cols-3 gap-2.5 max-w-xs mx-auto">
             <div />
             {renderEquipSlot('head')}
@@ -289,30 +267,51 @@ export function PlayerCharacter({ profile }) {
 
       {/* Backpack / Inventory */}
       <Card className="lg:col-span-7">
-        <CardHeader className="border-b border-[var(--border-subtle)] pb-4 flex-wrap">
+        <CardHeader className="border-b border-[var(--border-subtle)] pb-4 flex-wrap gap-3">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Backpack className="h-5 w-5 text-[var(--accent-glow)]" />
+              <Backpack className="h-5 w-5 text-slate-300" />
               Mochila
               <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono">
                 {inventory.length} / {maxSlots}
               </Badge>
             </CardTitle>
-            <CardDescription>
-              Clique ou toque em qualquer slot para ver detalhes, usar ou equipar.
+            <CardDescription className="mt-1">
+              Selecione qualquer slot para inspecionar, equipar, usar ou descartar.
             </CardDescription>
           </div>
 
-          <Button variant="secondary" size="sm" onClick={() => setRequestModalOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Solicitar Item
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+            {inventory.length > 0 && (
+              <div className="w-full sm:w-44">
+                <Input
+                  icon={Search}
+                  placeholder="Filtrar mochila..."
+                  value={bagSearch}
+                  onChange={(e) => setBagSearch(e.target.value)}
+                  aria-label="Filtrar itens da mochila"
+                  className="h-9 text-xs"
+                />
+              </div>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => setRequestModalOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Solicitar Item
+            </Button>
+          </div>
         </CardHeader>
 
         <CardContent className="pt-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
             {[...Array(maxSlots)].map((_, i) => {
               const item = inventory[i];
+              if (
+                bagFilterTerm &&
+                (!item || !String(item.name || '').toLowerCase().includes(bagFilterTerm))
+              ) {
+                return null;
+              }
+
               const isNonEquippable =
                 item && (item.name.includes('Runa') || item.name === 'Gacha Gift');
               const rarity = item ? getRarityFromItem(item) : 'COMUM';
@@ -326,7 +325,7 @@ export function PlayerCharacter({ profile }) {
                     type="button"
                     onClick={() => setRequestModalOpen(true)}
                     aria-label={`Slot ${i + 1} vazio — solicitar item`}
-                    className="aspect-square rounded-xl border border-dashed border-white/10 bg-white/[0.02] hover:border-[var(--accent-primary)]/40 hover:bg-white/[0.04] flex flex-col items-center justify-center gap-1 text-slate-600 hover:text-slate-300 transition-colors"
+                    className="aspect-square rounded-xl border border-dashed border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04] flex flex-col items-center justify-center gap-1 text-slate-600 hover:text-slate-300 transition-colors"
                   >
                     <Plus className="h-4 w-4" />
                     <span className="text-[10px] font-medium">Vazio</span>
@@ -348,7 +347,7 @@ export function PlayerCharacter({ profile }) {
                     e.dataTransfer.effectAllowed = 'move';
                   }}
                   onClick={() => setInspectedInvIdx(i)}
-                  className="aspect-square rounded-xl border bg-[var(--surface-0)]/80 hover:bg-[var(--surface-2)] p-2.5 flex flex-col justify-between text-left transition-all relative cursor-pointer"
+                  className="aspect-square rounded-xl border bg-[var(--surface-0)]/80 hover:bg-[var(--surface-2)] hover:-translate-y-0.5 p-2.5 flex flex-col justify-between text-left transition-all relative cursor-pointer"
                   style={{
                     borderColor: `${rarityMeta.color}66`,
                     boxShadow: `inset 0 0 14px ${rarityMeta.color}14`,
@@ -359,7 +358,7 @@ export function PlayerCharacter({ profile }) {
                       x{item.qty}
                     </span>
                     {isGacha && (
-                      <span className="px-1.5 py-0.5 rounded bg-[var(--accent-primary)] text-[10px] font-bold text-white">
+                      <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-bold text-white">
                         ABRIR
                       </span>
                     )}
@@ -378,8 +377,8 @@ export function PlayerCharacter({ profile }) {
         </CardContent>
       </Card>
 
-      {/* Inspect Inventory Item Modal */}
-      <Modal
+      {/* Inspect Inventory Item Drawer */}
+      <DetailDrawer
         open={Boolean(inspectedItem)}
         onOpenChange={(open) => !open && setInspectedInvIdx(null)}
         title={
@@ -387,41 +386,56 @@ export function PlayerCharacter({ profile }) {
             {inspectedItem?.name}
           </span>
         }
-        description={
+        subtitle={
           inspectedItem
-            ? `${getItemTypeLabel(getItemType(inspectedItem))} • Quantidade: ${inspectedItem.qty}`
+            ? `${getItemTypeLabel(getItemType(inspectedItem))} • Quantidade na mochila: ${inspectedItem.qty}`
             : ''
         }
-        maxWidth="max-w-md"
-      >
-        {inspectedItem && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
+        accentColor={getRarityMeta(getRarityFromItem(inspectedItem)).color}
+        badge={
+          inspectedItem && (
+            <>
               <RarityBadge rarity={getRarityFromItem(inspectedItem)} />
               <Badge className="bg-white/5 text-slate-300 border-white/10">
                 {getItemTypeLabel(getItemType(inspectedItem))}
               </Badge>
-            </div>
-
-            <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-4 text-sm text-slate-300 leading-relaxed">
+            </>
+          )
+        }
+        footer={
+          <Button
+            variant="ghost"
+            className="w-full"
+            onClick={() => setInspectedInvIdx(null)}
+          >
+            Fechar
+          </Button>
+        }
+      >
+        {inspectedItem && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-4 text-sm text-slate-200 leading-relaxed">
               {cleanDescription(inspectedItem.description)}
             </div>
 
             <div className="space-y-2.5 pt-1">
               {inspectedItem.name === 'Gacha Gift' && (
                 <Button
-                  className="w-full"
-                  onClick={() => handleUseGachaGift(inspectedInvIdx)}
+                  className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold border-amber-300 shadow-lg shadow-amber-500/20"
+                  onClick={() => {
+                    setInspectedInvIdx(null);
+                    if (onOpenRoulette) onOpenRoulette();
+                  }}
                   loading={busy}
                 >
                   <Dices className="h-4 w-4" />
-                  Girar Roleta Rúnica
+                  Abrir Roleta Rúnica
                 </Button>
               )}
 
               {renderEquipButtonOptions(inspectedItem, inspectedInvIdx)}
 
-              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border-subtle)]">
+              <div className="grid grid-cols-2 gap-2 pt-3 border-t border-[var(--border-subtle)]">
                 <Button
                   variant="danger"
                   size="sm"
@@ -447,10 +461,10 @@ export function PlayerCharacter({ profile }) {
             </div>
           </div>
         )}
-      </Modal>
+      </DetailDrawer>
 
-      {/* Inspect Equipped Item Modal */}
-      <Modal
+      {/* Inspect Equipped Item Drawer */}
+      <DetailDrawer
         open={Boolean(inspectedEquippedItem)}
         onOpenChange={(open) => !open && setInspectedEquipSlot(null)}
         title={
@@ -458,34 +472,39 @@ export function PlayerCharacter({ profile }) {
             {inspectedEquippedItem?.name}
           </span>
         }
-        description={
-          inspectedEquipSlot ? `Equipado em: ${SLOT_ICONS[inspectedEquipSlot]?.label}` : ''
+        subtitle={
+          inspectedEquipSlot ? `Equipado no slot: ${SLOT_ICONS[inspectedEquipSlot]?.label}` : ''
         }
-        maxWidth="max-w-md"
+        accentColor={getRarityMeta(getRarityFromItem(inspectedEquippedItem)).color}
+        badge={
+          inspectedEquippedItem && <RarityBadge rarity={getRarityFromItem(inspectedEquippedItem)} />
+        }
         footer={
-          <>
-            <Button variant="ghost" onClick={() => setInspectedEquipSlot(null)}>
+          <div className="flex items-center gap-2.5">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setInspectedEquipSlot(null)}
+            >
               Fechar
             </Button>
             <Button
               variant="secondary"
+              className="flex-[2]"
               loading={busy}
               onClick={() => handleUnequip(inspectedEquipSlot)}
             >
               Desequipar para Mochila
             </Button>
-          </>
+          </div>
         }
       >
         {inspectedEquippedItem && (
-          <div className="space-y-3">
-            <RarityBadge rarity={getRarityFromItem(inspectedEquippedItem)} />
-            <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-4 text-sm text-slate-300 leading-relaxed">
-              {cleanDescription(inspectedEquippedItem.description)}
-            </div>
+          <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-4 text-sm text-slate-200 leading-relaxed">
+            {cleanDescription(inspectedEquippedItem.description)}
           </div>
         )}
-      </Modal>
+      </DetailDrawer>
 
       {/* Request Custom Item Modal */}
       <Modal
@@ -525,66 +544,6 @@ export function PlayerCharacter({ profile }) {
             />
           </FormField>
         </form>
-      </Modal>
-
-      {/* Gacha Roulette Modal */}
-      <Modal
-        open={rouletteState !== 'idle'}
-        onOpenChange={(open) => {
-          if (!open && rouletteState === 'result') setRouletteState('idle');
-        }}
-        hideClose={rouletteState === 'spinning'}
-        maxWidth="max-w-sm"
-      >
-        <div className="py-4 text-center space-y-5">
-          {rouletteState === 'spinning' ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-16 w-16 rounded-2xl bg-[var(--accent-soft)] flex items-center justify-center animate-gacha-spin">
-                <Dices className="h-8 w-8 text-[var(--accent-glow)]" />
-              </div>
-              <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-400">
-                Sorteando Runa...
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2">
-              <Hexagon
-                className="h-14 w-14"
-                style={{ color: currentRarityDisplay.color }}
-                strokeWidth={1.6}
-              />
-              <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-400">
-                Você Obteve
-              </p>
-            </div>
-          )}
-
-          <div
-            className="text-3xl sm:text-4xl font-black tracking-wider uppercase"
-            style={{
-              color: currentRarityDisplay.color,
-              textShadow: `0 0 24px ${currentRarityDisplay.color}66`,
-            }}
-          >
-            {currentRarityDisplay.name}
-          </div>
-
-          {rouletteState === 'result' && (
-            <div className="space-y-4">
-              <div className="rounded-xl bg-[var(--surface-0)]/80 border border-[var(--border-subtle)] p-3">
-                <p className="text-sm font-bold text-white">
-                  Runa {currentRarityDisplay.name}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Guardada na sua mochila. Use-a para trocar por equipamentos desta raridade na Loja!
-                </p>
-              </div>
-              <Button className="w-full" onClick={() => setRouletteState('idle')}>
-                Coletar Runa
-              </Button>
-            </div>
-          )}
-        </div>
       </Modal>
 
       <ConfirmDialog

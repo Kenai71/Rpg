@@ -40,8 +40,10 @@ export function PlayerShell({
   activeTab,
   onSelectTab,
   pendingTradesCount = 0,
+  commandItems = [],
   onRequestSpin,
   requestingSpin = false,
+  onOpenRoulette,
   onLogout,
   children,
 }) {
@@ -81,7 +83,7 @@ export function PlayerShell({
       {/* Top Navbar */}
       <header className="sticky top-0 z-30 border-b border-[var(--border-subtle)] bg-[var(--surface-0)]/85 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-6 min-w-0">
+          <div className="flex items-center gap-5 min-w-0">
             <Logo size={36} subtitle="Guilda" />
 
             {/* Desktop Navigation Tabs */}
@@ -99,12 +101,12 @@ export function PlayerShell({
                     className={cn(
                       'inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all relative',
                       active
-                        ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40'
+                        ? 'bg-white/10 text-white border border-white/20 shadow-sm'
                         : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
                     )}
                   >
                     <Icon
-                      className={cn('h-4 w-4', active ? 'text-[var(--accent-glow)]' : '')}
+                      className="h-4 w-4 text-slate-300"
                       aria-hidden="true"
                     />
                     <span>{t.label}</span>
@@ -121,6 +123,7 @@ export function PlayerShell({
 
           <div className="flex items-center gap-2 shrink-0">
             <ThemeSwitcher className="hidden sm:inline-flex" />
+
             {profile?.role === 'master' && (
               <Link href="/master">
                 <Button variant="outline" size="sm">
@@ -147,7 +150,7 @@ export function PlayerShell({
       <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
         <section
           aria-label="Resumo do personagem"
-          className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)]/90 backdrop-blur-xl p-4 sm:p-5 shadow-xl"
+          className="rounded-2xl surface-card p-4 sm:p-5 relative overflow-hidden"
         >
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
             {/* Identity */}
@@ -210,7 +213,7 @@ export function PlayerShell({
                 <div className="flex-1 sm:w-52 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-slate-400 font-semibold inline-flex items-center gap-1">
-                      <Zap className="h-3 w-3 text-[var(--accent-glow)]" aria-hidden="true" />
+                      <Zap className="h-3 w-3 text-slate-300" aria-hidden="true" />
                       Experiência
                     </span>
                     <span className="font-mono text-slate-300 tabular-nums">{xpData.text}</span>
@@ -224,7 +227,7 @@ export function PlayerShell({
                     className="h-2.5 w-full rounded-full bg-[var(--surface-0)] border border-[var(--border-subtle)] overflow-hidden"
                   >
                     <div
-                      className="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-500"
+                      className="h-full rounded-full bg-slate-200 transition-all duration-500"
                       style={{ width: `${xpData.percent}%` }}
                     />
                   </div>
@@ -233,14 +236,12 @@ export function PlayerShell({
 
               <Button
                 variant="secondary"
-                onClick={onRequestSpin}
-                loading={requestingSpin}
-                className="border-[var(--accent-primary)]/40 hover:border-[var(--accent-primary)]"
+                onClick={onOpenRoulette || onRequestSpin}
+                className="border-white/15 hover:border-white/30 hover:bg-white/5"
+                title="Girar a Roleta de Runas Arcanas"
               >
-                {!requestingSpin && (
-                  <Dices className="h-4 w-4 text-[var(--accent-glow)]" aria-hidden="true" />
-                )}
-                Pedir Gift (Roleta)
+                <Dices className="h-4 w-4 text-slate-300" aria-hidden="true" />
+                Roleta Arcana
               </Button>
             </div>
           </div>
@@ -267,11 +268,11 @@ export function PlayerShell({
               aria-current={active ? 'page' : undefined}
               className={cn(
                 'flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-semibold transition-colors relative',
-                active ? 'text-white bg-[var(--accent-soft)]' : 'text-slate-400'
+                active ? 'text-white bg-white/10' : 'text-slate-400'
               )}
             >
               <Icon
-                className={cn('h-4 w-4', active ? 'text-[var(--accent-glow)]' : '')}
+                className="h-4 w-4 text-slate-300"
                 aria-hidden="true"
               />
               <span>{t.label}</span>

@@ -13,9 +13,9 @@ import { formatNumber } from '../../lib/utils';
 import { Badge, RankBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../ui/Card';
+import { DetailDrawer } from '../ui/DetailDrawer';
 import { EmptyState } from '../ui/EmptyState';
 import { FormField, Input, Select } from '../ui/Input';
-import { Modal } from '../ui/Modal';
 import { UserAvatar } from '../ui/UserAvatar';
 
 export function PlayerAllies({
@@ -270,9 +270,10 @@ export function PlayerAllies({
             return (
               <Card
                 key={ally.uid}
+                interactive
                 className={`flex flex-col justify-between ${
                   isSelf
-                    ? 'border-[var(--accent-primary)]/50'
+                    ? 'border-white/25'
                     : sameParty
                     ? 'border-emerald-500/30'
                     : ''
@@ -310,7 +311,7 @@ export function PlayerAllies({
 
                 <CardFooter>
                   {isSelf ? (
-                    <span className="text-xs font-semibold text-[var(--accent-glow)] w-full text-center py-1">
+                    <span className="text-xs font-semibold text-slate-300 w-full text-center py-1">
                       Seu Personagem
                     </span>
                   ) : (
@@ -320,7 +321,7 @@ export function PlayerAllies({
                       className="w-full"
                       onClick={() => openTransferModal(ally)}
                     >
-                      <Gift className="h-4 w-4 text-[var(--accent-glow)]" />
+                      <Gift className="h-4 w-4 text-slate-300" />
                       Enviar Ouro / Item
                     </Button>
                   )}
@@ -331,23 +332,23 @@ export function PlayerAllies({
         </div>
       )}
 
-      {/* Transfer Modal */}
-      <Modal
+      {/* Transfer Inspector Drawer */}
+      <DetailDrawer
         open={Boolean(targetAlly)}
         onOpenChange={(open) => !open && setTargetAlly(null)}
         title={`Enviar para ${targetAlly?.username || ''}`}
-        description="O destinatário receberá uma oferta segura para aceitar ou recusar."
-        maxWidth="max-w-md"
+        subtitle="O destinatário receberá uma oferta segura para aceitar ou recusar."
+        badge={targetAlly && <RankBadge rank={targetAlly.rank} />}
         footer={
-          <>
-            <Button variant="ghost" onClick={() => setTargetAlly(null)}>
+          <div className="flex items-center gap-2.5">
+            <Button variant="ghost" className="flex-1" onClick={() => setTargetAlly(null)}>
               Cancelar
             </Button>
-            <Button type="submit" form="transfer-form" loading={sending}>
+            <Button type="submit" form="transfer-form" className="flex-[2]" loading={sending}>
               <Send className="h-4 w-4" />
               Enviar Oferta
             </Button>
-          </>
+          </div>
         }
       >
         <form id="transfer-form" onSubmit={handleSendTransfer} className="space-y-4">
@@ -430,7 +431,7 @@ export function PlayerAllies({
             </div>
           )}
         </form>
-      </Modal>
+      </DetailDrawer>
     </div>
   );
 }

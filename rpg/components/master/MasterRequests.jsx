@@ -44,7 +44,7 @@ export function MasterRequests({ requests, players, onResolveRequest }) {
             onClick={() => setTab('pending')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
               tab === 'pending'
-                ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40'
+                ? 'bg-white/10 text-white border border-white/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -57,7 +57,7 @@ export function MasterRequests({ requests, players, onResolveRequest }) {
             onClick={() => setTab('resolved')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
               tab === 'resolved'
-                ? 'bg-[var(--accent-soft)] text-white border border-[var(--accent-primary)]/40'
+                ? 'bg-white/10 text-white border border-white/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -88,8 +88,9 @@ export function MasterRequests({ requests, players, onResolveRequest }) {
             return (
               <Card
                 key={req.id}
+                interactive
                 className={`p-4 flex flex-col justify-between gap-4 ${
-                  isRoulette && tab === 'pending' ? 'border-[var(--accent-primary)]/40' : ''
+                  isRoulette && tab === 'pending' ? 'border-white/20' : ''
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -97,7 +98,7 @@ export function MasterRequests({ requests, players, onResolveRequest }) {
                     <div
                       className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
                         isRoulette
-                          ? 'bg-[var(--accent-soft)] text-[var(--accent-glow)]'
+                          ? 'bg-white/10 text-slate-300'
                           : 'bg-white/5 text-slate-300'
                       }`}
                     >

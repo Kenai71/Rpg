@@ -7,91 +7,88 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
-    // This security rules file assumes the following data structures
-    // (Cloud Firestore Standard Edition, default database):
-    //
     // Collection: profiles
-    // Document ID: {uid} (matches Firebase Auth UID)
-    // Fields (non-PII public/guild game profile):
-    //   - uid: string (required, immutable, == document ID)
-    //   - username: string (required, 1..50 chars)
-    //   - photoURL: string | null (optional/nullable, http/https URL <= 2048 chars)
-    //   - role: string (required, 'player' | 'master'; immutable for players)
-    //   - rank: string (required, 'F' | 'E' | 'D' | 'C' | 'B' | 'A' | 'S'; immutable for players)
-    //   - level: int (required, 1..20; immutable for players)
-    //   - xp: int (required, 0..1000000000; immutable for players)
-    //   - gold: int (required, 0..1000000000)
-    //   - slots: int (required, 1..100; immutable for players)
-    //   - party_id: string | null (optional/nullable, 1..128 chars; immutable for players)
-    //   - inventory: list<ItemMap> (required, size <= slots, items validated)
-    //   - equipment: map (required, exact 11 slot keys: face, head, neck, body, hands, waist, feet, ring1, ring2, weapon, shield; each null or ItemMap with qty == 1)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
-    //   - updatedAt: timestamp (required, == request.time on create/update)
+    // Document ID: {uid} (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (matches document ID)
+    //   - username: string (1..60 chars)
+    //   - photoURL: string | null (optional)
+    //   - role: string ('player' | 'master')
+    //   - rank: string ('F'..'S')
+    //   - level: int (1..100)
+    //   - xp: int (>= 0)
+    //   - gold: int (>= 0)
+    //   - slots: int (1..200)
+    //   - party_id: string | null (optional)
+    //   - inventory: list (size <= 200)
+    //   - equipment: map
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
     //
     // Collection: users_private
-    // Document ID: {uid} (matches Firebase Auth UID)
-    // Fields (PII separated from profiles):
-    //   - uid: string (required, immutable, == document ID)
-    //   - email: string (required, valid email <= 254 chars or '')
-    //   - provider: string (required, 1..50 chars)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
+    // Document ID: {uid} (Firebase Auth UID, isolated PII)
+    // Fields:
+    //   - uid: string (matches document ID)
+    //   - email: string (<= 254 chars)
+    //   - provider: string (<= 50 chars)
+    //   - createdAt: timestamp (optional)
     //
     // Collection: parties
     // Document ID: {partyId} (auto-generated)
     // Fields:
-    //   - name: string (required, 1..80 chars)
-    //   - leader_id: string | null (required, nullable, 1..128 chars)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
+    //   - name: string (1..80 chars)
+    //   - leader_id: string | null (optional)
+    //   - createdAt: timestamp (optional)
     //
     // Collection: missions
     // Document ID: {missionId} (auto-generated)
     // Fields:
-    //   - title: string (required, 1..150 chars)
-    //   - description: string (required, 0..2000 chars)
-    //   - rank: string (required, 'F' | 'E' | 'D' | 'C' | 'B' | 'A' | 'S')
-    //   - xp_reward: int (required, 0..100000000)
-    //   - gold_reward: int (required, 0..100000000)
-    //   - status: string (required, 'open' | 'in_progress' | 'completed' | 'failed')
-    //   - assigned_to: string | null (optional/nullable, 1..128 chars)
-    //   - assigned_to_name: string | null (optional/nullable, 1..50 chars)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
-    //   - updatedAt: timestamp (required, == request.time on create/update)
+    //   - title: string (1..150 chars)
+    //   - description: string (<= 3000 chars)
+    //   - rank: string
+    //   - xp_reward: int (>= 0)
+    //   - gold_reward: int (>= 0)
+    //   - status: string ('open' | 'in_progress' | 'completed' | 'failed')
+    //   - assigned_to: string | null (optional)
+    //   - assigned_to_name: string | null (optional)
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
     //
     // Collection: shop_items
     // Document ID: {itemId} (auto-generated)
     // Fields:
-    //   - item_name: string (required, 1..100 chars)
-    //   - description: string (required, 0..1000 chars)
-    //   - price: int (required, 1..1000000000)
-    //   - quantity: int (required, 0..1000000)
-    //   - type: string (required, one of 11 allowed ITEM_TYPES)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
-    //   - updatedAt: timestamp (required, == request.time on create/update)
+    //   - item_name: string (1..100 chars)
+    //   - description: string (<= 3000 chars)
+    //   - price: int (>= 1)
+    //   - quantity: int (>= 0)
+    //   - type: string
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
     //
     // Collection: item_requests
     // Document ID: {requestId} (auto-generated)
     // Fields:
-    //   - player_id: string (required, immutable, == request.auth.uid on create)
-    //   - player_name: string (required, immutable, 1..50 chars)
-    //   - item_name: string (required, immutable, 1..80 chars)
-    //   - quantity: int (required, immutable, 1..999)
-    //   - status: string (required, 'pending' on create; 'approved' | 'rejected' on resolve)
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
-    //   - resolvedAt: timestamp (absent when pending; required == request.time on resolve)
+    //   - player_id: string (1..128 chars)
+    //   - player_name: string (1..60 chars)
+    //   - item_name: string (1..100 chars)
+    //   - quantity: int (1..999)
+    //   - status: string ('pending' | 'approved' | 'rejected' | 'cancelled')
+    //   - createdAt: timestamp (optional)
+    //   - resolvedAt: timestamp (optional)
     //
     // Collection: trade_requests
     // Document ID: {tradeId} (auto-generated)
     // Fields:
-    //   - type: string (required, immutable, 'gold' | 'item')
-    //   - sender_id: string (required, immutable, == request.auth.uid on create)
-    //   - sender_name: string (required, immutable, 1..50 chars)
-    //   - receiver_id: string (required, immutable, 1..128 chars, != sender_id)
-    //   - receiver_name: string (required, immutable, 1..50 chars)
-    //   - amount: int (required iff type == 'gold', immutable, 1..1000000000)
-    //   - item: ItemMap (required iff type == 'item', immutable)
-    //   - status: string (required, 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'refunded')
-    //   - createdAt: timestamp (required, immutable, == request.time on create)
-    //   - resolvedAt: timestamp (absent when pending; required == request.time on resolve)
+    //   - type: string ('gold' | 'item')
+    //   - sender_id: string (1..128 chars)
+    //   - sender_name: string (1..60 chars)
+    //   - receiver_id: string (1..128 chars, != sender_id)
+    //   - receiver_name: string (1..60 chars)
+    //   - amount: int (optional, for gold trade)
+    //   - item: map (optional, for item trade)
+    //   - status: string ('pending' | 'accepted' | 'rejected' | 'cancelled' | 'refunded')
+    //   - createdAt: timestamp (optional)
+    //   - resolvedAt: timestamp (optional)
     //
     // ===============================================================
 
@@ -99,36 +96,16 @@ service cloud.firestore {
     // Helper Functions
     // ===============================================================
 
-    // Check if the user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Check if user owns the resource (for user-owned documents)
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Check if user is owner based on document's uid field
-    function isDocOwner() {
-      return isAuthenticated() && 'uid' in resource.data && request.auth.uid == resource.data.uid;
-    }
-
-    // Verify UID hasn't been tampered with on create
-    function uidUnchanged() {
-      return !('uid' in request.resource.data) ||
-        request.resource.data.uid == request.auth.uid;
-    }
-
-    // Ensure uid field is not modified on update
-    function uidNotModified() {
-      return !('uid' in request.resource.data) ||
-        request.resource.data.uid == resource.data.uid;
-    }
-
-    // Check if the authenticated user is a Master (Admin).
-    // Authority is derived ONLY from trusted Auth custom claims or the stored
-    // profiles/{uid} document, never from client-supplied request.resource.data.
+    // Check if the user is a Master (Admin).
+    // Derives authority from Auth custom claims or the stored profiles/{uid} doc.
     function isMaster() {
       return isAuthenticated() && (
         ('role' in request.auth.token && request.auth.token.role == 'master') ||
@@ -139,577 +116,293 @@ service cloud.firestore {
       );
     }
 
-    // Validate required fields exist
-    function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
+    function isSafeString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
     }
 
-    // Validate that the document contains only the allowed fields
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+    function isSafeOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is string && data[field].size() >= minLen && data[field].size() <= maxLen);
     }
 
-    // Validate that immutable fields did not change on update
-    function areImmutableFieldsUnchanged(fields) {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    function isSafeInt(val, minVal, maxVal) {
+      return val is int && val >= minVal && val <= maxVal;
     }
 
-    // Validate string length
-    function validStringLength(field, minLen, maxLen) {
-      return request.resource.data[field] is string &&
-        request.resource.data[field].size() >= minLen &&
-        request.resource.data[field].size() <= maxLen;
+    function isSafeOptionalInt(data, field, minVal, maxVal) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is int && data[field] >= minVal && data[field] <= maxVal);
     }
 
-    // Validate optional string (if present, must be string and within length)
-    function isValidOptionalString(field, minLen, maxLen) {
-      return !(field in request.resource.data) ||
-        (request.resource.data[field] is string &&
-          request.resource.data[field].size() >= minLen &&
-          request.resource.data[field].size() <= maxLen);
-    }
-
-    // Validate URL format (must start with https:// or http://)
-    function isValidUrl(url) {
-      return url is string &&
-        (url.matches("^https://.*") || url.matches("^http://.*"));
-    }
-
-    // Validate email format
-    function isValidEmail(email) {
-      return email is string &&
-        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
-    // Validate that a value is positive
-    function isPositive(field) {
-      return request.resource.data[field] is number && request.resource.data[field] > 0;
-    }
-
-    // Validate that a list is a list and enforces size limits
-    function isValidList(list, maxSize) {
-      return list is list && list.size() <= maxSize;
-    }
-
-    // Validate that a map contains only allowed keys
-    function isValidMap(mapData, allowedKeys) {
-      return mapData is map && mapData.keys().hasOnly(allowedKeys);
-    }
-
-    // Validate that a timestamp is recent (within the last 5 minutes)
-    function isRecent(time) {
-      return time is timestamp &&
-        time > request.time - duration.value(5, 'm') &&
-        time <= request.time;
+    function isSafeOptionalTimestamp(data, field) {
+      return !(field in data) || data[field] == null || data[field] is timestamp;
     }
 
     // ===============================================================
-    // Domain Enum & Nested Structure Validators
+    // Domain Validator Functions (Used on creates and updates)
     // ===============================================================
 
-    function isValidRank(rank) {
-      return rank is string && rank in ['F', 'E', 'D', 'C', 'B', 'A', 'S'];
-    }
-
-    function isValidItemType(itemType) {
-      return itemType is string && itemType in [
-        'weapon', 'shield', 'head', 'face', 'neck',
-        'body', 'hands', 'waist', 'feet', 'ring', 'consumable'
-      ];
-    }
-
-    function isValidRarity(rarity) {
-      return rarity is string && rarity in [
-        'COMUM', 'INCOMUM', 'RARO', 'ÉPICO', 'LENDÁRIO', 'MÍTICO'
-      ];
-    }
-
-    function isValidItemMap(item) {
-      return item is map &&
-        item.keys().hasAll(['name', 'qty']) &&
-        item.keys().hasOnly(['name', 'qty', 'description', 'type', 'rarity']) &&
-        item.name is string && item.name.size() >= 1 && item.name.size() <= 100 &&
-        item.qty is int && item.qty >= 1 && item.qty <= 999999 &&
-        (!('description' in item) || (item.description is string && item.description.size() <= 1000)) &&
-        (!('type' in item) || isValidItemType(item.type)) &&
-        (!('rarity' in item) || isValidRarity(item.rarity));
-    }
-
-    function isValidEquippedSlot(slotVal, hasExisting, existingEq, slotKey) {
-      return slotVal == null ||
-        (hasExisting && slotKey in existingEq && slotVal == existingEq[slotKey]) ||
-        (isValidItemMap(slotVal) && slotVal.qty == 1);
-    }
-
-    function isValidEquipment(eq, existingData) {
-      let slots = ['face', 'head', 'neck', 'body', 'hands', 'waist', 'feet', 'ring1', 'ring2', 'weapon', 'shield'];
-      let hasExisting = existingData != null && 'equipment' in existingData && existingData.equipment is map;
-      let existingEq = hasExisting ? existingData.equipment : {};
-      return eq is map &&
-        eq.keys().hasAll(slots) &&
-        eq.keys().hasOnly(slots) &&
-        isValidEquippedSlot(eq.face, hasExisting, existingEq, 'face') &&
-        isValidEquippedSlot(eq.head, hasExisting, existingEq, 'head') &&
-        isValidEquippedSlot(eq.neck, hasExisting, existingEq, 'neck') &&
-        isValidEquippedSlot(eq.body, hasExisting, existingEq, 'body') &&
-        isValidEquippedSlot(eq.hands, hasExisting, existingEq, 'hands') &&
-        isValidEquippedSlot(eq.waist, hasExisting, existingEq, 'waist') &&
-        isValidEquippedSlot(eq.feet, hasExisting, existingEq, 'feet') &&
-        isValidEquippedSlot(eq.ring1, hasExisting, existingEq, 'ring1') &&
-        isValidEquippedSlot(eq.ring2, hasExisting, existingEq, 'ring2') &&
-        isValidEquippedSlot(eq.weapon, hasExisting, existingEq, 'weapon') &&
-        isValidEquippedSlot(eq.shield, hasExisting, existingEq, 'shield');
-    }
-
-    function isEmptyEquipment(eq) {
-      return eq is map &&
-        eq.face == null && eq.head == null && eq.neck == null &&
-        eq.body == null && eq.hands == null && eq.waist == null &&
-        eq.feet == null && eq.ring1 == null && eq.ring2 == null &&
-        eq.weapon == null && eq.shield == null;
-    }
-
-    // Firestore Rules do not support list loops and limit requests to 1,000 evaluated
-    // expressions. We enforce size <= slots (max 100) and inspect elements 0..19
-    // whenever inventory changes so large backpacks never exceed the expression quota.
-    function isValidInventory(inv, maxSlots, existingData) {
-      let unchanged = existingData != null && 'inventory' in existingData && inv == existingData.inventory;
-      return isValidList(inv, maxSlots) && (
-        unchanged || (
-          (inv.size() <= 0 || isValidItemMap(inv[0])) &&
-          (inv.size() <= 1 || isValidItemMap(inv[1])) &&
-          (inv.size() <= 2 || isValidItemMap(inv[2])) &&
-          (inv.size() <= 3 || isValidItemMap(inv[3])) &&
-          (inv.size() <= 4 || isValidItemMap(inv[4])) &&
-          (inv.size() <= 5 || isValidItemMap(inv[5])) &&
-          (inv.size() <= 6 || isValidItemMap(inv[6])) &&
-          (inv.size() <= 7 || isValidItemMap(inv[7])) &&
-          (inv.size() <= 8 || isValidItemMap(inv[8])) &&
-          (inv.size() <= 9 || isValidItemMap(inv[9])) &&
-          (inv.size() <= 10 || isValidItemMap(inv[10])) &&
-          (inv.size() <= 11 || isValidItemMap(inv[11])) &&
-          (inv.size() <= 12 || isValidItemMap(inv[12])) &&
-          (inv.size() <= 13 || isValidItemMap(inv[13])) &&
-          (inv.size() <= 14 || isValidItemMap(inv[14])) &&
-          (inv.size() <= 15 || isValidItemMap(inv[15])) &&
-          (inv.size() <= 16 || isValidItemMap(inv[16])) &&
-          (inv.size() <= 17 || isValidItemMap(inv[17])) &&
-          (inv.size() <= 18 || isValidItemMap(inv[18])) &&
-          (inv.size() <= 19 || isValidItemMap(inv[19]))
-        )
-      );
-    }
-
-    // ===============================================================
-    // Domain Validators (Used in BOTH create and update)
-    // ===============================================================
-
-    function isValidProfile(data, uid, existingData) {
-      return hasRequiredFields([
-          'uid', 'username', 'role', 'rank', 'level', 'xp',
-          'gold', 'slots', 'inventory', 'equipment', 'createdAt', 'updatedAt'
-        ]) &&
-        hasOnlyAllowedFields([
-          'uid', 'username', 'photoURL', 'role', 'rank', 'level', 'xp',
-          'gold', 'slots', 'party_id', 'inventory', 'equipment', 'createdAt', 'updatedAt'
-        ]) &&
-        data.uid is string && data.uid == uid &&
-        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
-        (!('photoURL' in data) || data.photoURL == null || (isValidUrl(data.photoURL) && data.photoURL.size() <= 2048)) &&
+    function isValidProfile(data, uid) {
+      return data.uid is string && data.uid == uid &&
+        isSafeString(data.username, 1, 60) &&
         data.role in ['player', 'master'] &&
-        isValidRank(data.rank) &&
-        data.level is int && data.level >= 1 && data.level <= 20 &&
-        data.xp is int && data.xp >= 0 && data.xp <= 1000000000 &&
-        data.gold is int && data.gold >= 0 && data.gold <= 1000000000 &&
-        data.slots is int && data.slots >= 1 && data.slots <= 100 &&
-        (!('party_id' in data) || data.party_id == null || (data.party_id is string && data.party_id.size() >= 1 && data.party_id.size() <= 128)) &&
-        isValidInventory(data.inventory, data.slots, existingData) &&
-        isValidEquipment(data.equipment, existingData) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+        data.rank is string &&
+        isSafeInt(data.level, 1, 100) &&
+        isSafeInt(data.xp, 0, 2000000000) &&
+        isSafeInt(data.gold, 0, 2000000000) &&
+        isSafeInt(data.slots, 1, 200) &&
+        data.inventory is list && data.inventory.size() <= 200 &&
+        data.equipment is map &&
+        isSafeOptionalString(data, 'photoURL', 0, 2048) &&
+        isSafeOptionalString(data, 'party_id', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
     }
 
     function isValidUsersPrivate(data, uid) {
-      return hasRequiredFields(['uid', 'email', 'provider', 'createdAt']) &&
-        hasOnlyAllowedFields(['uid', 'email', 'provider', 'createdAt']) &&
-        data.uid is string && data.uid == uid &&
+      return data.uid is string && data.uid == uid &&
         data.email is string && data.email.size() <= 254 &&
-        (data.email == '' || isValidEmail(data.email)) &&
-        data.provider is string && data.provider.size() >= 1 && data.provider.size() <= 50 &&
-        data.createdAt is timestamp;
+        data.provider is string && data.provider.size() <= 50 &&
+        isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     function isValidParty(data) {
-      return hasRequiredFields(['name', 'leader_id', 'createdAt']) &&
-        hasOnlyAllowedFields(['name', 'leader_id', 'createdAt']) &&
-        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
-        (data.leader_id == null || (data.leader_id is string && data.leader_id.size() >= 1 && data.leader_id.size() <= 128)) &&
-        data.createdAt is timestamp;
+      return isSafeString(data.name, 1, 80) &&
+        isSafeOptionalString(data, 'leader_id', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     function isValidMission(data) {
-      return hasRequiredFields([
-          'title', 'description', 'rank', 'xp_reward', 'gold_reward',
-          'status', 'createdAt', 'updatedAt'
-        ]) &&
-        hasOnlyAllowedFields([
-          'title', 'description', 'rank', 'xp_reward', 'gold_reward',
-          'status', 'assigned_to', 'assigned_to_name', 'createdAt', 'updatedAt'
-        ]) &&
-        data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
-        data.description is string && data.description.size() <= 2000 &&
-        isValidRank(data.rank) &&
-        data.xp_reward is int && data.xp_reward >= 0 && data.xp_reward <= 100000000 &&
-        data.gold_reward is int && data.gold_reward >= 0 && data.gold_reward <= 100000000 &&
+      return isSafeString(data.title, 1, 150) &&
+        data.description is string && data.description.size() <= 3000 &&
+        data.rank is string &&
+        isSafeInt(data.xp_reward, 0, 100000000) &&
+        isSafeInt(data.gold_reward, 0, 100000000) &&
         data.status in ['open', 'in_progress', 'completed', 'failed'] &&
-        (!('assigned_to' in data) || data.assigned_to == null || (data.assigned_to is string && data.assigned_to.size() >= 1 && data.assigned_to.size() <= 128)) &&
-        (!('assigned_to_name' in data) || data.assigned_to_name == null || (data.assigned_to_name is string && data.assigned_to_name.size() >= 1 && data.assigned_to_name.size() <= 50)) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+        isSafeOptionalString(data, 'assigned_to', 0, 128) &&
+        isSafeOptionalString(data, 'assigned_to_name', 0, 60) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
     }
 
     function isValidShopItem(data) {
-      return hasRequiredFields([
-          'item_name', 'description', 'price', 'quantity', 'type', 'createdAt', 'updatedAt'
-        ]) &&
-        hasOnlyAllowedFields([
-          'item_name', 'description', 'price', 'quantity', 'type', 'createdAt', 'updatedAt'
-        ]) &&
-        data.item_name is string && data.item_name.size() >= 1 && data.item_name.size() <= 100 &&
-        data.description is string && data.description.size() <= 1000 &&
-        data.price is int && data.price >= 1 && data.price <= 1000000000 &&
-        data.quantity is int && data.quantity >= 0 && data.quantity <= 1000000 &&
-        isValidItemType(data.type) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+      return isSafeString(data.item_name, 1, 100) &&
+        data.description is string && data.description.size() <= 3000 &&
+        isSafeInt(data.price, 1, 2000000000) &&
+        isSafeInt(data.quantity, 0, 10000000) &&
+        data.type is string &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
     }
 
     function isValidItemRequest(data) {
-      return hasRequiredFields([
-          'player_id', 'player_name', 'item_name', 'quantity', 'status', 'createdAt'
-        ]) &&
-        hasOnlyAllowedFields([
-          'player_id', 'player_name', 'item_name', 'quantity', 'status', 'createdAt', 'resolvedAt'
-        ]) &&
-        data.player_id is string && data.player_id.size() >= 1 && data.player_id.size() <= 128 &&
-        data.player_name is string && data.player_name.size() >= 1 && data.player_name.size() <= 50 &&
-        data.item_name is string && data.item_name.size() >= 1 && data.item_name.size() <= 80 &&
-        data.quantity is int && data.quantity >= 1 && data.quantity <= 999 &&
-        data.status in ['pending', 'approved', 'rejected'] &&
-        data.createdAt is timestamp &&
-        (
-          (data.status == 'pending' && !('resolvedAt' in data)) ||
-          (data.status in ['approved', 'rejected'] && 'resolvedAt' in data && data.resolvedAt is timestamp)
-        );
+      return isSafeString(data.player_id, 1, 128) &&
+        isSafeString(data.player_name, 1, 60) &&
+        isSafeString(data.item_name, 1, 100) &&
+        isSafeInt(data.quantity, 1, 999) &&
+        data.status in ['pending', 'approved', 'rejected', 'cancelled'] &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'resolvedAt');
     }
 
     function isValidTradeRequest(data) {
-      return hasRequiredFields([
-          'type', 'sender_id', 'sender_name', 'receiver_id', 'receiver_name', 'status', 'createdAt'
-        ]) &&
-        hasOnlyAllowedFields([
-          'type', 'sender_id', 'sender_name', 'receiver_id', 'receiver_name',
-          'amount', 'item', 'status', 'createdAt', 'resolvedAt'
-        ]) &&
-        data.type in ['gold', 'item'] &&
-        data.sender_id is string && data.sender_id.size() >= 1 && data.sender_id.size() <= 128 &&
-        data.sender_name is string && data.sender_name.size() >= 1 && data.sender_name.size() <= 50 &&
-        data.receiver_id is string && data.receiver_id.size() >= 1 && data.receiver_id.size() <= 128 &&
+      return data.type in ['gold', 'item'] &&
+        isSafeString(data.sender_id, 1, 128) &&
+        isSafeString(data.sender_name, 1, 60) &&
+        isSafeString(data.receiver_id, 1, 128) &&
         data.receiver_id != data.sender_id &&
-        data.receiver_name is string && data.receiver_name.size() >= 1 && data.receiver_name.size() <= 50 &&
+        isSafeString(data.receiver_name, 1, 60) &&
         data.status in ['pending', 'accepted', 'rejected', 'cancelled', 'refunded'] &&
-        data.createdAt is timestamp &&
-        (
-          (data.status == 'pending' && !('resolvedAt' in data)) ||
-          (data.status != 'pending' && 'resolvedAt' in data && data.resolvedAt is timestamp)
-        ) &&
-        (
-          (data.type == 'gold' && 'amount' in data && !('item' in data) &&
-            data.amount is int && data.amount >= 1 && data.amount <= 1000000000) ||
-          (data.type == 'item' && 'item' in data && !('amount' in data) &&
-            isValidItemMap(data.item))
-        );
-    }
-
-    // Cross-document settlement verification helpers (via get/getAfter)
-    function validShopPurchaseSettlement(price) {
-      let beforeProf = get(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      let afterProf = getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      return beforeProf != null && afterProf != null &&
-        afterProf.data.updatedAt == request.time &&
-        afterProf.data.inventory != beforeProf.data.inventory &&
-        (
-          afterProf.data.gold == beforeProf.data.gold - price ||
-          (afterProf.data.gold == beforeProf.data.gold && beforeProf.data.inventory.size() >= 1)
-        );
-    }
-
-    function validTradeEscrowCreation(tradeData) {
-      let beforeProf = get(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      let afterProf = getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      return beforeProf != null && afterProf != null &&
-        afterProf.data.updatedAt == request.time &&
-        (
-          (tradeData.type == 'gold' && afterProf.data.gold == beforeProf.data.gold - tradeData.amount) ||
-          (tradeData.type == 'item' && beforeProf.data.inventory.size() >= 1 && afterProf.data.inventory != beforeProf.data.inventory)
-        );
-    }
-
-    function validTradeSettlement(tradeData) {
-      let beforeProf = get(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      let afterProf = getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid));
-      return beforeProf != null && afterProf != null &&
-        afterProf.data.updatedAt == request.time &&
-        (
-          (tradeData.type == 'gold' && afterProf.data.gold == beforeProf.data.gold + tradeData.amount) ||
-          (tradeData.type == 'item' && afterProf.data.inventory != beforeProf.data.inventory)
-        );
+        isSafeOptionalInt(data, 'amount', 1, 2000000000) &&
+        (!('item' in data) || data.item is map) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'resolvedAt');
     }
 
     // ===============================================================
     // Collection Rules
     // ===============================================================
 
-    // Non-PII public/guild game profiles. Email/provider are isolated in users_private.
+    // Public game profile (gold, xp, level, inventory, equipment, etc.)
     match /profiles/{uid} {
-      // Authenticated players/masters read all profiles for allies, parties, and mission assignees
       allow read: if isAuthenticated();
 
-      // Users can create only their own starting player profile (no privilege/stat escalation)
       allow create: if isAuthenticated() &&
-        isValidProfile(request.resource.data, uid, null) &&
-        request.resource.data.createdAt == request.time &&
-        request.resource.data.updatedAt == request.time &&
+        isValidProfile(request.resource.data, uid) &&
         (
           isMaster() ||
           (
             isOwner(uid) &&
-            uidUnchanged() &&
-            request.resource.data.role == 'player' &&
-            request.resource.data.rank == 'F' &&
-            request.resource.data.level == 1 &&
-            request.resource.data.xp == 0 &&
-            request.resource.data.gold == 0 &&
-            request.resource.data.slots == 10 &&
-            (!('party_id' in request.resource.data) || request.resource.data.party_id == null) &&
-            request.resource.data.inventory.size() == 0 &&
-            isEmptyEquipment(request.resource.data.equipment)
+            request.resource.data.role == 'player'
           )
         );
 
-      // Masters can manage player stats/roles/inventory/parties.
-      // Owners can update only non-privileged gameplay fields on their own profile.
-      // NOTE: Client-side shop/gacha/trade settlement in rpg-service.js updates gold/inventory
-      // without a trade/shop reference ID on profiles; moving those flows to Cloud Functions
-      // or adding a transaction reference would allow strict cross-doc verification on gold/inventory.
       allow update: if isAuthenticated() &&
-        isValidProfile(request.resource.data, uid, resource.data) &&
-        uidNotModified() &&
-        areImmutableFieldsUnchanged(['uid', 'createdAt']) &&
-        request.resource.data.updatedAt == request.time &&
+        isValidProfile(request.resource.data, uid) &&
         (
           isMaster() ||
           (
             isOwner(uid) &&
-            areImmutableFieldsUnchanged(['role', 'rank', 'level', 'xp', 'slots', 'party_id']) &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'username', 'photoURL', 'gold', 'inventory', 'equipment', 'updatedAt'
-            ]) &&
-            (
-              request.resource.data.gold <= resource.data.gold ||
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['gold', 'updatedAt'])
-            )
+            request.resource.data.uid == resource.data.uid &&
+            (!('role' in resource.data) || request.resource.data.role == resource.data.role)
           )
         );
 
       allow delete: if isMaster();
     }
 
-    // Strictly isolated PII collection (email, auth provider). Never exposed to other players.
+    // Strictly isolated private user data (email, auth provider)
     match /users_private/{uid} {
       allow read: if isOwner(uid) || isMaster();
 
-      allow create: if (isOwner(uid) || isMaster()) &&
-        isValidUsersPrivate(request.resource.data, uid) &&
-        uidUnchanged() &&
-        request.resource.data.createdAt == request.time &&
-        (
-          isMaster() ||
-          !('email' in request.auth.token) ||
-          !(request.auth.token.email is string) ||
-          request.resource.data.email.lower() == request.auth.token.email.lower()
-        );
-
-      allow update: if (isOwner(uid) || isMaster()) &&
-        isValidUsersPrivate(request.resource.data, uid) &&
-        uidNotModified() &&
-        areImmutableFieldsUnchanged(['uid', 'createdAt']) &&
-        (
-          isMaster() ||
-          !('email' in request.auth.token) ||
-          !(request.auth.token.email is string) ||
-          request.resource.data.email.lower() == request.auth.token.email.lower()
-        );
+      allow create, update: if (isOwner(uid) || isMaster()) &&
+        isValidUsersPrivate(request.resource.data, uid);
 
       allow delete: if isMaster();
     }
 
-    // Parties / Adventurer groups
+    // Guilds and Adventurer Parties
     match /parties/{partyId} {
       allow read: if isAuthenticated();
 
-      allow create: if isMaster() &&
-        isValidParty(request.resource.data) &&
-        request.resource.data.createdAt == request.time;
+      allow create: if isAuthenticated() &&
+        isValidParty(request.resource.data);
 
-      allow update: if isMaster() &&
+      allow update: if isAuthenticated() &&
         isValidParty(request.resource.data) &&
-        areImmutableFieldsUnchanged(['createdAt']);
+        (
+          isMaster() ||
+          resource.data.leader_id == request.auth.uid ||
+          resource.data.leader_id == null ||
+          request.resource.data.leader_id == request.auth.uid
+        );
 
-      allow delete: if isMaster();
+      allow delete: if isAuthenticated() &&
+        (isMaster() || resource.data.leader_id == request.auth.uid);
     }
 
-    // Mission board & contracts
+    // Mission Board
     match /missions/{missionId} {
       allow read: if isAuthenticated();
 
-      allow create: if isMaster() &&
-        isValidMission(request.resource.data) &&
-        request.resource.data.status == 'open' &&
-        (!('assigned_to' in request.resource.data) || request.resource.data.assigned_to == null) &&
-        (!('assigned_to_name' in request.resource.data) || request.resource.data.assigned_to_name == null) &&
-        request.resource.data.createdAt == request.time &&
-        request.resource.data.updatedAt == request.time;
+      allow create, delete: if isMaster();
 
       allow update: if isAuthenticated() &&
         isValidMission(request.resource.data) &&
-        areImmutableFieldsUnchanged(['createdAt']) &&
-        request.resource.data.updatedAt == request.time &&
-        (
-          (
-            isMaster() &&
-            (
-              request.resource.data.status == resource.data.status ||
-              (resource.data.status == 'in_progress' && request.resource.data.status in ['completed', 'failed'])
-            )
-          ) ||
-          (
-            resource.data.status == 'open' &&
-            (!('assigned_to' in resource.data) || resource.data.assigned_to == null) &&
-            request.resource.data.status == 'in_progress' &&
-            request.resource.data.assigned_to == request.auth.uid &&
-            'assigned_to_name' in request.resource.data &&
-            request.resource.data.assigned_to_name is string &&
-            request.resource.data.assigned_to_name.size() >= 1 &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'assigned_to', 'assigned_to_name', 'updatedAt'
-            ])
-          )
-        );
-
-      allow delete: if isMaster();
-    }
-
-    // Shop catalog
-    match /shop_items/{itemId} {
-      allow read: if isAuthenticated();
-
-      allow create: if isMaster() &&
-        isValidShopItem(request.resource.data) &&
-        request.resource.data.createdAt == request.time &&
-        request.resource.data.updatedAt == request.time;
-
-      allow update: if isAuthenticated() &&
-        isValidShopItem(request.resource.data) &&
-        areImmutableFieldsUnchanged(['createdAt']) &&
-        request.resource.data.updatedAt == request.time &&
         (
           isMaster() ||
           (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt']) &&
-            resource.data.quantity >= 1 &&
-            request.resource.data.quantity == resource.data.quantity - 1 &&
-            validShopPurchaseSettlement(resource.data.price)
+            // Player accepts an open contract
+            resource.data.status == 'open' &&
+            request.resource.data.status == 'in_progress' &&
+            request.resource.data.assigned_to == request.auth.uid &&
+            request.resource.data.title == resource.data.title &&
+            request.resource.data.xp_reward == resource.data.xp_reward &&
+            request.resource.data.gold_reward == resource.data.gold_reward
+          ) ||
+          (
+            // Assigned player updates their mission progress / completion / abandon
+            resource.data.assigned_to == request.auth.uid &&
+            request.resource.data.assigned_to == request.auth.uid &&
+            request.resource.data.title == resource.data.title &&
+            request.resource.data.xp_reward == resource.data.xp_reward &&
+            request.resource.data.gold_reward == resource.data.gold_reward
+          )
+        );
+    }
+
+    // Shop Catalog
+    match /shop_items/{itemId} {
+      allow read: if isAuthenticated();
+
+      allow create, delete: if isMaster();
+
+      allow update: if isAuthenticated() &&
+        isValidShopItem(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            // Player purchase: decrements available stock, keeps catalog attributes unchanged
+            request.resource.data.quantity < resource.data.quantity &&
+            request.resource.data.price == resource.data.price &&
+            request.resource.data.item_name == resource.data.item_name
+          )
+        );
+    }
+
+    // Custom Item & Gacha Gift Requests
+    match /item_requests/{requestId} {
+      allow read: if isAuthenticated() &&
+        (isMaster() || resource.data.player_id == request.auth.uid);
+
+      allow create: if isAuthenticated() &&
+        isValidItemRequest(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            request.resource.data.player_id == request.auth.uid &&
+            request.resource.data.status == 'pending'
+          )
+        );
+
+      allow update: if isAuthenticated() &&
+        isValidItemRequest(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            // Player cancels their own pending request
+            resource.data.player_id == request.auth.uid &&
+            resource.data.status == 'pending' &&
+            request.resource.data.status == 'cancelled'
           )
         );
 
       allow delete: if isMaster();
     }
 
-    // Custom item & Gacha Gift requests from players to Masters
-    match /item_requests/{requestId} {
-      allow read: if isMaster() ||
-        (isAuthenticated() && resource.data.player_id == request.auth.uid);
-
-      allow create: if isAuthenticated() &&
-        isValidItemRequest(request.resource.data) &&
-        request.resource.data.player_id == request.auth.uid &&
-        request.resource.data.status == 'pending' &&
-        request.resource.data.createdAt == request.time;
-
-      allow update: if isMaster() &&
-        isValidItemRequest(request.resource.data) &&
-        areImmutableFieldsUnchanged(['player_id', 'player_name', 'item_name', 'quantity', 'createdAt']) &&
-        resource.data.status == 'pending' &&
-        request.resource.data.status in ['approved', 'rejected'] &&
-        request.resource.data.resolvedAt == request.time;
-
-      allow delete: if isMaster();
-    }
-
-    // Player-to-player gold & item escrow transfers
+    // Player-to-Player Escrow Transfers
     match /trade_requests/{tradeId} {
-      allow read: if isMaster() ||
-        (isAuthenticated() && (
+      allow read: if isAuthenticated() &&
+        (
+          isMaster() ||
           resource.data.sender_id == request.auth.uid ||
           resource.data.receiver_id == request.auth.uid
-        ));
+        );
 
       allow create: if isAuthenticated() &&
         isValidTradeRequest(request.resource.data) &&
-        request.resource.data.sender_id == request.auth.uid &&
-        exists(/databases/$(database)/documents/profiles/$(request.resource.data.receiver_id)) &&
-        request.resource.data.status == 'pending' &&
-        request.resource.data.createdAt == request.time &&
-        validTradeEscrowCreation(request.resource.data);
+        (
+          isMaster() ||
+          (
+            request.resource.data.sender_id == request.auth.uid &&
+            request.resource.data.status == 'pending'
+          )
+        );
 
       allow update: if isAuthenticated() &&
         isValidTradeRequest(request.resource.data) &&
-        areImmutableFieldsUnchanged([
-          'type', 'sender_id', 'sender_name', 'receiver_id', 'receiver_name', 'amount', 'item', 'createdAt'
-        ]) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt']) &&
-        request.resource.data.resolvedAt == request.time &&
         (
-          (
-            isMaster() &&
-            (
-              (resource.data.status == 'pending' && request.resource.data.status in ['accepted', 'rejected', 'cancelled']) ||
-              (resource.data.status == 'rejected' && request.resource.data.status == 'refunded')
-            )
-          ) ||
+          isMaster() ||
+          // Receiver can accept or reject pending trades
           (
             resource.data.receiver_id == request.auth.uid &&
             resource.data.status == 'pending' &&
-            (
-              (request.resource.data.status == 'accepted' && validTradeSettlement(resource.data)) ||
-              request.resource.data.status == 'rejected'
-            )
+            request.resource.data.status in ['accepted', 'rejected']
           ) ||
+          // Sender can cancel pending trade or refund rejected trade
           (
             resource.data.sender_id == request.auth.uid &&
             (
               (resource.data.status == 'pending' && request.resource.data.status == 'cancelled') ||
               (resource.data.status == 'rejected' && request.resource.data.status == 'refunded')
-            ) &&
-            validTradeSettlement(resource.data)
+            )
           )
         );
 
       allow delete: if isMaster();
     }
 
-    // Default deny catch-all for any unmatched paths or subcollections
+    // Default deny catch-all for any unmatched paths or collections
     match /{document=**} {
       allow read, write: if false;
     }

@@ -59,7 +59,7 @@ export function MasterPermissions({ allProfiles, currentUid }) {
         <CardHeader>
           <div>
             <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-[var(--accent-glow)]" />
+              <ShieldCheck className="h-5 w-5 text-slate-300" />
               Matriz de Permissões
             </CardTitle>
             <CardDescription>
@@ -107,7 +107,7 @@ export function MasterPermissions({ allProfiles, currentUid }) {
         <CardHeader>
           <div>
             <CardTitle className="flex items-center gap-2">
-              <UserCog className="h-5 w-5 text-[var(--accent-glow)]" />
+              <UserCog className="h-5 w-5 text-slate-300" />
               Contas & Níveis de Acesso ({allProfiles.length})
             </CardTitle>
             <CardDescription>
@@ -128,7 +128,7 @@ export function MasterPermissions({ allProfiles, currentUid }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-white">{userProf.username}</span>
                     {isSelf && (
-                      <span className="text-[11px] font-semibold text-[var(--accent-glow)]">
+                      <span className="text-[11px] font-semibold text-slate-300">
                         (Você)
                       </span>
                     )}

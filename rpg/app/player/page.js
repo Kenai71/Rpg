@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { orderBy, where } from 'firebase/firestore';
-import { Award } from 'lucide-react';
+import { Award, Backpack, Scroll, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { isFirebaseConfigured } from '../../lib/firebase';
-import { requestRouletteGift, subscribeCollection } from '../../lib/rpg-service';
+import { openGachaGiftTx, requestRouletteGift, subscribeCollection } from '../../lib/rpg-service';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { formatNumber } from '../../lib/utils';
 import { PageLoadingSkeleton } from '../../components/ui/Skeleton';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
@@ -15,6 +16,7 @@ import { PlayerMissions } from '../../components/player/PlayerMissions';
 import { PlayerShop } from '../../components/player/PlayerShop';
 import { PlayerAllies } from '../../components/player/PlayerAllies';
 import { PlayerCharacter } from '../../components/player/PlayerCharacter';
+import { RouletteModal } from '../../components/player/RouletteModal';
 
 export default function PlayerPage() {
   const { user, profile, loading, error, logout } = useAuthGuard();
@@ -27,6 +29,7 @@ export default function PlayerPage() {
   const [incomingTrades, setIncomingTrades] = useState([]);
   const [outgoingTrades, setOutgoingTrades] = useState([]);
   const [requestingSpin, setRequestingSpin] = useState(false);
+  const [rouletteOpen, setRouletteOpen] = useState(false);
 
   const [levelUpTo, setLevelUpTo] = useState(null);
   const prevLevelRef = useRef(null);
@@ -96,6 +99,66 @@ export default function PlayerPage() {
     [incomingTrades]
   );
 
+  const commandItems = useMemo(() => {
+    const navEntries = [
+      { id: 'tab-missions', group: 'Navegação', label: 'Ir para Mural de Missões', icon: Scroll, onSelect: () => setTab('missions') },
+      { id: 'tab-shop', group: 'Navegação', label: 'Ir para Loja do Reino', icon: ShoppingBag, onSelect: () => setTab('shop') },
+      { id: 'tab-players', group: 'Navegação', label: 'Ir para Aliados & Trocas', icon: Users, onSelect: () => setTab('players') },
+      { id: 'tab-inv', group: 'Navegação', label: 'Ir para Ficha & Mochila', icon: Backpack, onSelect: () => setTab('inv') },
+    ];
+
+    const missionEntries = missions
+      .filter((m) => m.status === 'open')
+      .slice(0, 6)
+      .map((m) => ({
+        id: `m-${m.id}`,
+        group: 'Missões Abertas',
+        label: m.title,
+        meta: `Rank ${m.rank} • ${formatNumber(m.gold_reward)}G`,
+        icon: Scroll,
+        onSelect: () => setTab('missions'),
+      }));
+
+    const shopEntries = shopItems
+      .filter((s) => Number(s.quantity || 0) > 0)
+      .slice(0, 6)
+      .map((s) => ({
+        id: `s-${s.id}`,
+        group: 'Catálogo da Loja',
+        label: s.item_name,
+        meta: `${formatNumber(s.price)}G`,
+        icon: ShoppingBag,
+        onSelect: () => setTab('shop'),
+      }));
+
+    const allyEntries = playerAllies.slice(0, 6).map((a) => ({
+      id: `a-${a.uid}`,
+      group: 'Aliados',
+      label: a.username,
+      meta: `Rank ${a.rank} • LVL ${a.level}`,
+      icon: Users,
+      onSelect: () => setTab('players'),
+    }));
+
+    return [...navEntries, ...missionEntries, ...shopEntries, ...allyEntries];
+  }, [missions, shopItems, playerAllies]);
+
+  const gachaGiftsCount = useMemo(() => {
+    if (!profile?.inventory) return 0;
+    return profile.inventory
+      .filter((i) => i.name === 'Gacha Gift')
+      .reduce((acc, i) => acc + (Number(i.qty) || 1), 0);
+  }, [profile?.inventory]);
+
+  const handleSpinWithGift = async () => {
+    if (!profile) throw new Error('Perfil não encontrado.');
+    const giftIndex = profile.inventory?.findIndex((i) => i.name === 'Gacha Gift');
+    if (giftIndex === -1 || giftIndex === undefined) {
+      throw new Error('Você não possui nenhum Gacha Gift na mochila!');
+    }
+    return await openGachaGiftTx(profile.uid, giftIndex);
+  };
+
   const handleRequestSpin = async () => {
     if (!profile) return;
     setRequestingSpin(true);
@@ -131,11 +194,15 @@ export default function PlayerPage() {
       activeTab={tab}
       onSelectTab={setTab}
       pendingTradesCount={pendingTradesCount}
+      commandItems={commandItems}
       onRequestSpin={handleRequestSpin}
       requestingSpin={requestingSpin}
+      onOpenRoulette={() => setRouletteOpen(true)}
       onLogout={logout}
     >
-      {tab === 'missions' && <PlayerMissions missions={missions} profile={profile} />}
+      {tab === 'missions' && (
+        <PlayerMissions missions={missions} profile={profile} hasParty={Boolean(myParty)} />
+      )}
 
       {tab === 'shop' && <PlayerShop shopItems={shopItems} profile={profile} />}
 
@@ -149,7 +216,19 @@ export default function PlayerPage() {
         />
       )}
 
-      {tab === 'inv' && <PlayerCharacter profile={profile} />}
+      {tab === 'inv' && (
+        <PlayerCharacter profile={profile} onOpenRoulette={() => setRouletteOpen(true)} />
+      )}
+
+      {/* Roleta Rúnica Centralizada */}
+      <RouletteModal
+        open={rouletteOpen}
+        onClose={() => setRouletteOpen(false)}
+        giftsCount={gachaGiftsCount}
+        onSpinWithGift={handleSpinWithGift}
+        onRequestGift={handleRequestSpin}
+        requestingGift={requestingSpin}
+      />
 
       <Modal
         open={Boolean(levelUpTo)}

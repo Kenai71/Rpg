@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import {
   createUserWithEmailAndPassword,
@@ -14,40 +15,49 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   AlertCircle,
-  Compass,
   Eye,
   EyeOff,
+  HelpCircle,
   Lock,
   LogIn,
   Mail,
-  Scroll,
-  Shield,
-  ShoppingBag,
   User,
   UserPlus,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { auth, googleProvider, isFirebaseConfigured } from '../../lib/firebase';
 import { ensureUserProfile } from '../../lib/rpg-service';
 import Logo from '../components/Logo';
 import { Button } from '../../components/ui/Button';
-import { FormField, Input } from '../../components/ui/Input';
-import { ThemeSwitcher } from '../../components/ui/ThemeSwitcher';
+import { FormField } from '../../components/ui/Input';
+import { Modal } from '../../components/ui/Modal';
 
+const InteractiveD20Scene = dynamic(() => import('../components/InteractiveD20Scene'), {
+  ssr: false,
+});
+
+// Esquemas de validação Zod
 const loginSchema = z.object({
   email: z.string().email('Informe um e-mail válido.'),
   password: z.string().min(6, 'A senha precisa ter pelo menos 6 caracteres.'),
 });
 
-const registerSchema = z.object({
-  username: z
-    .string()
-    .trim()
-    .min(2, 'O nome do personagem precisa ter pelo menos 2 caracteres.')
-    .max(40, 'Máximo de 40 caracteres.'),
-  email: z.string().email('Informe um e-mail válido.'),
-  password: z.string().min(6, 'A senha precisa ter pelo menos 6 caracteres.'),
-});
+const registerSchema = z
+  .object({
+    username: z
+      .string()
+      .trim()
+      .min(2, 'O nome do personagem precisa ter pelo menos 2 caracteres.')
+      .max(40, 'Máximo de 40 caracteres.'),
+    email: z.string().email('Informe um e-mail válido.'),
+    password: z.string().min(6, 'A senha precisa ter pelo menos 6 caracteres.'),
+    confirmPassword: z.string().min(1, 'Confirme sua senha.'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'As senhas não coincidem.',
+    path: ['confirmPassword'],
+  });
 
 function mapFirebaseAuthError(err) {
   const code = err?.code || '';
@@ -59,23 +69,23 @@ function mapFirebaseAuthError(err) {
     case 'auth/email-already-in-use':
       return 'Este e-mail já está cadastrado. Faça login para continuar.';
     case 'auth/weak-password':
-      return 'Senha muito fraca. Use pelo menos 6 caracteres.';
+      return 'Senha fraca. Use pelo menos 6 caracteres.';
     case 'auth/popup-closed-by-user':
       return 'O pop-up de login do Google foi fechado antes de concluir.';
     case 'auth/cancelled-popup-request':
-      return 'Já existe uma janela de login em andamento.';
+      return 'Já existe uma solicitação de login em andamento.';
     case 'auth/unauthorized-domain':
-      return 'Este domínio ainda não está autorizado no Firebase Authentication (Settings > Authorized domains).';
+      return 'Domínio não autorizado no Firebase Authentication (Adicione o domínio no console do Firebase).';
     case 'auth/operation-not-allowed':
-      return 'Este provedor de login não está habilitado no Firebase Authentication.';
+      return 'Provedor Google ou Email/Senha não habilitado no console do Firebase.';
     case 'auth/too-many-requests':
-      return 'Muitas tentativas seguidas. Aguarde alguns instantes e tente novamente.';
+      return 'Muitas tentativas. Aguarde instantes e tente novamente.';
     default:
-      return err?.message || 'Não foi possível autenticar. Tente novamente.';
+      return err?.message || 'Falha na autenticação. Tente novamente.';
   }
 }
 
-function GoogleIcon() {
+function GoogleLogoSvg() {
   return (
     <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -101,9 +111,12 @@ function GoogleIcon() {
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState('login'); // 'login' | 'register'
+  const [showEmailForm, setShowEmailForm] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [authError, setAuthError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
 
   const isLogin = mode === 'login';
 
@@ -114,7 +127,12 @@ export default function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm({
     resolver: zodResolver(isLogin ? loginSchema : registerSchema),
-    defaultValues: { username: '', email: '', password: '' },
+    defaultValues: {
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    },
   });
 
   useEffect(() => {
@@ -129,13 +147,19 @@ export default function LoginPage() {
 
   const switchMode = (nextMode) => {
     setMode(nextMode);
+    setShowEmailForm(nextMode === 'register');
     setAuthError('');
-    reset({ username: '', email: '', password: '' });
+    reset({
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    });
   };
 
   const handleGoogleSignIn = async () => {
     if (!isFirebaseConfigured || !auth) {
-      setAuthError('Conexão com o Firebase não configurada.');
+      setAuthError('Firebase não configurado no arquivo .env.');
       return;
     }
     setAuthError('');
@@ -143,7 +167,7 @@ export default function LoginPage() {
     try {
       const credential = await signInWithPopup(auth, googleProvider);
       await ensureUserProfile(credential.user);
-      toast.success('Autenticação com Google realizada!');
+      toast.success('Entrando no Astralis...');
       router.replace('/');
     } catch (err) {
       const message = mapFirebaseAuthError(err);
@@ -156,7 +180,7 @@ export default function LoginPage() {
 
   const onSubmit = async (values) => {
     if (!isFirebaseConfigured || !auth) {
-      setAuthError('Conexão com o Firebase não configurada.');
+      setAuthError('Firebase não configurado.');
       return;
     }
     setAuthError('');
@@ -164,13 +188,14 @@ export default function LoginPage() {
       if (isLogin) {
         const cred = await signInWithEmailAndPassword(auth, values.email, values.password);
         await ensureUserProfile(cred.user);
-        toast.success('Bem-vindo(a) de volta ao Reino!');
+        toast.success('Bem-vindo(a) de volta!');
         router.replace('/');
       } else {
         const cred = await createUserWithEmailAndPassword(auth, values.email, values.password);
-        await updateProfile(cred.user, { displayName: values.username.trim() });
-        await ensureUserProfile(cred.user, values.username.trim());
-        toast.success('Personagem criado! Entrando na taverna...');
+        const displayName = values.username.trim();
+        await updateProfile(cred.user, { displayName });
+        await ensureUserProfile(cred.user, displayName);
+        toast.success(`Personagem ${displayName} criado! Entrando no reino...`);
         router.replace('/');
       }
     } catch (err) {
@@ -180,225 +205,340 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen realm-backdrop flex flex-col justify-between p-4 sm:p-6 lg:p-10 relative">
-      {/* Top Bar */}
-      <header className="w-full max-w-6xl mx-auto flex items-center justify-between gap-4">
-        <Logo size={38} />
-        <ThemeSwitcher />
-      </header>
+    <main className="relative min-h-screen w-full overflow-hidden select-none">
+      {/* =========================================================================
+          ATMOSFERA CÓSMICA: Malha de Gradientes Radiais + Bolinhas Finas e Espaçadas (26px)
+         ========================================================================= */}
+      <div className="fixed inset-0 z-0 pointer-events-none" aria-hidden="true">
+        {/* Gradiente Cósmico Multi-Stop */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(90% 70% at 75% 20%, rgba(139, 92, 246, 0.22), transparent 60%), radial-gradient(80% 80% at 20% 25%, rgba(56, 189, 248, 0.20), transparent 55%), radial-gradient(100% 80% at 65% 85%, rgba(244, 63, 94, 0.12), transparent 55%), linear-gradient(160deg, #07080c 0%, #0d0f15 100%)',
+          }}
+        />
+        {/* Véu escurecido sutil */}
+        <div className="absolute inset-0 bg-black/35" />
+        {/* Micro-grade geométrica: bolinhas fininhas (0.8px) e mais espaçadas (26px) */}
+        <div
+          className="absolute inset-0 opacity-75"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle, rgba(255, 255, 255, 0.065) 0.8px, transparent 0.8px)',
+            backgroundSize: '26px 26px',
+            backgroundPosition: '0 0, 13px 13px',
+          }}
+        />
+      </div>
 
-      {/* Main Content */}
-      <div className="w-full max-w-6xl mx-auto my-8 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-        {/* Realm Highlights (Desktop Left / Mobile Top summary) */}
-        <section className="lg:col-span-6 space-y-6 text-center lg:text-left">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-strong)] bg-[var(--surface-1)]/80 px-3.5 py-1.5 text-xs font-semibold text-[var(--accent-glow)]">
-            <Compass className="h-3.5 w-3.5" aria-hidden="true" />
-            Crônicas & Contratos em Tempo Real
-          </div>
-
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white leading-[1.12]">
-            Gerencie sua guilda, missões e tesouros em um só lugar.
-          </h1>
-
-          <p className="text-sm sm:text-base text-slate-400 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-            Acesse o Mural de Missões como aventureiro ou comande a economia, grupos e recompensas
-            como Mestre do Reino com sincronização instantânea.
-          </p>
-
-          <div className="hidden sm:grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-left">
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)]/70 p-4 space-y-2">
-              <div className="h-8 w-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-glow)] flex items-center justify-center">
-                <Scroll className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <p className="text-xs font-bold text-slate-100">Mural de Missões</p>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Contratos por Rank com divisão automática para grupos.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)]/70 p-4 space-y-2">
-              <div className="h-8 w-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-glow)] flex items-center justify-center">
-                <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <p className="text-xs font-bold text-slate-100">Loja & Runas</p>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Equipamentos por raridade compráveis com ouro ou runas.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)]/70 p-4 space-y-2">
-              <div className="h-8 w-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-glow)] flex items-center justify-center">
-                <Shield className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <p className="text-xs font-bold text-slate-100">Ficha & Mochila</p>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Equipamento interativo por slots e trocas entre aliados.
-              </p>
-            </div>
-          </div>
+      {/* =========================================================================
+          LAYOUT SPLIT-SCREEN (Cena Interativa 3D + Coluna de Login)
+         ========================================================================= */}
+      <div className="relative z-10 flex min-h-screen flex-col md:landscape:flex-row">
+        {/* LADO VISUAL: Cena Interativa 3D do Dado de 20 Lados (D20) */}
+        <section
+          className="w-full md:landscape:w-[54%] lg:w-[56%] xl:w-[58%] flex items-center justify-center p-4 lg:p-8 relative min-h-[380px] md:landscape:min-h-screen"
+          aria-label="Cena Interativa do Astralis RPG"
+        >
+          <InteractiveD20Scene className="w-full h-full max-w-2xl mx-auto" />
         </section>
 
-        {/* Auth Card */}
-        <section className="lg:col-span-6 w-full max-w-md mx-auto lg:ml-auto lg:mr-0">
-          <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--surface-1)]/95 backdrop-blur-xl p-6 sm:p-8 shadow-2xl space-y-6">
-            {/* Mode Tabs */}
-            <div
-              role="tablist"
-              aria-label="Modo de autenticação"
-              className="grid grid-cols-2 p-1 rounded-xl bg-[var(--surface-0)] border border-[var(--border-subtle)]"
+        {/* LADO DE AUTENTICAÇÃO: Posicionado um pouco mais para a esquerda na coluna */}
+        <section
+          className="relative flex min-h-screen w-full flex-col justify-between p-6 sm:p-10 md:landscape:w-[46%] lg:w-[44%] xl:w-[42%]"
+          aria-label="Formulário de Entrada"
+        >
+          {/* Top Header: Logo do Dado de 20 Lados (Branco Meio Cinza) */}
+          <header className="pt-4 pb-2 w-full max-w-[400px] mx-auto md:landscape:ml-6 lg:landscape:ml-12 md:landscape:mr-auto">
+            <a
+              href="/"
+              className="inline-block transition-transform duration-200 hover:scale-[1.02] focus:outline-none"
+              aria-label="Astralis RPG Início"
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={isLogin}
-                onClick={() => switchMode('login')}
-                className={`h-10 rounded-lg text-sm font-semibold transition-all ${
-                  isLogin
-                    ? 'bg-[var(--surface-2)] text-white shadow-sm border border-[var(--border-subtle)]'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Entrar
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={!isLogin}
-                onClick={() => switchMode('register')}
-                className={`h-10 rounded-lg text-sm font-semibold transition-all ${
-                  !isLogin
-                    ? 'bg-[var(--surface-2)] text-white shadow-sm border border-[var(--border-subtle)]'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Criar Conta
-              </button>
-            </div>
+              <Logo size={42} showText={true} subtitle="Mundo RPG" />
+            </a>
+          </header>
 
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold text-white tracking-tight">
-                {isLogin ? 'Acesse sua conta' : 'Crie seu personagem'}
-              </h2>
-              <p className="text-xs text-slate-400">
-                {isLogin
-                  ? 'Entre com Google ou e-mail para continuar sua jornada.'
-                  : 'Registre-se gratuitamente para começar no Rank F.'}
-              </p>
-            </div>
-
-            {/* Google Sign-In */}
-            <Button
-              type="button"
-              variant="secondary"
-              size="lg"
-              className="w-full bg-white text-slate-900 hover:bg-slate-100 border-slate-200"
-              loading={googleLoading}
-              disabled={isSubmitting}
-              onClick={handleGoogleSignIn}
-            >
-              {!googleLoading && <GoogleIcon />}
-              <span>Continuar com Google</span>
-            </Button>
-
-            <div className="relative flex items-center justify-center">
-              <div className="border-t border-[var(--border-subtle)] w-full" />
-              <span className="px-3 text-[11px] uppercase tracking-wider text-slate-500 bg-[var(--surface-1)] whitespace-nowrap">
-                ou com e-mail
-              </span>
-              <div className="border-t border-[var(--border-subtle)] w-full" />
-            </div>
-
-            {authError && (
-              <div
-                role="alert"
-                className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-300 flex items-start gap-2.5"
-              >
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-400" aria-hidden="true" />
-                <span>{authError}</span>
+          {/* Card de Autenticação: Ajustado um pouco mais para a esquerda dentro da coluna */}
+          <div className="flex flex-1 items-center justify-center md:landscape:justify-start my-auto w-full py-4">
+            <div className="w-full max-w-[400px] md:landscape:ml-6 lg:landscape:ml-12 md:landscape:mr-auto rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-6 sm:p-8 shadow-2xl shadow-black/60 space-y-5">
+              {/* Heading */}
+              <div className="text-center md:landscape:text-left space-y-1.5">
+                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-tight">
+                  {isLogin ? 'Entre na Criação' : 'Forje sua Lenda'}
+                </h1>
+                <p className="text-xs text-slate-400">
+                  {isLogin
+                    ? 'Retome sua campanha e gerencie suas conquistas.'
+                    : 'Crie seu aventureiro para começar no Rank F.'}
+                </p>
               </div>
-            )}
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-              {!isLogin && (
-                <FormField
-                  label="Nome do Personagem"
-                  htmlFor="username"
-                  required
-                  error={errors.username?.message}
+              {/* Mode Tabs (Entrar / Criar Personagem) */}
+              <div
+                role="tablist"
+                aria-label="Modo de acesso"
+                className="grid grid-cols-2 p-1 rounded-xl border border-white/10 bg-black/30 backdrop-blur-sm"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isLogin}
+                  onClick={() => switchMode('login')}
+                  className={`h-9 rounded-lg text-xs font-medium transition-all ${
+                    isLogin
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
                 >
-                  <Input
-                    id="username"
-                    type="text"
-                    icon={User}
-                    placeholder="Ex: Kaelen, o Guardião"
-                    autoComplete="nickname"
-                    error={errors.username?.message}
-                    {...register('username')}
-                  />
-                </FormField>
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={!isLogin}
+                  onClick={() => switchMode('register')}
+                  className={`h-9 rounded-lg text-xs font-medium transition-all ${
+                    !isLogin
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Criar Personagem
+                </button>
+              </div>
+
+              {/* Error Banner */}
+              {authError && (
+                <div
+                  role="alert"
+                  className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 flex items-start gap-2.5 backdrop-blur-sm animate-in fade-in"
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-400" />
+                  <span className="leading-relaxed">{authError}</span>
+                </div>
               )}
 
-              <FormField label="E-mail" htmlFor="email" required error={errors.email?.message}>
-                <Input
-                  id="email"
-                  type="email"
-                  icon={Mail}
-                  placeholder="heroi@reino.com"
-                  autoComplete="email"
-                  error={errors.email?.message}
-                  {...register('email')}
-                />
-              </FormField>
+              {/* Botão Oficial do Google OAuth */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={googleLoading || isSubmitting}
+                  onClick={handleGoogleSignIn}
+                  className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2.5 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition-all duration-200 hover:bg-white/20 active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {googleLoading ? (
+                    <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  ) : (
+                    <GoogleLogoSvg />
+                  )}
+                  <span>Continuar com Google</span>
+                </button>
 
-              <FormField label="Senha" htmlFor="password" required error={errors.password?.message}>
-                <div className="relative flex items-center">
-                  <Lock
-                    className="h-4 w-4 text-slate-400 absolute left-3.5 pointer-events-none"
-                    aria-hidden="true"
-                  />
-                  <input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Mínimo 6 caracteres"
-                    autoComplete={isLogin ? 'current-password' : 'new-password'}
-                    aria-invalid={errors.password ? 'true' : undefined}
-                    className={`w-full h-11 pl-10 pr-11 rounded-xl bg-[var(--surface-0)]/80 border text-slate-100 placeholder:text-slate-500 text-sm transition-colors focus:outline-none focus:ring-2 ${
-                      errors.password
-                        ? 'border-rose-500/60 focus:border-rose-500 focus:ring-rose-500/20'
-                        : 'border-[var(--border-subtle)] hover:border-[var(--border-strong)] focus:border-[var(--accent-primary)] focus:ring-[var(--accent-soft)]'
-                    }`}
-                    {...register('password')}
-                  />
+                {!showEmailForm && isLogin && (
                   <button
                     type="button"
-                    onClick={() => setShowPassword((prev) => !prev)}
-                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                    className="absolute right-2.5 h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    onClick={() => setShowEmailForm(true)}
+                    className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 backdrop-blur-sm transition-all duration-200 hover:bg-white/10 hover:text-white active:scale-[0.985]"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    <Mail className="h-4 w-4 text-slate-400" />
+                    <span>Continuar com E-mail</span>
                   </button>
-                </div>
-              </FormField>
+                )}
+              </div>
 
-              <Button
-                type="submit"
-                size="lg"
-                className="w-full mt-2"
-                loading={isSubmitting}
-                disabled={googleLoading}
-              >
-                {!isSubmitting &&
-                  (isLogin ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />)}
-                <span>{isLogin ? 'Entrar no Reino' : 'Criar Personagem'}</span>
-              </Button>
-            </form>
+              {/* Formulário de E-mail & Senha */}
+              {(showEmailForm || !isLogin) && (
+                <form
+                  onSubmit={handleSubmit(onSubmit)}
+                  className="space-y-3.5 pt-1 animate-in fade-in duration-200"
+                  noValidate
+                >
+                  {!isLogin && (
+                    <FormField
+                      label="Nome do Personagem"
+                      htmlFor="username"
+                      required
+                      error={errors.username?.message}
+                    >
+                      <div className="relative flex items-center">
+                        <User className="h-4 w-4 text-slate-500 absolute left-3.5 pointer-events-none" />
+                        <input
+                          id="username"
+                          type="text"
+                          placeholder="Ex: Alden, o Guardião"
+                          autoComplete="nickname"
+                          className="w-full h-11 pl-10 pr-3.5 rounded-xl border border-white/15 bg-black/30 text-white placeholder:text-slate-500 text-sm backdrop-blur-sm transition-colors focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30"
+                          {...register('username')}
+                        />
+                      </div>
+                    </FormField>
+                  )}
+
+                  <FormField label="E-mail" htmlFor="email" required error={errors.email?.message}>
+                    <div className="relative flex items-center">
+                      <Mail className="h-4 w-4 text-slate-500 absolute left-3.5 pointer-events-none" />
+                      <input
+                        id="email"
+                        type="email"
+                        placeholder="heroi@astralis.com"
+                        autoComplete="email"
+                        className="w-full h-11 pl-10 pr-3.5 rounded-xl border border-white/15 bg-black/30 text-white placeholder:text-slate-500 text-sm backdrop-blur-sm transition-colors focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30"
+                        {...register('email')}
+                      />
+                    </div>
+                  </FormField>
+
+                  <FormField
+                    label="Senha"
+                    htmlFor="password"
+                    required
+                    error={errors.password?.message}
+                  >
+                    <div className="relative flex items-center">
+                      <Lock className="h-4 w-4 text-slate-500 absolute left-3.5 pointer-events-none" />
+                      <input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Mínimo 6 caracteres"
+                        autoComplete={isLogin ? 'current-password' : 'new-password'}
+                        className="w-full h-11 pl-10 pr-11 rounded-xl border border-white/15 bg-black/30 text-white placeholder:text-slate-500 text-sm backdrop-blur-sm transition-colors focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30"
+                        {...register('password')}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                        className="absolute right-2.5 h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </FormField>
+
+                  {!isLogin && (
+                    <FormField
+                      label="Confirmar Senha"
+                      htmlFor="confirmPassword"
+                      required
+                      error={errors.confirmPassword?.message}
+                    >
+                      <div className="relative flex items-center">
+                        <Lock className="h-4 w-4 text-slate-500 absolute left-3.5 pointer-events-none" />
+                        <input
+                          id="confirmPassword"
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          placeholder="Repita sua senha"
+                          autoComplete="new-password"
+                          className="w-full h-11 pl-10 pr-11 rounded-xl border border-white/15 bg-black/30 text-white placeholder:text-slate-500 text-sm backdrop-blur-sm transition-colors focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30"
+                          {...register('confirmPassword')}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword((prev) => !prev)}
+                          aria-label={showConfirmPassword ? 'Ocultar confirmação de senha' : 'Exibir confirmação de senha'}
+                          className="absolute right-2.5 h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                        >
+                          {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </FormField>
+                  )}
+
+                  <Button
+                    type="submit"
+                    loading={isSubmitting}
+                    disabled={googleLoading}
+                    className="w-full min-h-11 rounded-xl bg-white text-slate-900 font-semibold text-sm hover:bg-slate-100 transition-all duration-200 shadow-lg active:scale-[0.985] mt-2"
+                  >
+                    {!isSubmitting &&
+                      (isLogin ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />)}
+                    <span>{isLogin ? 'Entrar no Reino' : 'Criar Personagem'}</span>
+                  </Button>
+                </form>
+              )}
+
+              {/* Alternador de Modo */}
+              <div className="text-center md:landscape:text-left text-xs text-slate-400 pt-1">
+                {isLogin ? (
+                  <span>
+                    Novo no Astralis?{' '}
+                    <button
+                      type="button"
+                      onClick={() => switchMode('register')}
+                      className="text-white hover:underline font-medium ml-1"
+                    >
+                      Criar Conta
+                    </button>
+                  </span>
+                ) : (
+                  <span>
+                    Já possui uma conta?{' '}
+                    <button
+                      type="button"
+                      onClick={() => switchMode('login')}
+                      className="text-white hover:underline font-medium ml-1"
+                    >
+                      Fazer Login
+                    </button>
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Footer: Limpo e Discreto */}
+          <footer className="w-full max-w-[400px] mx-auto md:landscape:ml-6 lg:landscape:ml-12 md:landscape:mr-auto flex items-center justify-center md:landscape:justify-start gap-3 pt-4 pb-2 text-xs text-slate-500">
+            <button
+              type="button"
+              onClick={() => setHelpModalOpen(true)}
+              className="transition-colors hover:text-slate-300 flex items-center gap-1"
+            >
+              <HelpCircle className="h-3 w-3" /> Ajuda
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => setHelpModalOpen(true)}
+              className="transition-colors hover:text-slate-300"
+            >
+              Regras
+            </button>
+          </footer>
         </section>
       </div>
 
-      <footer className="w-full max-w-6xl mx-auto text-center lg:text-left text-xs text-slate-500">
-        Astralis RPG System • Alimentado por Firebase Authentication & Cloud Firestore
-      </footer>
-    </div>
+      {/* Modal de Ajuda & Guia Rápido */}
+      <Modal
+        open={helpModalOpen}
+        onOpenChange={setHelpModalOpen}
+        title="Guia do Astralis RPG"
+        description="Informações essenciais para Mestres e Jogadores."
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
+          <div className="p-3 rounded-xl border border-white/10 bg-white/5 space-y-1.5">
+            <p className="font-semibold text-white flex items-center gap-1.5">
+              <GoogleLogoSvg /> Autenticação Segura
+            </p>
+            <p className="text-slate-400">
+              Você pode entrar diretamente com sua conta Google com um clique ou criar uma conta com
+              e-mail e senha.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl border border-white/10 bg-white/5 space-y-1.5">
+            <p className="font-semibold text-white flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5 text-sky-400" /> Sincronização Instantânea
+            </p>
+            <p className="text-slate-400">
+              Todas as missões criadas pelo Mestre e itens comprados no mercado são sincronizados
+              instantaneamente via Cloud Firestore.
+            </p>
+          </div>
+        </div>
+      </Modal>
+    </main>
   );
 }

@@ -1,23 +1,25 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { FieldValue } from 'firebase-admin/firestore';
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '../../../lib/firebase-admin';
+import { enforceItemBalance, enforceMissionBalance } from '../../../lib/dnd-rules';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
-const MODELS_TO_TRY = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+const MODELS_TO_TRY = [
+  { name: 'gemini-2.5-flash', thinkingBudget: 0 },
+  { name: 'gemini-2.5-flash', thinkingBudget: 0 },
+];
 
 async function verifyBearerToken(authHeader) {
   if (!authHeader?.startsWith('Bearer ')) return null;
   const idToken = authHeader.slice(7).trim();
   if (!idToken) return null;
 
-  // Se houver Cron Secret configurado
   if (process.env.CRON_SECRET && idToken === process.env.CRON_SECRET) {
     return { isCron: true, uid: 'cron' };
   }
 
-  // Verifica via Firebase Admin se configurado
   const admin = getFirebaseAdmin();
   if (admin) {
     try {
@@ -30,7 +32,6 @@ async function verifyBearerToken(authHeader) {
     }
   }
 
-  // Fallback seguro: valida o ID token diretamente na API oficial do Firebase Identity Toolkit
   const webApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
   if (!webApiKey) return null;
   try {
@@ -52,98 +53,82 @@ async function verifyBearerToken(authHeader) {
   }
 }
 
+function parseModelJson(rawText) {
+  const cleaned = String(rawText || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+  return JSON.parse(cleaned);
+}
+
 async function generateWithGemini(apiKey) {
   const genAI = new GoogleGenerativeAI(apiKey);
-  let model = null;
+  const prompt = `Seed: ${Date.now()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e (Livro do Jogador, Livro do Mestre e Escudo do DM) em Português do Brasil.
+Gere exatamente 2 Missões e 10 Itens variados para o Astralis RPG.
 
-  for (const name of MODELS_TO_TRY) {
+DIRETRIZES OFICIAIS D&D 5.5e (2024) & D&D 5e:
+1. ITENS & ARMAS:
+- Toda descrição de item DEVE iniciar com a tag de raridade: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO> ou <MÍTICO>.
+- Se o item for uma arma, inclua o Dano Escalonado e a Maestria em Arma Oficial 2024 (Afligir, Ágil, Derrubar, Drenar, Empurrar, Garantido, Lentidão ou Trespassar).
+- ESCALONAMENTO DE DANO & BENEFÍCIOS:
+  * <COMUM>: Dano base de entrada (Espada Curta/Cimitarra 1d4, Espada Longa 1d6, Espadão 1d10, Adaga 1d4, Arco Curto 1d4, Arco Longo 1d6). Sem propriedades mágicas ou bônus. Preço: 30 a 100 G.
+  * <INCOMUM>: Dano padrão do livro (Espada Curta 1d6, Espada Longa 1d8 versátil 1d10, Espadão 2d6, Machado Grande 1d12, Arco Longo 1d8) + bônus +1 no acerto ou Maestria 2024. Preço: 150 a 500 G.
+  * <RARO>: Dano ampliado (1d8, 1d10, 2d8) + bônus +1/+2 + Maestria 2024 + EFEITO BÔNUS ELEMENTAL (+1d4/+1d6 de dano de fogo, frio, relâmpago, radiante ou necrótico). Preço: 800 a 3.000 G.
+  * <ÉPICO>: Dano de alto impacto (1d10, 1d12, 2d10) + bônus +2/+3 + Maestria 2024 + EFEITO DE STATUS NO INIMIGO (Sangramento 1d4/turno, Atordoado por 1 rodada em crítico, Queimadura contínua, Lentidão -3m, Cegueira temporária). Preço: 4.000 a 15.000 G.
+  * <LENDÁRIO>: Dano devastador (2d8, 2d10, 2d12, 3d6) + bônus +3 + STATUS SEVERO & PROPRIEDADE LENDÁRIA (Corte Dimensional que ignora resistências a dano físico, Crítico com margem 19-20, Petrificação). Preço: 20.000 a 60.000 G.
+  * <MÍTICO>: Dano supremo (2d10+4, 3d8, 4d6) + PASSIVA MÍTICA ÚNICA (Roubo de vida de 50%, Ressurreição imediata com 1 PV uma vez ao dia, Explosão divina). Preço: 75.000 a 200.000 G.
+- Tipos de itens permitidos: weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
+- Distribua raridades variadas entre os 10 itens (ex: 3 comuns, 3 incomuns, 2 raros, 1 épico, 1 lendário/mítico).
+
+2. MISSÕES (Tiers de Jogo e Encontros do Guia do Mestre D&D 2024/5e):
+- Rank F: Ameaças locais menores (100-250 XP | 40-100 G)
+- Rank E: Bandos de goblins/kobolds, defesa local (250-450 XP | 100-200 G)
+- Rank D: Acampamentos orcs, ogros, criptas com carniçais (500-800 XP | 250-450 G)
+- Rank C: Hidras, quimeras, gigantes da colina (900-1.500 XP | 500-900 G)
+- Rank B: Jovens dragões, vampiros, arquimagos (1.600-2.800 XP | 1.000-1.800 G)
+- Rank A: Dragões adultos, beholders, lichs (3.000-5.500 XP | 2.000-4.000 G)
+- Rank S: Titãs ancestrais, dragões anciões, lordes abissais (6.000-12.000 XP | 5.000-10.000 G)
+- Descrições de missões imersivas e objetivas (1 a 2 frases).
+
+NUNCA use ícones de estrela ou símbolos de estrela.
+Responda APENAS JSON válido no seguinte formato:
+{"missions":[{"title":"","description":"","rank":"D","xp_reward":600,"gold_reward":350}],"shop_items":[{"item_name":"","description":"<RARO> Dano: 1d8 cortante (+1 ataque, +1d6 de fogo). Maestria: Afligir (Vex). Forjada nas chamas da forja anã.","price":1200,"quantity":1,"type":"weapon"}]}`;
+
+  let resultText = null;
+  let lastError = null;
+
+  for (const cfg of MODELS_TO_TRY) {
     try {
-      const candidate = genAI.getGenerativeModel({
-        model: name,
-        generationConfig: { responseMimeType: 'application/json' },
+      const model = genAI.getGenerativeModel({
+        model: cfg.name,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: cfg.thinkingBudget },
+        },
       });
-      await candidate.generateContent('Responda apenas {}');
-      model = candidate;
-      break;
-    } catch {
-      // Tenta próximo modelo compatível
+      const result = await model.generateContent(prompt);
+      resultText = result.response.text();
+      if (resultText) break;
+    } catch (err) {
+      lastError = err;
     }
   }
 
-  if (!model) {
-    throw new Error('Nenhum modelo Gemini disponível respondeu no momento.');
+  if (!resultText) {
+    throw new Error(
+      lastError?.message || 'Nenhum modelo Gemini disponível respondeu no momento.'
+    );
   }
 
-  const prompt = `
-    Seed: ${Date.now()}
-    Você é Mestre de um RPG de Fantasia Medieval. Crie conteúdo NOVO, equilibrado e CRIATIVO em Português do Brasil.
-
-    TAREFA:
-    1. Gere exatamente 2 Missões Variadas.
-    2. Gere exatamente 10 Itens de Loja.
-
-    REGRAS PARA MISSÕES:
-    - rank deve ser um de: "F", "E", "D", "C", "B", "A", "S".
-    - xp_reward e gold_reward devem ser números inteiros coerentes com o rank.
-
-    REGRAS PARA ITENS:
-    - Variedade: Espadas, Katanas, Arcos, Bestas, Machados, Adagas, Cajados, Escudos, Armaduras, Acessórios, Poções.
-    - RARIDADE na descrição: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO>.
-    - Se o item for RARO ou superior, adicione um efeito passivo criativo na descrição.
-    - TIPOS PERMITIDOS (type): weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
-
-    ESTRUTURA JSON OBRIGATÓRIA:
-    {
-      "missions": [
-        { "title": "Título", "description": "História e objetivo...", "rank": "D", "xp_reward": 500, "gold_reward": 300 }
-      ],
-      "shop_items": [
-        {
-          "item_name": "Katana das Sombras",
-          "description": "<ÉPICO> Uma lâmina negra forjada na névoa. Passiva: O primeiro ataque causa sangramento.",
-          "price": 2500,
-          "quantity": 1,
-          "type": "weapon"
-        }
-      ]
-    }
-  `;
-
-  const result = await model.generateContent(prompt);
-  const parsed = JSON.parse(result.response.text());
+  const parsed = parseModelJson(resultText);
 
   const missions = Array.isArray(parsed?.missions)
-    ? parsed.missions.map((m) => ({
-        title: String(m.title || 'Missão Sem Título').slice(0, 120),
-        description: String(m.description || '').slice(0, 1800),
-        rank: ['F', 'E', 'D', 'C', 'B', 'A', 'S'].includes(m.rank) ? m.rank : 'D',
-        xp_reward: Math.max(50, Math.floor(Number(m.xp_reward) || 300)),
-        gold_reward: Math.max(20, Math.floor(Number(m.gold_reward) || 150)),
-      }))
+    ? parsed.missions.map(enforceMissionBalance)
     : [];
 
-  const allowedTypes = [
-    'weapon',
-    'shield',
-    'head',
-    'face',
-    'neck',
-    'body',
-    'hands',
-    'waist',
-    'feet',
-    'ring',
-    'consumable',
-  ];
-
   const shop_items = Array.isArray(parsed?.shop_items)
-    ? parsed.shop_items.map((item) => ({
-        item_name: String(item.item_name || 'Relíquia Misteriosa').slice(0, 80),
-        description: String(item.description || '<COMUM> Item forjado no reino.').slice(0, 900),
-        price: Math.max(10, Math.floor(Number(item.price) || 100)),
-        quantity: Math.max(1, Math.floor(Number(item.quantity) || 1)),
-        type: allowedTypes.includes(item.type) ? item.type : 'consumable',
-      }))
+    ? parsed.shop_items.map(enforceItemBalance)
     : [];
 
   return { missions, shop_items };
@@ -176,7 +161,6 @@ async function handleGenerate(request, isPost) {
       );
     }
   } else {
-    // GET: usado pelo Vercel Cron ou chamada autorizada
     if (process.env.CRON_SECRET && !verified?.isCron && !verified?.isMaster) {
       return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
     }
@@ -195,6 +179,7 @@ async function handleGenerate(request, isPost) {
     const { missions, shop_items } = await generateWithGemini(apiKey);
 
     if (admin) {
+      const { FieldValue } = await import('firebase-admin/firestore');
       const batch = admin.adminDb.batch();
       missions.forEach((m) => {
         const ref = admin.adminDb.collection('missions').doc();
@@ -227,7 +212,6 @@ async function handleGenerate(request, isPost) {
       });
     }
 
-    // Sem Admin SDK: retorna o conteúdo gerado para o cliente autenticado (Mestre) persistir no Firestore
     return NextResponse.json({
       success: true,
       persisted: false,

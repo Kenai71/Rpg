@@ -186,7 +186,8 @@ export async function acceptMissionTx(missionId, profile) {
   });
 }
 
-export async function buyShopItemTx(uid, shopItemId, useRune) {
+export async function buyShopItemTx(uid, shopItemId, useRune, purchaseQty = 1) {
+  const count = Math.max(1, Math.floor(Number(purchaseQty) || 1));
   const firestore = requireDb();
   const profileRef = doc(firestore, 'profiles', uid);
   const shopRef = doc(firestore, 'shop_items', shopItemId);
@@ -198,9 +199,10 @@ export async function buyShopItemTx(uid, shopItemId, useRune) {
 
     const prof = normalizeProfile(profSnap.data(), profSnap.id);
     const shopItem = { id: shopSnap.id, ...shopSnap.data() };
+    const availableStock = Number(shopItem.quantity || 0);
 
-    if (Number(shopItem.quantity || 0) <= 0) {
-      throw new Error('Este item está esgotado no estoque.');
+    if (availableStock < count) {
+      throw new Error(`Estoque insuficiente. Restam apenas ${availableStock} unidade(s).`);
     }
 
     const inv = [...prof.inventory];
@@ -214,7 +216,7 @@ export async function buyShopItemTx(uid, shopItemId, useRune) {
 
     const itemToSave = {
       name: shopItem.item_name,
-      qty: 1,
+      qty: count,
       description: shopItem.description || '',
       type: shopItem.type || getItemType({ name: shopItem.item_name }),
     };
@@ -224,34 +226,31 @@ export async function buyShopItemTx(uid, shopItemId, useRune) {
     if (useRune) {
       const rarity = getRarityFromItem(shopItem);
       const runeName = `Runa ${rarity}`;
-      const runeIdx = inv.findIndex((i) => i.name === runeName && i.qty > 0);
+      const runeIdx = inv.findIndex((i) => i.name === runeName && i.qty >= count);
       if (runeIdx === -1) {
-        throw new Error(`Você não possui uma ${runeName} na mochila.`);
+        throw new Error(`Você precisa de ${count} ${runeName}(s) na mochila.`);
       }
-      if (inv[runeIdx].qty > 1) {
-        inv[runeIdx] = { ...inv[runeIdx], qty: inv[runeIdx].qty - 1 };
+      if (inv[runeIdx].qty > count) {
+        inv[runeIdx] = { ...inv[runeIdx], qty: inv[runeIdx].qty - count };
       } else {
         inv.splice(runeIdx, 1);
       }
 
       if (isStacking) {
-        const targetIdx = inv.findIndex((i) => i.name === shopItem.item_name);
-        if (targetIdx >= 0) {
-          inv[targetIdx] = { ...inv[targetIdx], qty: inv[targetIdx].qty + 1 };
-        } else {
-          inv.push(itemToSave);
-        }
+        inv[existingIdx] = { ...inv[existingIdx], qty: inv[existingIdx].qty + count };
       } else {
         inv.push(itemToSave);
       }
     } else {
-      const price = Number(shopItem.price || 0);
-      if (prof.gold < price) {
-        throw new Error('Ouro insuficiente para esta compra.');
+      const totalPrice = Number(shopItem.price || 0) * count;
+      if (prof.gold < totalPrice) {
+        throw new Error(
+          `Ouro insuficiente para comprar ${count} unidade(s) (${totalPrice} G necessários).`
+        );
       }
-      nextGold = prof.gold - price;
+      nextGold = prof.gold - totalPrice;
       if (isStacking) {
-        inv[existingIdx] = { ...inv[existingIdx], qty: inv[existingIdx].qty + 1 };
+        inv[existingIdx] = { ...inv[existingIdx], qty: inv[existingIdx].qty + count };
       } else {
         inv.push(itemToSave);
       }
@@ -264,7 +263,7 @@ export async function buyShopItemTx(uid, shopItemId, useRune) {
     });
 
     tx.update(shopRef, {
-      quantity: Number(shopItem.quantity) - 1,
+      quantity: availableStock - count,
       updatedAt: serverTimestamp(),
     });
   });

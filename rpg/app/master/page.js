@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { orderBy } from 'firebase/firestore';
+import { Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { auth, isFirebaseConfigured } from '../../lib/firebase';
+import { formatNumber } from '../../lib/utils';
 import {
   masterResolveItemRequestTx,
   persistGeneratedDailyContent,
@@ -78,6 +80,46 @@ export default function MasterPage() {
     [missions]
   );
 
+  const commandItems = useMemo(() => {
+    const modules = [
+      { id: 'nav-overview', group: 'Módulos Admin', label: 'Visão Geral', icon: LayoutDashboard, onSelect: () => setActiveSection('overview') },
+      { id: 'nav-missions', group: 'Módulos Admin', label: 'Missões & Contratos', icon: Scroll, onSelect: () => setActiveSection('missions') },
+      { id: 'nav-shop', group: 'Módulos Admin', label: 'Loja & Economia', icon: ShoppingBag, onSelect: () => setActiveSection('shop') },
+      { id: 'nav-players', group: 'Módulos Admin', label: 'Heróis & Grupos', icon: Users, onSelect: () => setActiveSection('players') },
+      { id: 'nav-requests', group: 'Módulos Admin', label: 'Solicitações', icon: Inbox, onSelect: () => setActiveSection('requests') },
+      { id: 'nav-permissions', group: 'Módulos Admin', label: 'Permissões', icon: ShieldCheck, onSelect: () => setActiveSection('permissions') },
+    ];
+
+    const heroEntries = allProfiles.slice(0, 6).map((p) => ({
+      id: `hero-${p.uid}`,
+      group: 'Heróis',
+      label: p.username,
+      meta: `Rank ${p.rank} • ${formatNumber(p.gold)}G`,
+      icon: Users,
+      onSelect: () => setActiveSection('players'),
+    }));
+
+    const missionEntries = missions.slice(0, 5).map((m) => ({
+      id: `mis-${m.id}`,
+      group: 'Missões',
+      label: m.title,
+      meta: `Rank ${m.rank}`,
+      icon: Scroll,
+      onSelect: () => setActiveSection('missions'),
+    }));
+
+    const shopEntries = shopItems.slice(0, 5).map((s) => ({
+      id: `shp-${s.id}`,
+      group: 'Loja',
+      label: s.item_name,
+      meta: `${formatNumber(s.price)}G`,
+      icon: ShoppingBag,
+      onSelect: () => setActiveSection('shop'),
+    }));
+
+    return [...modules, ...heroEntries, ...missionEntries, ...shopEntries];
+  }, [allProfiles, missions, shopItems]);
+
   const handleGenerateDaily = async () => {
     if (!auth?.currentUser) return;
     setIsGenerating(true);
@@ -89,10 +131,21 @@ export default function MasterPage() {
           Authorization: `Bearer ${idToken}`,
         },
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        const isHtml = rawText.trim().startsWith('<');
+        throw new Error(
+          isHtml
+            ? `O servidor retornou HTML (HTTP ${res.status}) em vez de JSON. Verifique na Vercel se Root Directory = "rpg", se as variáveis de ambiente foram salvas e faça um Redeploy.`
+            : `Resposta inválida do servidor (HTTP ${res.status}).`
+        );
+      }
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Erro ao gerar conteúdo diário.');
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'Erro ao gerar conteúdo diário.');
       }
 
       if (!data.persisted) {
@@ -170,6 +223,7 @@ export default function MasterPage() {
       onSelectSection={setActiveSection}
       pendingRequestsCount={pendingRequestsCount}
       activeContractsCount={activeContractsCount}
+      commandItems={commandItems}
       isGenerating={isGenerating}
       onGenerateDaily={handleGenerateDaily}
       onLogout={logout}
