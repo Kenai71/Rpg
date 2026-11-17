@@ -98,6 +98,7 @@
   - **Rank S:** Tier 4 Multiversal (Níveis 17-20) — 6.000 a 12.000 XP | 5.000 a 10.000 G.
 - **Garantia de Aprendizado & Validação Matemática da IA:**
   - O prompt do Gemini (`rpg/app/api/daily-generate/route.js`) instrui expressamente o modelo com base nos livros de 2024 e 5e.
+  - A rota utiliza contingência sequencial de modelos ativos de alta capacidade (`gemini-3.5-flash-lite` -> `gemini-3-flash-preview` -> `gemini-2.5-flash` -> `gemini-3.5-flash`), contornando limites de cota da camada gratuita (Free Tier).
   - Todo conteúdo gerado via Gemini é pós-validado pelas funções matemáticas `enforceItemBalance` e `enforceMissionBalance` de `rpg/lib/dnd-rules.js`, garantindo que fórmulas de dados, maestrias, status, orçamentos de XP e ouro estejam sempre nos intervalos corretos do sistema, sem alucinações.
 
 ## Segurança e Firestore Rules

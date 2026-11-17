@@ -7,9 +7,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const MODELS_TO_TRY = [
+  { name: 'gemini-3.5-flash-lite', thinkingBudget: undefined },
+  { name: 'gemini-3-flash-preview', thinkingBudget: undefined },
   { name: 'gemini-2.5-flash', thinkingBudget: 0 },
-  { name: 'gemini-2.0-flash', thinkingBudget: 0 },
-  { name: 'gemini-1.5-flash', thinkingBudget: undefined },
+  { name: 'gemini-3.5-flash', thinkingBudget: undefined },
 ];
 
 async function verifyBearerToken(authHeader) {
@@ -125,8 +126,14 @@ Responda APENAS JSON válido no seguinte formato:
   }
 
   if (!resultText) {
+    const isQuotaError =
+      lastError?.message?.includes('429') ||
+      lastError?.message?.includes('limit exceeded') ||
+      lastError?.message?.includes('QuotaFailure');
     throw new Error(
-      lastError?.message || 'Nenhum modelo Gemini disponível respondeu no momento.'
+      isQuotaError
+        ? 'Limite de requisições gratuitas diárias da API Gemini atingido. Aguarde a renovação da cota ou utilize uma chave com faturamento ativado.'
+        : lastError?.message || 'Nenhum modelo Gemini disponível respondeu no momento.'
     );
   }
 
