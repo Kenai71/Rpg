@@ -1,6 +1,4 @@
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
+let adminInstance = null;
 
 function getServiceAccountConfig() {
   const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
@@ -12,7 +10,7 @@ function getServiceAccountConfig() {
       }
       return parsed;
     } catch (err) {
-      console.error('FIREBASE_SERVICE_ACCOUNT_KEY inválido:', err.message);
+      console.warn('FIREBASE_SERVICE_ACCOUNT_KEY inválido:', err.message);
       return null;
     }
   }
@@ -28,22 +26,34 @@ function getServiceAccountConfig() {
   return null;
 }
 
-export function getFirebaseAdmin() {
+export async function getFirebaseAdmin() {
+  if (adminInstance) return adminInstance;
+
   const serviceAccount = getServiceAccountConfig();
   if (!serviceAccount) return null;
 
-  const existing = getApps().find((a) => a.name === 'admin-server');
-  const adminApp =
-    existing ||
-    initializeApp(
-      {
-        credential: cert(serviceAccount),
-      },
-      'admin-server'
-    );
+  try {
+    const { initializeApp, getApps, cert } = await import('firebase-admin/app');
+    const { getFirestore } = await import('firebase-admin/firestore');
+    const { getAuth } = await import('firebase-admin/auth');
 
-  return {
-    adminDb: getFirestore(adminApp),
-    adminAuth: getAuth(adminApp),
-  };
+    const existing = getApps().find((a) => a.name === 'admin-server');
+    const adminApp =
+      existing ||
+      initializeApp(
+        {
+          credential: cert(serviceAccount),
+        },
+        'admin-server'
+      );
+
+    adminInstance = {
+      adminDb: getFirestore(adminApp),
+      adminAuth: getAuth(adminApp),
+    };
+    return adminInstance;
+  } catch (err) {
+    console.warn('Firebase Admin não pôde ser inicializado (modo fallback ativo):', err?.message);
+    return null;
+  }
 }

@@ -24,7 +24,7 @@ import {
   DND_EXPANDED_WEAPONS,
   DND_MAGIC_ITEMS_CATALOG,
   DND_ENCOUNTERS_BY_TIER,
-} from './dnd-catalog';
+} from './dnd-catalog.js';
 
 export {
   DND_2024_MASTERY_PROPERTIES,

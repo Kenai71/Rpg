@@ -1,14 +1,15 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '../../../lib/firebase-admin';
-import { enforceItemBalance, enforceMissionBalance } from '../../../lib/dnd-rules';
+import { enforceItemBalance, enforceMissionBalance } from '../../../lib/dnd-rules.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const MODELS_TO_TRY = [
   { name: 'gemini-2.5-flash', thinkingBudget: 0 },
-  { name: 'gemini-2.5-flash', thinkingBudget: 0 },
+  { name: 'gemini-2.0-flash', thinkingBudget: 0 },
+  { name: 'gemini-1.5-flash', thinkingBudget: undefined },
 ];
 
 async function verifyBearerToken(authHeader) {
@@ -20,16 +21,20 @@ async function verifyBearerToken(authHeader) {
     return { isCron: true, uid: 'cron' };
   }
 
-  const admin = getFirebaseAdmin();
-  if (admin) {
-    try {
-      const decoded = await admin.adminAuth.verifyIdToken(idToken);
-      const profileSnap = await admin.adminDb.collection('profiles').doc(decoded.uid).get();
-      const role = profileSnap.exists ? profileSnap.data()?.role : 'player';
-      return { uid: decoded.uid, isMaster: role === 'master', isCron: false };
-    } catch {
-      return null;
+  try {
+    const admin = await getFirebaseAdmin();
+    if (admin) {
+      try {
+        const decoded = await admin.adminAuth.verifyIdToken(idToken);
+        const profileSnap = await admin.adminDb.collection('profiles').doc(decoded.uid).get();
+        const role = profileSnap.exists ? profileSnap.data()?.role : 'player';
+        return { uid: decoded.uid, isMaster: role === 'master', isCron: false };
+      } catch (adminErr) {
+        console.warn('verifyIdToken no admin falhou:', adminErr?.message);
+      }
     }
+  } catch (err) {
+    console.warn('Erro ao obter admin no verifyBearerToken:', err?.message);
   }
 
   const webApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -100,17 +105,21 @@ Responda APENAS JSON válido no seguinte formato:
 
   for (const cfg of MODELS_TO_TRY) {
     try {
+      const genConfig = {
+        responseMimeType: 'application/json',
+      };
+      if (cfg.thinkingBudget !== undefined) {
+        genConfig.thinkingConfig = { thinkingBudget: cfg.thinkingBudget };
+      }
       const model = genAI.getGenerativeModel({
         model: cfg.name,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          thinkingConfig: { thinkingBudget: cfg.thinkingBudget },
-        },
+        generationConfig: genConfig,
       });
       const result = await model.generateContent(prompt);
       resultText = result.response.text();
       if (resultText) break;
     } catch (err) {
+      console.warn(`Tentativa com ${cfg.name} falhou:`, err?.message);
       lastError = err;
     }
   }
@@ -138,37 +147,42 @@ async function handleGenerate(request, isPost) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'GEMINI_API_KEY não configurada no arquivo .env / Vercel.' },
+      {
+        success: false,
+        error:
+          'A variável de ambiente GEMINI_API_KEY não foi encontrada na Vercel ou no arquivo .env. No painel da Vercel vá em Settings > Environment Variables, adicione GEMINI_API_KEY com sua chave e faça um novo Deploy.',
+      },
       { status: 500 }
     );
   }
 
   const authHeader = request.headers.get('authorization');
   const verified = await verifyBearerToken(authHeader);
-  const admin = getFirebaseAdmin();
+  const admin = await getFirebaseAdmin();
 
   if (isPost) {
     if (!verified) {
       return NextResponse.json(
-        { error: 'Autenticação necessária para gerar conteúdo.' },
+        { success: false, error: 'Autenticação necessária para gerar conteúdo. Faça login como Mestre.' },
         { status: 401 }
       );
     }
     if (admin && !verified.isMaster && !verified.isCron) {
       return NextResponse.json(
-        { error: 'Apenas Mestres podem gerar conteúdo diário.' },
+        { success: false, error: 'Apenas usuários com perfil de Mestre podem gerar conteúdo diário.' },
         { status: 403 }
       );
     }
   } else {
     if (process.env.CRON_SECRET && !verified?.isCron && !verified?.isMaster) {
-      return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
+      return NextResponse.json({ success: false, error: 'Não autorizado para execução de cron.' }, { status: 401 });
     }
     if (!admin && !verified) {
       return NextResponse.json(
         {
+          success: false,
           error:
-            'FIREBASE_SERVICE_ACCOUNT_KEY não configurada para execução automática do Cron. Use o botão "Gerar Diária" logado no painel do Mestre ou configure a Service Account.',
+            'FIREBASE_SERVICE_ACCOUNT_KEY não configurada para execução automática do Cron. Use o botão "Gerar Diária" logado no painel do Mestre.',
         },
         { status: 501 }
       );
@@ -221,17 +235,34 @@ async function handleGenerate(request, isPost) {
       shop_items,
     });
   } catch (error) {
+    console.error('Erro na geração via Gemini:', error);
     return NextResponse.json(
-      { error: error?.message || 'Erro ao gerar conteúdo diário.' },
+      { success: false, error: error?.message || 'Erro ao gerar conteúdo diário.' },
       { status: 500 }
     );
   }
 }
 
 export async function GET(request) {
-  return handleGenerate(request, false);
+  try {
+    return await handleGenerate(request, false);
+  } catch (fatalError) {
+    console.error('Fatal GET /api/daily-generate:', fatalError);
+    return NextResponse.json(
+      { success: false, error: fatalError?.message || 'Erro interno no servidor ao processar rotina diária.' },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request) {
-  return handleGenerate(request, true);
+  try {
+    return await handleGenerate(request, true);
+  } catch (fatalError) {
+    console.error('Fatal POST /api/daily-generate:', fatalError);
+    return NextResponse.json(
+      { success: false, error: fatalError?.message || 'Erro interno no servidor ao gerar conteúdo com a IA.' },
+      { status: 500 }
+    );
+  }
 }
