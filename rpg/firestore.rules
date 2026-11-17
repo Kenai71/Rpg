@@ -142,6 +142,20 @@ service cloud.firestore {
     //   - color: string | null (optional, 0..50 chars)
     //   - createdAt: timestamp (optional)
     //
+    // Collection: map_rolls
+    // Document ID: {rollId} (auto-generated)
+    // Fields:
+    //   - map_id: string (1..128 chars)
+    //   - user_id: string (1..128 chars)
+    //   - user_name: string | null (optional, 0..60 chars)
+    //   - user_role: string | null (optional, 0..30 chars)
+    //   - sides: int (2..1000)
+    //   - roll: int (1..1000)
+    //   - seed: number | string (optional)
+    //   - is_max: bool (optional)
+    //   - is_fumble: bool (optional)
+    //   - createdAt: timestamp (optional)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -335,6 +349,19 @@ service cloud.firestore {
         (!('y' in data) || data.y is int || data.y is float) &&
         isSafeOptionalString(data, 'user_name', 0, 60) &&
         isSafeOptionalString(data, 'color', 0, 50) &&
+        isSafeOptionalTimestamp(data, 'createdAt');
+    }
+
+    function isValidMapRoll(data) {
+      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
+        data.user_id is string && data.user_id.size() >= 1 && data.user_id.size() <= 128 &&
+        isSafeOptionalString(data, 'user_name', 0, 60) &&
+        isSafeOptionalString(data, 'user_role', 0, 30) &&
+        (!('sides' in data) || data.sides is int) &&
+        (!('roll' in data) || data.roll is int) &&
+        (!('seed' in data) || data.seed == null || data.seed is int || data.seed is float || data.seed is string) &&
+        isSafeOptionalBool(data, 'is_max') &&
+        isSafeOptionalBool(data, 'is_fumble') &&
         isSafeOptionalTimestamp(data, 'createdAt');
     }
 
@@ -541,6 +568,11 @@ service cloud.firestore {
 
     // Interactive Map Pings (Player/Master real-time markers)
     match /map_pings/{pingId} {
+      allow read, create, update, delete: if isAuthenticated();
+    }
+
+    // Real-time Tactical 3D Map Dice Rolls (Player/Master rolls)
+    match /map_rolls/{rollId} {
       allow read, create, update, delete: if isAuthenticated();
     }
 

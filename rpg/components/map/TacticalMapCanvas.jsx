@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Compass,
   Crosshair,
   Dices,
@@ -30,6 +32,7 @@ import {
   Skull,
   Trash2,
   Unlock,
+  User,
   X,
   Zap,
 } from 'lucide-react';
@@ -38,6 +41,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import { TacticalDice3D } from './TacticalDice3D';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import { cn } from '../../lib/utils';
 
@@ -59,6 +63,7 @@ export function TacticalMapCanvas({
   map,
   tokens = [],
   currentUserId,
+  currentUserName,
   isMaster = false,
   onUpdateTokenPosition,
   onUpdateTokenStats,
@@ -66,6 +71,8 @@ export function TacticalMapCanvas({
   onUpdateMap,
   onPing,
   pings = [],
+  diceRolls = [],
+  onDiceRoll,
 }) {
   const containerRef = useRef(null);
   const mapImageRef = useRef(null);
@@ -238,9 +245,104 @@ export function TacticalMapCanvas({
     return deduped;
   }, [pings, localPings, now, map?.id]);
 
-  // Rolador Rápido de Dados Integrado
+  // Rolador Rápido de Dados Integrado & Histórico Lateral (Limite de 15 rolagens)
+  const MAX_ROLL_HISTORY = 15;
   const [diceOpen, setDiceOpen] = useState(false);
+  const [rollHistoryOpen, setRollHistoryOpen] = useState(true);
   const [recentRoll, setRecentRoll] = useState(null);
+  const [active3DRoll, setActive3DRoll] = useState(null);
+  const [rollingSeedKey, setRollingSeedKey] = useState(null);
+  const [settledLocalRolls, setSettledLocalRolls] = useState([]);
+  const processedRollKeysRef = useRef(new Set());
+
+  const getRollSeedKey = useCallback((r) => {
+    if (!r) return '';
+    return r.seed ? `${r.seed}_${r.sides}_${r.roll}` : String(r.id || '');
+  }, []);
+
+  const getRollTime = useCallback((r) => {
+    if (!r) return 0;
+    if (typeof r.createdAtMs === 'number') return r.createdAtMs;
+    if (r.createdAt?.toMillis) return r.createdAt.toMillis();
+    if (r.createdAt?.seconds) return r.createdAt.seconds * 1000;
+    if (r.createdAt instanceof Date) return r.createdAt.getTime();
+    if (typeof r.createdAt === 'string') return new Date(r.createdAt).getTime();
+    return Date.now();
+  }, []);
+
+  // Chamado pelo TacticalDice3D exatamente quando o dado 3D para de rolar na mesa
+  const handleRollSettled = useCallback(
+    (settledRoll) => {
+      if (!settledRoll) return;
+      const key = getRollSeedKey(settledRoll);
+      setRollingSeedKey((prev) => (prev === key ? null : prev));
+      setRecentRoll(settledRoll);
+      setSettledLocalRolls((prev) => {
+        const filtered = prev.filter((item) => getRollSeedKey(item) !== key);
+        return [settledRoll, ...filtered].slice(0, MAX_ROLL_HISTORY);
+      });
+      try {
+        if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(
+            settledRoll.is_max ? [40, 60, 100] : settledRoll.is_fumble ? [80, 40, 80] : 25
+          );
+        }
+      } catch {}
+    },
+    [getRollSeedKey]
+  );
+
+  // Ouve rolagens em tempo real (do Firestore) pertencentes a este mapa
+  useEffect(() => {
+    if (!diceRolls || diceRolls.length === 0 || !map?.id) return;
+    const latest = diceRolls.find((r) => r.map_id === map.id);
+    if (!latest || !latest.id) return;
+
+    const seedKey = getRollSeedKey(latest);
+    if (
+      processedRollKeysRef.current.has(latest.id) ||
+      processedRollKeysRef.current.has(seedKey)
+    ) {
+      return;
+    }
+
+    const rollTime = getRollTime(latest);
+    // Anima em 3D apenas se foi criado há menos de 15 segundos
+    if (Date.now() - rollTime > 15000) {
+      processedRollKeysRef.current.add(latest.id);
+      processedRollKeysRef.current.add(seedKey);
+      return;
+    }
+
+    processedRollKeysRef.current.add(latest.id);
+    processedRollKeysRef.current.add(seedKey);
+    setRollingSeedKey(seedKey);
+    setActive3DRoll(latest);
+  }, [diceRolls, map?.id, getRollSeedKey, getRollTime]);
+
+  // Histórico Lateral das últimas 15 rolagens (exclui o dado que ainda está girando no ar)
+  const rollHistory = useMemo(() => {
+    const remoteForMap = (diceRolls || []).filter((r) => r.map_id === map?.id);
+    const localForMap = settledLocalRolls.filter(
+      (r) => !r.map_id || !map?.id || r.map_id === map.id
+    );
+    const combined = [...localForMap, ...remoteForMap];
+    const seenKeys = new Set();
+    const deduped = [];
+
+    for (const r of combined) {
+      const key = getRollSeedKey(r);
+      if (!key || seenKeys.has(key)) continue;
+      // Oculta do histórico enquanto o dado ainda está rolando na mesa
+      if (rollingSeedKey && key === rollingSeedKey) continue;
+      seenKeys.add(key);
+      deduped.push(r);
+    }
+
+    deduped.sort((a, b) => getRollTime(b) - getRollTime(a));
+    // Limite estrito das últimas 15 rolagens: toda vez que entra uma nova, a 15ª mais antiga sai
+    return deduped.slice(0, MAX_ROLL_HISTORY);
+  }, [diceRolls, settledLocalRolls, map?.id, rollingSeedKey, getRollSeedKey, getRollTime]);
 
   // Ordem de Combate / Iniciativa
   const [initiativeOpen, setInitiativeOpen] = useState(Boolean(map?.combat_active));
@@ -502,18 +604,58 @@ export function TacticalMapCanvas({
     setInspectModalOpen(true);
   };
 
-  // Rolador Rápido de Dados
-  const rollDice = (sides) => {
-    const roll = Math.floor(Math.random() * sides) + 1;
-    const isCrit = sides === 20 && roll === 20;
-    const isFumble = sides === 20 && roll === 1;
-    setRecentRoll({ sides, roll, isCrit, isFumble, id: Date.now() });
+  // Rolador Rápido de Dados com Simulação 3D e Transmissão em Tempo Real
+  const rollDice = async (sides) => {
+    const validSides = [4, 6, 8, 10, 12, 20].includes(Number(sides)) ? Number(sides) : 20;
+    // Probabilidade 100% matemática uniforme (1 a N)
+    const roll = Math.floor(Math.random() * validSides) + 1;
+    const isCrit = validSides === 20 && roll === 20;
+    const isMax = roll === validSides;
+    const isFumble = validSides === 20 && roll === 1;
+    const seed = Math.random();
 
-    try {
-      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-        navigator.vibrate(isCrit ? [40, 60, 100] : 25);
+    const nowMs = Date.now();
+    const localRoll = {
+      id: `local-${nowMs}-${Math.random()}`,
+      map_id: map?.id,
+      user_id: currentUserId,
+      user_name: currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
+      user_role: isMaster ? 'master' : 'player',
+      sides: validSides,
+      roll,
+      seed,
+      is_max: isMax,
+      is_crit: isCrit,
+      is_fumble: isFumble,
+      isMax,
+      isCrit,
+      isFumble,
+      createdAtMs: nowMs,
+      createdAt: { toMillis: () => nowMs },
+    };
+
+    const seedKey = `${seed}_${validSides}_${roll}`;
+    processedRollKeysRef.current.add(localRoll.id);
+    processedRollKeysRef.current.add(seedKey);
+    // O resultado só é exibido quando o dado terminar de rolar (via handleRollSettled)
+    setRollingSeedKey(seedKey);
+    setActive3DRoll(localRoll);
+
+    if (onDiceRoll && map?.id) {
+      try {
+        await onDiceRoll({
+          map_id: map.id,
+          user_id: currentUserId,
+          user_name: currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
+          user_role: isMaster ? 'master' : 'player',
+          sides: validSides,
+          roll,
+          seed,
+        });
+      } catch (err) {
+        console.error('Erro ao sincronizar rolagem de dados 3D:', err);
       }
-    } catch {}
+    }
   };
 
   // Tokens visíveis (Mestre vê todos; jogadores não veem tokens com hidden === true)
@@ -785,30 +927,172 @@ export function TacticalMapCanvas({
             ))}
           </div>
 
-          {recentRoll && (
-            <div
-              key={recentRoll.id}
-              className={cn(
-                'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95',
-                recentRoll.isCrit
-                  ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                  : recentRoll.isFumble
-                  ? 'bg-rose-500/20 border-rose-400 text-rose-200'
-                  : 'bg-white/10 border-white/15 text-white'
-              )}
-            >
+          {rollingSeedKey && active3DRoll ? (
+            <div className="p-2.5 rounded-xl border border-white/15 bg-white/5 text-center animate-pulse">
               <div className="text-[10px] uppercase font-bold text-slate-400">
-                Resultado d{recentRoll.sides}
+                Rolando d{active3DRoll.sides}...
               </div>
-              <div className="text-2xl font-black font-mono">
-                {recentRoll.roll}
-                {recentRoll.isCrit && ' (Crítico!)'}
-                {recentRoll.isFumble && ' (Falha Crítica!)'}
+              <div className="text-lg font-bold font-mono text-slate-300">
+                Aguardando dado parar...
               </div>
             </div>
+          ) : (
+            recentRoll && (
+              <div
+                key={recentRoll.id || recentRoll.seed}
+                className={cn(
+                  'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95',
+                  recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit
+                    ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                    : recentRoll.is_fumble || recentRoll.isFumble
+                    ? 'bg-rose-500/20 border-rose-400 text-rose-200'
+                    : 'bg-white/10 border-white/15 text-white'
+                )}
+              >
+                <div className="text-[10px] uppercase font-bold text-slate-400">
+                  Resultado d{recentRoll.sides}
+                </div>
+                <div className="text-2xl font-black font-mono">
+                  {recentRoll.roll}
+                  {(recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit) && ' (Máximo!)'}
+                  {(recentRoll.is_fumble || recentRoll.isFumble) && ' (Falha Crítica!)'}
+                </div>
+              </div>
+            )
           )}
         </div>
       )}
+
+      {/* PAINEL LATERAL: HISTÓRICO DAS ÚLTIMAS 15 ROLAGENS DE DADOS */}
+      <div
+        className={cn(
+          'absolute left-3 z-20 w-60 rounded-2xl bg-[#0c101b]/88 backdrop-blur-xl border border-white/15 shadow-2xl transition-all duration-200 pointer-events-auto',
+          initiativeOpen && initiativeOrder.length > 0 ? 'top-28' : 'top-16'
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setRollHistoryOpen((prev) => !prev)}
+          className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/5 rounded-2xl transition-colors"
+          title="Alternar histórico das últimas 15 rolagens"
+        >
+          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-200">
+            <Dices className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+            Histórico de Dados
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="px-1.5 py-0.5 rounded-full bg-white/10 border border-white/10 text-[10px] font-mono font-bold text-slate-300">
+              {rollHistory.length}/{MAX_ROLL_HISTORY}
+            </span>
+            {rollHistoryOpen ? (
+              <ChevronUp className="h-3.5 w-3.5 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+            )}
+          </span>
+        </button>
+
+        {rollHistoryOpen && (
+          <div className="px-2.5 pb-2.5 pt-1 border-t border-white/10 space-y-1.5 max-h-[310px] overflow-y-auto">
+            {rollingSeedKey && active3DRoll && (
+              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/15 animate-pulse">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold text-white truncate">
+                    {active3DRoll.user_name || 'Aventureiro'}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    Rolando d{active3DRoll.sides}...
+                  </div>
+                </div>
+                <div className="h-7 w-7 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center font-mono text-xs font-bold text-slate-300">
+                  ?
+                </div>
+              </div>
+            )}
+
+            {rollHistory.length === 0 && !rollingSeedKey ? (
+              <div className="py-3 text-center text-[11px] text-slate-400">
+                Nenhuma rolagem registrada.
+              </div>
+            ) : (
+              rollHistory.map((item, idx) => {
+                const isMax = Boolean(item.is_max || item.isMax || item.isCrit || item.is_crit);
+                const isFumble = Boolean(item.is_fumble || item.isFumble);
+                const itemKey = getRollSeedKey(item) || item.id || idx;
+
+                return (
+                  <div
+                    key={itemKey}
+                    className={cn(
+                      'flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border transition-all',
+                      isMax
+                        ? 'bg-amber-950/45 border-amber-400/40 text-amber-100'
+                        : isFumble
+                        ? 'bg-rose-950/45 border-rose-400/40 text-rose-100'
+                        : 'bg-white/[0.04] border-white/10 text-slate-200'
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] font-mono text-slate-500 shrink-0">
+                          #{idx + 1}
+                        </span>
+                        <User className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span className="text-xs font-bold text-white truncate">
+                          {item.user_name || 'Aventureiro'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5 pl-4">
+                        <span className="text-[10px] font-mono font-semibold text-slate-400">
+                          d{item.sides}
+                        </span>
+                        {item.user_role === 'master' && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-300 font-semibold">
+                            Mestre
+                          </span>
+                        )}
+                        {isMax && (
+                          <span className="text-[9px] font-bold text-amber-300">
+                            Máximo!
+                          </span>
+                        )}
+                        {isFumble && (
+                          <span className="text-[9px] font-bold text-rose-400">
+                            Falha!
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      className={cn(
+                        'h-8 min-w-[2rem] px-1.5 rounded-lg flex items-center justify-center font-mono font-black text-sm shrink-0 border',
+                        isMax
+                          ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                          : isFumble
+                          ? 'bg-rose-500/20 border-rose-400/50 text-rose-300'
+                          : 'bg-white/10 border-white/15 text-white'
+                      )}
+                    >
+                      {item.roll}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ROLAGEM DE DADOS 3D INTERATIVA SOBRE O MAPA (TEMPO REAL) */}
+      <TacticalDice3D
+        currentRoll={active3DRoll}
+        onSettled={handleRollSettled}
+        onDismiss={() => {
+          setRollingSeedKey(null);
+          setActive3DRoll(null);
+        }}
+      />
 
       {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM) */}
       <div

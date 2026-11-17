@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Compass } from 'lucide-react';
 import {
   broadcastMapPing,
+  broadcastMapDiceRoll,
   updateMapTokenPosition,
   updateMapTokenStats,
 } from '../../lib/rpg-service';
@@ -15,6 +16,7 @@ export function PlayerMapView({
   tokens = [],
   profile,
   pings = [],
+  diceRolls = [],
 }) {
   // O jogador visualiza o mapa principal ativo definido pelo Mestre
   const activeMap = useMemo(() => maps.find((m) => m.is_active) || null, [maps]);
@@ -35,6 +37,21 @@ export function PlayerMapView({
         x,
         y,
         color: '#38bdf8',
+      });
+    } catch {}
+  };
+
+  const handleDiceRoll = async ({ sides, roll, seed }) => {
+    if (!activeMap || !profile) return;
+    try {
+      await broadcastMapDiceRoll({
+        map_id: activeMap.id,
+        user_id: profile.uid,
+        user_name: profile.username || 'Aventureiro',
+        user_role: profile.role || 'player',
+        sides,
+        roll,
+        seed,
       });
     } catch {}
   };
@@ -67,11 +84,14 @@ export function PlayerMapView({
         map={activeMap}
         tokens={activeTokens}
         currentUserId={profile?.uid}
+        currentUserName={profile?.username || 'Aventureiro'}
         isMaster={false}
         onUpdateTokenPosition={updateMapTokenPosition}
         onUpdateTokenStats={updateMapTokenStats}
         onPing={handlePing}
         pings={pings}
+        diceRolls={diceRolls}
+        onDiceRoll={handleDiceRoll}
       />
     </div>
   );

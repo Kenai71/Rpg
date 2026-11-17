@@ -39,6 +39,16 @@
     * Duração máxima de 5 segundos no mapa com contagem regressiva e fade out suave.
     * Desduplicação espacial (< 3%) e temporal (< 4.5s) elimina completamente ondas duplicadas no mapa.
   - **Rolador Rápido de Dados Integrado:** HUD flutuante para rolagem imediata de d4, d6, d8, d10, d12 e d20 com detecção de críticos e vibração háptica.
+  - **Rolagem de Dados 3D na Mesa em Tempo Real (`TacticalDice3D.jsx`, `dice-audio.js` & `map_rolls`):**
+    * **Modelos Poliedrais 3D Oficiais (Three.js WebGL):** Geometrias precisas e texturizadas com CanvasTexture 256x256 para d4 (Tetrahedron), d6 (Box), d8 (Octahedron), d10 (Trapezoedro Pentagonal customizado), d12 (Dodecahedron) e d20 (Icosahedron).
+    * **Probabilidade Matemática e Faces 1:1:** Distribuição uniforme rigorosa (`Math.floor(Math.random() * sides) + 1`). Alinhamento por quaternions e interpolação esférica (SLERP) garantindo que a face correspondente ao resultado sorteado pouse voltada para cima em direção à câmera.
+    * **Física de Queda e Rolagem Fluida:** Animação de gravidade com amortecimento de quiques (bounce damping), dispersão aleatória de rotação e ondas de impacto visual no plano do mapa.
+    * **Efeitos Sonoros Procedurais (Web Audio API):**
+      - Síntese nativa em tempo real com osciladores e filtros, sem arquivos de áudio externos ou risco de 404.
+      - Impactos percussivos de madeira/resina nos quiques.
+      - Som agradável de sucesso (arpejo pentatônico C5-E5-G5-B5-C6) em resultados máximos (20 no d20, 12 no d12, 10 no d10, 8 no d8, 6 no d6 e 4 no d4).
+      - Som dramático de falha crítica (trítono dissonante Eb3 -> C3 -> Gb2 com filtro passa-baixa) para resultado 1 no d20.
+    * **Sincronização em Tempo Real Multiusuário:** Coleção `map_rolls` no Firestore com regras autenticadas. Disparo instantâneo e compartilhado entre Mestre e Jogadores, com banner translúcido contendo o nome de quem rolou, cargo (Mestre/Jogador), tipo de dado e resultado destacado.
   - **Invisibilidade / Névoa:** Tokens de monstros podem ser ocultados dos jogadores até o momento do combate.
   - **Precisão Matemática de 100% nos Tokens (`TacticalMapCanvas.jsx` & `rpg-service.js`):**
     * **Coordenadas Sub-pixel e 4 Casas Decimais:** Precisão de 4 casas decimais (`0.0001%`), eliminando truncamentos numéricos que causavam pequenos saltos de pixels ao soltar o token no mapa.

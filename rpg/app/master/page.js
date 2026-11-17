@@ -36,6 +36,7 @@ export default function MasterPage() {
   const [maps, setMaps] = useState([]);
   const [tokens, setTokens] = useState([]);
   const [pings, setPings] = useState([]);
+  const [diceRolls, setDiceRolls] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const [contractConfirm, setContractConfirm] = useState(null); // { mission, status }
@@ -68,6 +69,9 @@ export default function MasterPage() {
       ),
       subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
         console.error('Erro ao ouvir pings:', err)
+      ),
+      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, (err) =>
+        console.error('Erro ao ouvir rolagens 3D:', err)
       ),
     ];
 
@@ -259,6 +263,7 @@ export default function MasterPage() {
           maps={maps}
           tokens={tokens}
           pings={pings}
+          diceRolls={diceRolls}
           players={players}
           currentUserId={profile?.uid}
           currentUserName={profile?.username || 'Mestre'}

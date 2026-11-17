@@ -30,6 +30,7 @@ export default function PlayerPage() {
   const [maps, setMaps] = useState([]);
   const [tokens, setTokens] = useState([]);
   const [pings, setPings] = useState([]);
+  const [diceRolls, setDiceRolls] = useState([]);
   const [incomingTrades, setIncomingTrades] = useState([]);
   const [outgoingTrades, setOutgoingTrades] = useState([]);
   const [requestingSpin, setRequestingSpin] = useState(false);
@@ -75,6 +76,9 @@ export default function PlayerPage() {
       ),
       subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
         console.error('Erro ao ouvir pings:', err)
+      ),
+      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, (err) =>
+        console.error('Erro ao ouvir rolagens 3D:', err)
       ),
       subscribeCollection(
         'trade_requests',
@@ -220,6 +224,7 @@ export default function PlayerPage() {
           tokens={tokens}
           profile={profile}
           pings={pings}
+          diceRolls={diceRolls}
         />
       )}
 

@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import {
   broadcastMapPing,
+  broadcastMapDiceRoll,
   createMap,
   createMapToken,
   deleteMapWithTokens,
@@ -41,6 +42,7 @@ export function MasterMapManager({
   maps = [],
   tokens = [],
   pings = [],
+  diceRolls = [],
   players = [],
   currentUserId,
   currentUserName = 'Mestre',
@@ -297,6 +299,22 @@ export function MasterMapManager({
     } catch {}
   };
 
+  // Rolagem de Dados 3D emitida pelo Mestre
+  const handleDiceRoll = async ({ sides, roll, seed }) => {
+    if (!currentMap) return;
+    try {
+      await broadcastMapDiceRoll({
+        map_id: currentMap.id,
+        user_id: currentUserId,
+        user_name: currentUserName || 'Mestre',
+        user_role: 'master',
+        sides,
+        roll,
+        seed,
+      });
+    } catch {}
+  };
+
   // Invocação rápida de monstro / NPC
   const handleSpawnMonster = async (e) => {
     e.preventDefault();
@@ -542,13 +560,16 @@ export function MasterMapManager({
           map={currentMap}
           tokens={currentTokens}
           pings={pings}
+          diceRolls={diceRolls}
           currentUserId={currentUserId}
+          currentUserName={currentUserName}
           isMaster={true}
           onUpdateTokenPosition={updateMapTokenPosition}
           onUpdateTokenStats={updateMapTokenStats}
           onDeleteToken={deleteMapToken}
           onUpdateMap={updateMap}
           onPing={handlePing}
+          onDiceRoll={handleDiceRoll}
         />
       ) : (
         <Card className="p-12 text-center space-y-4">

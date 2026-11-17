@@ -1211,3 +1211,81 @@ export async function broadcastMapPing({ map_id, user_id, user_name, x, y, color
     createdAt: serverTimestamp(),
   });
 }
+
+/**
+ * Transmissão em tempo real de rolagem de dados 3D na mesa tática (VTT)
+ */
+export async function broadcastMapDiceRoll({
+  map_id,
+  user_id,
+  user_name,
+  user_role = 'player',
+  sides,
+  roll,
+  seed = Math.random(),
+}) {
+  if (!map_id || !sides) return null;
+  const firestore = requireDb();
+  const validSides = [4, 6, 8, 10, 12, 20].includes(Number(sides)) ? Number(sides) : 20;
+  const numRoll =
+    Number.isFinite(Number(roll)) && Number(roll) >= 1 && Number(roll) <= validSides
+      ? Number(roll)
+      : Math.floor(Math.random() * validSides) + 1;
+
+  const isMax = numRoll === validSides;
+  const isFumble = validSides === 20 && numRoll === 1;
+
+  const nowMs = Date.now();
+  const docRef = await addDoc(collection(firestore, 'map_rolls'), {
+    map_id: String(map_id),
+    user_id: String(user_id || 'anon'),
+    user_name: String(user_name || 'Aventureiro').slice(0, 60),
+    user_role: String(user_role || 'player'),
+    sides: validSides,
+    roll: numRoll,
+    seed: Number(seed),
+    is_max: Boolean(isMax),
+    is_fumble: Boolean(isFumble),
+    createdAtMs: nowMs,
+    createdAt: serverTimestamp(),
+  });
+
+  // Limite estrito das últimas 15 rolagens por mapa: apaga as mais antigas acima de 15
+  try {
+    const q = query(
+      collection(firestore, 'map_rolls'),
+      where('map_id', '==', String(map_id))
+    );
+    const snap = await getDocs(q);
+    if (snap.docs.length > 15) {
+      const getDocTime = (d) => {
+        const data = d.data();
+        if (typeof data?.createdAtMs === 'number') return data.createdAtMs;
+        if (data?.createdAt?.toMillis) return data.createdAt.toMillis();
+        if (data?.createdAt?.seconds) return data.createdAt.seconds * 1000;
+        return 0;
+      };
+      const sorted = [...snap.docs].sort((a, b) => getDocTime(b) - getDocTime(a));
+      const excess = sorted.slice(15);
+      await Promise.all(
+        excess.map((oldDoc) => deleteDoc(doc(firestore, 'map_rolls', oldDoc.id)))
+      );
+    }
+  } catch (cleanupErr) {
+    console.warn('Aviso ao manter limite de 15 rolagens:', cleanupErr);
+  }
+
+  return {
+    id: docRef.id,
+    map_id: String(map_id),
+    user_id: String(user_id || 'anon'),
+    user_name: String(user_name || 'Aventureiro').slice(0, 60),
+    user_role: String(user_role || 'player'),
+    sides: validSides,
+    roll: numRoll,
+    seed: Number(seed),
+    is_max: Boolean(isMax),
+    is_fumble: Boolean(isFumble),
+    createdAtMs: nowMs,
+  };
+}
