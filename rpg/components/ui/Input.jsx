@@ -4,8 +4,8 @@ import { forwardRef, useId } from 'react';
 import { cn } from '../../lib/utils';
 
 const baseFieldClass =
-  'w-full rounded-xl bg-[var(--surface-0)]/80 border border-[var(--border-subtle)] text-slate-100 placeholder:text-slate-500 text-sm transition-colors duration-150 ' +
-  'hover:border-[var(--border-strong)] focus:border-white/30 focus:outline-none focus:ring-2 focus:ring-white/10 ' +
+  'w-full rounded-xl !bg-[#0c101b] border border-white/15 !text-white placeholder:!text-slate-400 text-sm transition-colors duration-150 ' +
+  'hover:border-white/25 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/15 focus:!bg-[#0c101b] ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
 export const Label = forwardRef(function Label({ className, required, children, ...props }, ref) {

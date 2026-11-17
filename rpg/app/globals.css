@@ -41,6 +41,33 @@
   box-sizing: border-box;
 }
 
+/* Universal high-contrast dark inputs, textareas & selects */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  background-color: #0c101b !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  caret-color: #ffffff !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1 !important;
+}
+
+/* Ensure browser autofill never overrides with white background or dark text */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #0c101b inset !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 html,
 body {
   margin: 0;

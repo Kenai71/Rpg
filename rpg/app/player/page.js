@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { orderBy, where } from 'firebase/firestore';
-import { Award, Backpack, Scroll, ShoppingBag, Users } from 'lucide-react';
+import { Award, Backpack, Compass, Scroll, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { isFirebaseConfigured } from '../../lib/firebase';
 import { openGachaGiftTx, requestRouletteGift, subscribeCollection } from '../../lib/rpg-service';
@@ -17,15 +17,19 @@ import { PlayerShop } from '../../components/player/PlayerShop';
 import { PlayerAllies } from '../../components/player/PlayerAllies';
 import { PlayerCharacter } from '../../components/player/PlayerCharacter';
 import { RouletteModal } from '../../components/player/RouletteModal';
+import { PlayerMapView } from '../../components/map/PlayerMapView';
 
 export default function PlayerPage() {
   const { user, profile, loading, error, logout } = useAuthGuard();
 
-  const [tab, setTab] = useState('missions');
+  const [tab, setTab] = useState('map');
   const [missions, setMissions] = useState([]);
   const [shopItems, setShopItems] = useState([]);
   const [allProfiles, setAllProfiles] = useState([]);
   const [parties, setParties] = useState([]);
+  const [maps, setMaps] = useState([]);
+  const [tokens, setTokens] = useState([]);
+  const [pings, setPings] = useState([]);
   const [incomingTrades, setIncomingTrades] = useState([]);
   const [outgoingTrades, setOutgoingTrades] = useState([]);
   const [requestingSpin, setRequestingSpin] = useState(false);
@@ -62,6 +66,15 @@ export default function PlayerPage() {
       ),
       subscribeCollection('parties', [orderBy('name', 'asc')], setParties, (err) =>
         console.error('Erro ao ouvir grupos:', err)
+      ),
+      subscribeCollection('maps', [], setMaps, (err) =>
+        console.error('Erro ao ouvir mapas:', err)
+      ),
+      subscribeCollection('map_tokens', [], setTokens, (err) =>
+        console.error('Erro ao ouvir tokens:', err)
+      ),
+      subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
+        console.error('Erro ao ouvir pings:', err)
       ),
       subscribeCollection(
         'trade_requests',
@@ -101,6 +114,7 @@ export default function PlayerPage() {
 
   const commandItems = useMemo(() => {
     const navEntries = [
+      { id: 'tab-map', group: 'Navegação', label: 'Ir para Mesa & Mapa', icon: Compass, onSelect: () => setTab('map') },
       { id: 'tab-missions', group: 'Navegação', label: 'Ir para Mural de Missões', icon: Scroll, onSelect: () => setTab('missions') },
       { id: 'tab-shop', group: 'Navegação', label: 'Ir para Loja do Reino', icon: ShoppingBag, onSelect: () => setTab('shop') },
       { id: 'tab-players', group: 'Navegação', label: 'Ir para Aliados & Trocas', icon: Users, onSelect: () => setTab('players') },
@@ -200,6 +214,15 @@ export default function PlayerPage() {
       onOpenRoulette={() => setRouletteOpen(true)}
       onLogout={logout}
     >
+      {tab === 'map' && (
+        <PlayerMapView
+          maps={maps}
+          tokens={tokens}
+          profile={profile}
+          pings={pings}
+        />
+      )}
+
       {tab === 'missions' && (
         <PlayerMissions missions={missions} profile={profile} hasParty={Boolean(myParty)} />
       )}

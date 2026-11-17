@@ -90,6 +90,58 @@ service cloud.firestore {
     //   - createdAt: timestamp (optional)
     //   - resolvedAt: timestamp (optional)
     //
+    // Collection: maps
+    // Document ID: {mapId} (auto-generated)
+    // Fields:
+    //   - title: string (1..150 chars)
+    //   - imageUrl: string (<= 900000 chars)
+    //   - gridType: string ('square' | 'hex' | 'none')
+    //   - gridSize: number (10..300)
+    //   - gridOpacity: number (0..1)
+    //   - scale: number (0.1..5.0)
+    //   - is_active: bool
+    //   - is_locked: bool
+    //   - fog_enabled: bool (optional)
+    //   - combat_active: bool (optional)
+    //   - current_turn_token_id: string | null (optional, 0..128 chars)
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
+    //
+    // Collection: map_tokens
+    // Document ID: {tokenId} (auto-generated)
+    // Fields:
+    //   - map_id: string (1..128 chars)
+    //   - name: string (1..100 chars)
+    //   - type: string ('player' | 'npc' | 'monster')
+    //   - character_id: string | null (optional, 0..128 chars)
+    //   - owner_id: string | null (optional, 0..128 chars)
+    //   - color: string | null (optional, 0..50 chars)
+    //   - avatar: string | null (optional, 0..100000 chars)
+    //   - x: number (0..100)
+    //   - y: number (0..100)
+    //   - size: string ('S' | 'M' | 'L' | 'H' | 'G')
+    //   - hp: int (>= 0)
+    //   - max_hp: int (>= 1)
+    //   - ac: int (>= 0)
+    //   - mana: int (optional, >= 0)
+    //   - max_mana: int (optional, >= 0)
+    //   - conditions: list (optional, size <= 20)
+    //   - initiative: number (optional)
+    //   - hidden: bool (optional)
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
+    //
+    // Collection: map_pings
+    // Document ID: {pingId} (auto-generated)
+    // Fields:
+    //   - map_id: string (1..128 chars)
+    //   - user_id: string (1..128 chars)
+    //   - user_name: string | null (optional, 0..60 chars)
+    //   - x: number (0..100)
+    //   - y: number (0..100)
+    //   - color: string | null (optional, 0..50 chars)
+    //   - createdAt: timestamp (optional)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -132,6 +184,24 @@ service cloud.firestore {
     function isSafeOptionalInt(data, field, minVal, maxVal) {
       return !(field in data) || data[field] == null ||
         (data[field] is int && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    function isSafeNumber(val, minVal, maxVal) {
+      return (val is int || val is float) && val >= minVal && val <= maxVal;
+    }
+
+    function isSafeOptionalNumber(data, field, minVal, maxVal) {
+      return !(field in data) || data[field] == null ||
+        ((data[field] is int || data[field] is float) && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    function isSafeOptionalBool(data, field) {
+      return !(field in data) || data[field] == null || data[field] is bool;
+    }
+
+    function isSafeOptionalList(data, field, maxSize) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is list && data[field].size() <= maxSize);
     }
 
     function isSafeOptionalTimestamp(data, field) {
@@ -217,6 +287,55 @@ service cloud.firestore {
         (!('item' in data) || data.item is map) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'resolvedAt');
+    }
+
+    function isValidMap(data) {
+      return data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
+        data.imageUrl is string && data.imageUrl.size() <= 900000 &&
+        data.is_active is bool &&
+        data.is_locked is bool &&
+        (!('gridType' in data) || data.gridType in ['square', 'hex', 'none']) &&
+        (!('gridSize' in data) || data.gridSize is int || data.gridSize is float) &&
+        (!('gridOpacity' in data) || data.gridOpacity is int || data.gridOpacity is float) &&
+        (!('scale' in data) || data.scale is int || data.scale is float) &&
+        isSafeOptionalBool(data, 'fog_enabled') &&
+        isSafeOptionalBool(data, 'combat_active') &&
+        isSafeOptionalString(data, 'current_turn_token_id', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidMapToken(data) {
+      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.type in ['player', 'npc', 'monster'] &&
+        data.size in ['S', 'M', 'L', 'H', 'G'] &&
+        data.hp is int &&
+        data.max_hp is int &&
+        data.ac is int &&
+        (!('x' in data) || data.x is int || data.x is float) &&
+        (!('y' in data) || data.y is int || data.y is float) &&
+        isSafeOptionalString(data, 'character_id', 0, 128) &&
+        isSafeOptionalString(data, 'owner_id', 0, 128) &&
+        isSafeOptionalString(data, 'color', 0, 50) &&
+        isSafeOptionalString(data, 'avatar', 0, 100000) &&
+        isSafeOptionalInt(data, 'mana', 0, 100000) &&
+        isSafeOptionalInt(data, 'max_mana', 0, 100000) &&
+        isSafeOptionalList(data, 'conditions', 20) &&
+        (!('initiative' in data) || data.initiative == null || data.initiative is int || data.initiative is float) &&
+        isSafeOptionalBool(data, 'hidden') &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidMapPing(data) {
+      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
+        data.user_id is string && data.user_id.size() >= 1 && data.user_id.size() <= 128 &&
+        (!('x' in data) || data.x is int || data.x is float) &&
+        (!('y' in data) || data.y is int || data.y is float) &&
+        isSafeOptionalString(data, 'user_name', 0, 60) &&
+        isSafeOptionalString(data, 'color', 0, 50) &&
+        isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     // ===============================================================
@@ -400,6 +519,29 @@ service cloud.firestore {
         );
 
       allow delete: if isMaster();
+    }
+
+    // Tactical Battlemaps (VTT)
+    match /maps/{mapId} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isAuthenticated() && isValidMap(request.resource.data);
+
+      allow delete: if isAuthenticated();
+    }
+
+    // Map Tokens (Heroes, Monsters, NPCs)
+    match /map_tokens/{tokenId} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isAuthenticated() && isValidMapToken(request.resource.data);
+
+      allow delete: if isAuthenticated();
+    }
+
+    // Interactive Map Pings (Player/Master real-time markers)
+    match /map_pings/{pingId} {
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     // Default deny catch-all for any unmatched paths or collections

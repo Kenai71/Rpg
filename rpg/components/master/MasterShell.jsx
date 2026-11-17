@@ -24,6 +24,7 @@ import { cn } from '../../lib/utils';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Visão Geral', icon: LayoutDashboard },
+  { id: 'maps', label: 'Mesa & Mapas', icon: Compass },
   { id: 'missions', label: 'Missões & Contratos', icon: Scroll },
   { id: 'shop', label: 'Loja & Economia', icon: ShoppingBag },
   { id: 'players', label: 'Heróis & Grupos', icon: Users },

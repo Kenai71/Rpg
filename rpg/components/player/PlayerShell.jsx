@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   Backpack,
   Coins,
+  Compass,
   Crown,
   Dices,
   LogOut,
@@ -28,6 +29,7 @@ import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { UserAvatar } from '../ui/UserAvatar';
 
 const TABS = [
+  { id: 'map', label: 'Mesa & Mapa', icon: Compass },
   { id: 'missions', label: 'Mural', icon: Scroll },
   { id: 'shop', label: 'Loja', icon: ShoppingBag },
   { id: 'players', label: 'Aliados', icon: Users },

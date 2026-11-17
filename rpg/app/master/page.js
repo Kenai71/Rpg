@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { orderBy } from 'firebase/firestore';
-import { Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
+import { Compass, Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { auth, isFirebaseConfigured } from '../../lib/firebase';
 import { formatNumber } from '../../lib/utils';
@@ -22,6 +22,7 @@ import { MasterShop } from '../../components/master/MasterShop';
 import { MasterPlayers } from '../../components/master/MasterPlayers';
 import { MasterRequests } from '../../components/master/MasterRequests';
 import { MasterPermissions } from '../../components/master/MasterPermissions';
+import { MasterMapManager } from '../../components/map/MasterMapManager';
 
 export default function MasterPage() {
   const { user, profile, loading, error, logout } = useAuthGuard({ requiredRole: 'master' });
@@ -32,6 +33,9 @@ export default function MasterPage() {
   const [parties, setParties] = useState([]);
   const [requests, setRequests] = useState([]);
   const [shopItems, setShopItems] = useState([]);
+  const [maps, setMaps] = useState([]);
+  const [tokens, setTokens] = useState([]);
+  const [pings, setPings] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const [contractConfirm, setContractConfirm] = useState(null); // { mission, status }
@@ -55,6 +59,15 @@ export default function MasterPage() {
       ),
       subscribeCollection('shop_items', [orderBy('item_name', 'asc')], setShopItems, (err) =>
         console.error('Erro ao ouvir loja:', err)
+      ),
+      subscribeCollection('maps', [], setMaps, (err) =>
+        console.error('Erro ao ouvir mapas:', err)
+      ),
+      subscribeCollection('map_tokens', [], setTokens, (err) =>
+        console.error('Erro ao ouvir tokens:', err)
+      ),
+      subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
+        console.error('Erro ao ouvir pings:', err)
       ),
     ];
 
@@ -83,6 +96,7 @@ export default function MasterPage() {
   const commandItems = useMemo(() => {
     const modules = [
       { id: 'nav-overview', group: 'Módulos Admin', label: 'Visão Geral', icon: LayoutDashboard, onSelect: () => setActiveSection('overview') },
+      { id: 'nav-maps', group: 'Módulos Admin', label: 'Mesa & Mapas', icon: Compass, onSelect: () => setActiveSection('maps') },
       { id: 'nav-missions', group: 'Módulos Admin', label: 'Missões & Contratos', icon: Scroll, onSelect: () => setActiveSection('missions') },
       { id: 'nav-shop', group: 'Módulos Admin', label: 'Loja & Economia', icon: ShoppingBag, onSelect: () => setActiveSection('shop') },
       { id: 'nav-players', group: 'Módulos Admin', label: 'Heróis & Grupos', icon: Users, onSelect: () => setActiveSection('players') },
@@ -237,6 +251,17 @@ export default function MasterPage() {
           onResolveContract={(mission, status) => setContractConfirm({ mission, status })}
           onResolveRequest={handleResolveRequest}
           onNavigate={setActiveSection}
+        />
+      )}
+
+      {activeSection === 'maps' && (
+        <MasterMapManager
+          maps={maps}
+          tokens={tokens}
+          pings={pings}
+          players={players}
+          currentUserId={profile?.uid}
+          currentUserName={profile?.username || 'Mestre'}
         />
       )}
 

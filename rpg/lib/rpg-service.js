@@ -971,3 +971,243 @@ export async function persistGeneratedDailyContent({ missions = [], shop_items =
 
   await batch.commit();
 }
+
+// =========================================================================
+// SERVIÇOS DE MAPAS TÁTICOS E MESA VTT (D&D 5.5e / 5e)
+// =========================================================================
+
+export async function createMap({
+  title,
+  imageUrl,
+  gridType = 'square',
+  gridSize = 48,
+  gridOpacity = 0.25,
+  scale = 1.0,
+  is_active = false,
+  is_locked = false,
+}) {
+  const firestore = requireDb();
+  const mapsRef = collection(firestore, 'maps');
+  const cleanTitle = String(title || 'Mapa Sem Nome').trim().slice(0, 150);
+  const cleanUrl = String(imageUrl || '').trim().slice(0, 900000);
+
+  const docRef = await addDoc(mapsRef, {
+    title: cleanTitle,
+    imageUrl: cleanUrl,
+    gridType: ['square', 'hex', 'none'].includes(gridType) ? gridType : 'square',
+    gridSize: Math.max(10, Math.min(300, Number(gridSize) || 48)),
+    gridOpacity: Math.max(0, Math.min(1, Number(gridOpacity) || 0.25)),
+    scale: Math.max(0.2, Math.min(5, Number(scale) || 1.0)),
+    is_active: Boolean(is_active),
+    is_locked: Boolean(is_locked),
+    fog_enabled: false,
+    combat_active: false,
+    current_turn_token_id: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return docRef.id;
+}
+
+export async function updateMap(mapId, updates) {
+  if (!mapId) return;
+  const firestore = requireDb();
+  const mapRef = doc(firestore, 'maps', mapId);
+
+  const sanitized = { ...updates, updatedAt: serverTimestamp() };
+  delete sanitized.id;
+  delete sanitized.createdAt;
+
+  await updateDoc(mapRef, sanitized);
+}
+
+export async function setActiveMapTx(activeMapId) {
+  const firestore = requireDb();
+  const mapsSnap = await getDocs(collection(firestore, 'maps'));
+  const batch = writeBatch(firestore);
+
+  mapsSnap.forEach((d) => {
+    const isTarget = d.id === activeMapId;
+    batch.update(d.ref, {
+      is_active: isTarget,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  await batch.commit();
+}
+
+export async function deleteMapWithTokens(mapId) {
+  if (!mapId) return;
+  const firestore = requireDb();
+  const batch = writeBatch(firestore);
+
+  // Deleta tokens associados
+  const tokensSnap = await getDocs(
+    query(collection(firestore, 'map_tokens'), where('map_id', '==', mapId))
+  );
+  tokensSnap.forEach((t) => batch.delete(t.ref));
+
+  // Deleta o mapa
+  batch.delete(doc(firestore, 'maps', mapId));
+
+  // Se o mapa era ativo, checa se há outro mapa para promover a ativo
+  const allMapsSnap = await getDocs(collection(firestore, 'maps'));
+  const otherMaps = allMapsSnap.docs.filter((d) => d.id !== mapId);
+  const deletedWasActive = allMapsSnap.docs.some((d) => d.id === mapId && d.data()?.is_active);
+
+  if (deletedWasActive && otherMaps.length > 0) {
+    batch.update(otherMaps[0].ref, { is_active: true, updatedAt: serverTimestamp() });
+  }
+
+  await batch.commit();
+}
+
+export async function createMapToken(data) {
+  const firestore = requireDb();
+  const tokensRef = collection(firestore, 'map_tokens');
+
+  const cleanName = String(data.name || 'Guerreiro').trim().slice(0, 100);
+  const size = ['S', 'M', 'L', 'H', 'G'].includes(data.size) ? data.size : 'M';
+  const type = ['player', 'npc', 'monster'].includes(data.type) ? data.type : 'player';
+
+  const xVal = typeof data.x === 'number' ? data.x : Number(data.x);
+  const yVal = typeof data.y === 'number' ? data.y : Number(data.y);
+  const finalX = Number.isFinite(xVal) ? Math.max(0, Math.min(100, Math.round(xVal * 10000) / 10000)) : 50;
+  const finalY = Number.isFinite(yVal) ? Math.max(0, Math.min(100, Math.round(yVal * 10000) / 10000)) : 50;
+
+  const docRef = await addDoc(tokensRef, {
+    map_id: String(data.map_id),
+    name: cleanName,
+    type,
+    character_id: data.character_id || null,
+    owner_id: data.owner_id || null,
+    color: data.color || '#60a5fa',
+    avatar: data.avatar || null,
+    x: finalX,
+    y: finalY,
+    size,
+    hp: Math.max(0, Math.floor(Number(data.hp ?? 20))),
+    max_hp: Math.max(1, Math.floor(Number(data.max_hp ?? 20))),
+    ac: Math.max(0, Math.floor(Number(data.ac ?? 12))),
+    mana: Math.max(0, Math.floor(Number(data.mana ?? 10))),
+    max_mana: Math.max(0, Math.floor(Number(data.max_mana ?? 10))),
+    conditions: Array.isArray(data.conditions) ? data.conditions.slice(0, 20) : [],
+    initiative: Math.floor(Number(data.initiative || 0)),
+    hidden: Boolean(data.hidden),
+    updatedAt: serverTimestamp(),
+  });
+
+  return docRef.id;
+}
+
+export async function updateMapTokenPosition(tokenId, { x, y }) {
+  if (!tokenId) return;
+  const firestore = requireDb();
+  const tokenRef = doc(firestore, 'map_tokens', tokenId);
+
+  const numX = Number(x);
+  const numY = Number(y);
+  if (!Number.isFinite(numX) || !Number.isFinite(numY)) return;
+
+  await updateDoc(tokenRef, {
+    x: Math.max(0, Math.min(100, Math.round(numX * 10000) / 10000)),
+    y: Math.max(0, Math.min(100, Math.round(numY * 10000) / 10000)),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateMapTokenStats(tokenId, statsData) {
+  if (!tokenId) return;
+  const firestore = requireDb();
+  const tokenRef = doc(firestore, 'map_tokens', tokenId);
+
+  const payload = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (statsData.name !== undefined) payload.name = String(statsData.name).slice(0, 100);
+  if (statsData.size !== undefined) payload.size = statsData.size;
+  if (statsData.hp !== undefined) payload.hp = Math.max(0, Math.floor(Number(statsData.hp)));
+  if (statsData.max_hp !== undefined) payload.max_hp = Math.max(1, Math.floor(Number(statsData.max_hp)));
+  if (statsData.ac !== undefined) payload.ac = Math.max(0, Math.floor(Number(statsData.ac)));
+  if (statsData.mana !== undefined) payload.mana = Math.max(0, Math.floor(Number(statsData.mana)));
+  if (statsData.max_mana !== undefined) payload.max_mana = Math.max(0, Math.floor(Number(statsData.max_mana)));
+  if (statsData.conditions !== undefined) payload.conditions = Array.isArray(statsData.conditions) ? statsData.conditions : [];
+  if (statsData.color !== undefined) payload.color = statsData.color;
+  if (statsData.hidden !== undefined) payload.hidden = Boolean(statsData.hidden);
+  if (statsData.initiative !== undefined) payload.initiative = Number(statsData.initiative);
+
+  await updateDoc(tokenRef, payload);
+}
+
+export async function deleteMapToken(tokenId) {
+  if (!tokenId) return;
+  const firestore = requireDb();
+  await deleteDoc(doc(firestore, 'map_tokens', tokenId));
+}
+
+export async function syncHeroTokensToMap(mapId, playerProfiles, existingTokens = []) {
+  if (!mapId || !Array.isArray(playerProfiles)) return 0;
+  const firestore = requireDb();
+  const batch = writeBatch(firestore);
+  let addedCount = 0;
+
+  const existingHeroUids = new Set(
+    existingTokens
+      .filter((t) => t.map_id === mapId && t.type === 'player')
+      .map((t) => t.character_id)
+  );
+
+  playerProfiles.forEach((p, idx) => {
+    if (existingHeroUids.has(p.uid)) return;
+
+    const tokenRef = doc(collection(firestore, 'map_tokens'));
+    const heroLevel = Number(p.level || 1);
+    const calculatedHp = 18 + heroLevel * 6;
+    const calculatedMana = 10 + heroLevel * 4;
+
+    batch.set(tokenRef, {
+      map_id: mapId,
+      name: p.username || 'Herói',
+      type: 'player',
+      character_id: p.uid,
+      owner_id: p.uid,
+      color: '#60a5fa',
+      avatar: p.photoURL || null,
+      x: 10 + ((idx * 8) % 80),
+      y: 84 - Math.floor(idx / 10) * 8,
+      size: 'M',
+      hp: calculatedHp,
+      max_hp: calculatedHp,
+      ac: 14,
+      mana: calculatedMana,
+      max_mana: calculatedMana,
+      conditions: [],
+      initiative: 0,
+      hidden: false,
+      updatedAt: serverTimestamp(),
+    });
+    addedCount++;
+  });
+
+  if (addedCount > 0) {
+    await batch.commit();
+  }
+  return addedCount;
+}
+
+export async function broadcastMapPing({ map_id, user_id, user_name, x, y, color = '#38bdf8' }) {
+  if (!map_id) return;
+  const firestore = requireDb();
+  await addDoc(collection(firestore, 'map_pings'), {
+    map_id: String(map_id),
+    user_id: String(user_id || 'anon'),
+    user_name: String(user_name || 'Aventureiro').slice(0, 60),
+    x: Math.max(0, Math.min(100, Number(x))),
+    y: Math.max(0, Math.min(100, Number(y))),
+    color,
+    createdAt: serverTimestamp(),
+  });
+}
