@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Coins, Minus, Pencil, Plus, ShoppingBag, Trash2 } from 'lucide-react';
+import { Coins, Minus, Pencil, Plus, ShoppingBag, Trash2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ITEM_TYPES,
@@ -15,6 +15,12 @@ import {
   getItemTypeLabel,
   getRarityFromItem,
 } from '../../lib/constants';
+import {
+  DND_EXPANDED_WEAPONS,
+  classifyWeaponScaleType,
+  computeCosineSimilarity,
+  synthesizeUniqueWeaponDescription,
+} from '../../lib/dnd-rules';
 import { createShopItem, deleteShopItem, updateShopItem } from '../../lib/rpg-service';
 import { formatNumber } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -52,12 +58,14 @@ export function MasterShop({ shopItems }) {
   const [editingItem, setEditingItem] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [diversifying, setDiversifying] = useState(false);
 
   const {
     register,
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm({
     resolver: zodResolver(shopItemSchema),
@@ -72,6 +80,92 @@ export function MasterShop({ shopItems }) {
   });
 
   const watchedRarity = watch('rarity');
+  const watchedType = watch('type');
+  const watchedName = watch('item_name');
+
+  const synthesizeWeaponText = useCallback(
+    (itemName, rarity, comparisonList) => {
+      const safeName = String(itemName || 'Arma Forjada').trim();
+      const lowerName = safeName.toLowerCase();
+      const matchedWeapon = DND_EXPANDED_WEAPONS.find((w) =>
+        lowerName.includes(w.name.toLowerCase())
+      );
+      const mastery = matchedWeapon ? matchedWeapon.mastery : 'Afligir (Vex)';
+      const scaleType = classifyWeaponScaleType(safeName);
+
+      return synthesizeUniqueWeaponDescription({
+        name: safeName,
+        rarity: String(rarity || 'COMUM').toUpperCase(),
+        scaleType,
+        mastery,
+        comparisonDescriptions: comparisonList,
+      });
+    },
+    []
+  );
+
+  const handleSynthesizeInModal = () => {
+    const existingWeaponDescs = shopItems
+      .filter((s) => getItemType(s) === 'weapon' && s.id !== editingItem?.id)
+      .map((s) => cleanDescription(s.description));
+
+    const generated = synthesizeWeaponText(
+      watchedName || 'Lâmina Arcana',
+      watchedRarity,
+      existingWeaponDescs
+    );
+    setValue('description', generated, { shouldDirty: true });
+    toast.success(`Descrição única (${watchedRarity}) sintetizada por ML!`);
+  };
+
+  const handleDiversifyAllWeaponsML = async () => {
+    const weapons = shopItems.filter((s) => getItemType(s) === 'weapon');
+    if (weapons.length === 0) {
+      toast.info('Nenhuma arma cadastrada na loja para diversificar.');
+      return;
+    }
+
+    setDiversifying(true);
+    try {
+      const acceptedCorpus = [];
+      let updatedCount = 0;
+
+      for (const w of weapons) {
+        const rarity = getRarityFromItem(w);
+        const currentClean = cleanDescription(w.description);
+        const isGeneric =
+          currentClean.length < 75 ||
+          /Corte Dimensional:\s*ignora armadura/i.test(currentClean) ||
+          /Forjada nas chamas da forja an/i.test(currentClean);
+
+        const isTooSimilar = acceptedCorpus.some(
+          (prev) => computeCosineSimilarity(currentClean, prev) > 0.3
+        );
+
+        if (isGeneric || isTooSimilar) {
+          const newBody = synthesizeWeaponText(w.item_name, rarity, acceptedCorpus);
+          const fullDesc = formatDescriptionWithRarity(rarity, newBody);
+          await updateShopItem(w.id, { description: fullDesc });
+          acceptedCorpus.push(newBody);
+          updatedCount += 1;
+        } else {
+          acceptedCorpus.push(currentClean);
+        }
+      }
+
+      if (updatedCount > 0) {
+        toast.success(
+          `${updatedCount} arma(s) parecida(s) foram reescritas com descrições únicas por raridade!`
+        );
+      } else {
+        toast.success('Todas as armas da loja já possuem alta unicidade semântica!');
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao diversificar descrições das armas.');
+    } finally {
+      setDiversifying(false);
+    }
+  };
 
   const openCreateModal = () => {
     setEditingItem(null);
@@ -107,9 +201,17 @@ export function MasterShop({ shopItems }) {
 
   const onSubmitItem = async (values) => {
     try {
+      let rawDesc = String(values.description || '').trim();
+      if (values.type === 'weapon' && !rawDesc) {
+        const existingWeaponDescs = shopItems
+          .filter((s) => getItemType(s) === 'weapon' && s.id !== editingItem?.id)
+          .map((s) => cleanDescription(s.description));
+        rawDesc = synthesizeWeaponText(values.item_name, values.rarity, existingWeaponDescs);
+      }
+
       const payload = {
         item_name: values.item_name,
-        description: formatDescriptionWithRarity(values.rarity, values.description),
+        description: formatDescriptionWithRarity(values.rarity, rawDesc),
         price: Number(values.price),
         quantity: Number(values.quantity),
         type: values.type,
@@ -277,10 +379,21 @@ export function MasterShop({ shopItems }) {
             Cadastre armas, armaduras e consumíveis com raridades compatíveis com as Runas.
           </p>
         </div>
-        <Button onClick={openCreateModal} className="shrink-0">
-          <Plus className="h-4 w-4" />
-          Adicionar Item
-        </Button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <Button
+            variant="secondary"
+            onClick={handleDiversifyAllWeaponsML}
+            loading={diversifying}
+            title="Reescreve automaticamente armas parecidas usando Similaridade de Cosseno (ML)"
+          >
+            <Zap className="h-4 w-4 text-slate-300" />
+            Diversificar Armas (ML)
+          </Button>
+          <Button onClick={openCreateModal}>
+            <Plus className="h-4 w-4" />
+            Adicionar Item
+          </Button>
+        </div>
       </div>
 
       <DataTable
@@ -425,14 +538,28 @@ export function MasterShop({ shopItems }) {
             </FormField>
           </div>
 
-          <FormField label="Descrição e Efeitos Passivos" htmlFor="s-desc" error={errors.description?.message}>
-            <Textarea
-              id="s-desc"
-              rows={3}
-              placeholder="Ex: Passiva: Concede +2 de agilidade durante combates noturnos."
-              {...register('description')}
-            />
-          </FormField>
+          <div className="space-y-1.5">
+            {watchedType === 'weapon' && (
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleSynthesizeInModal}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-[11px] font-bold text-slate-200 transition-colors"
+                >
+                  <Zap className="h-3 w-3 text-slate-300" />
+                  Gerar Descrição Única ({watchedRarity}) via ML
+                </button>
+              </div>
+            )}
+            <FormField label="Descrição e Efeitos Passivos" htmlFor="s-desc" error={errors.description?.message}>
+              <Textarea
+                id="s-desc"
+                rows={4}
+                placeholder="Ex: Deixe em branco ou clique em 'Gerar Descrição Única via ML' para sintetizar passiva e lore exclusivos pela raridade."
+                {...register('description')}
+              />
+            </FormField>
+          </div>
         </form>
       </Modal>
 

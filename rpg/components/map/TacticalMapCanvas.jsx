@@ -252,10 +252,29 @@ export function TacticalMapCanvas({
   const [rollHistoryOpen, setRollHistoryOpen] = useState(true);
   const [recentRoll, setRecentRoll] = useState(null);
   const [active3DRoll, setActive3DRoll] = useState(null);
+  const [sharedBannerRoll, setSharedBannerRoll] = useState(null);
   const [rollingSeedKey, setRollingSeedKey] = useState(null);
   const [settledLocalRolls, setSettledLocalRolls] = useState([]);
   const processedRollKeysRef = useRef(new Set());
   const initialHistorySeededRef = useRef(false);
+  const bannerTimerRef = useRef(null);
+
+  const showTopResultBanner = useCallback((rollObj) => {
+    if (!rollObj) return;
+    setSharedBannerRoll(rollObj);
+    if (bannerTimerRef.current) {
+      clearTimeout(bannerTimerRef.current);
+    }
+    bannerTimerRef.current = setTimeout(() => {
+      setSharedBannerRoll((cur) => (cur?.seed === rollObj.seed ? null : cur));
+    }, 4200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
 
   const getRollSeedKey = useCallback((r) => {
     if (!r) return '';
@@ -291,13 +310,14 @@ export function TacticalMapCanvas({
     return () => clearTimeout(timer);
   }, []);
 
-  // Chamado pelo TacticalDice3D exatamente quando o dado 3D para de rolar na mesa
+  // Chamado pelo TacticalDice3D exatamente quando o dado 3D da própria pessoa para de rolar
   const handleRollSettled = useCallback(
-    (settledRoll) => {
+    async (settledRoll) => {
       if (!settledRoll) return;
       const key = getRollSeedKey(settledRoll);
       setRollingSeedKey((prev) => (prev === key ? null : prev));
       setRecentRoll(settledRoll);
+      showTopResultBanner(settledRoll);
       setSettledLocalRolls((prev) => {
         const filtered = prev.filter((item) => getRollSeedKey(item) !== key);
         return [settledRoll, ...filtered].slice(0, MAX_ROLL_HISTORY);
@@ -309,15 +329,32 @@ export function TacticalMapCanvas({
           );
         }
       } catch {}
+
+      // Transmite o resultado consolidado para todos os outros jogadores e Mestre exatamente quando o dado para
+      if (onDiceRoll && map?.id) {
+        try {
+          await onDiceRoll({
+            map_id: map.id,
+            user_id: settledRoll.user_id || currentUserId,
+            user_name: settledRoll.user_name || currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
+            user_role: settledRoll.user_role || (isMaster ? 'master' : 'player'),
+            sides: settledRoll.sides,
+            roll: settledRoll.roll,
+            seed: settledRoll.seed,
+          });
+        } catch (err) {
+          console.error('Erro ao sincronizar resultado de dado:', err);
+        }
+      }
     },
-    [getRollSeedKey]
+    [getRollSeedKey, showTopResultBanner, onDiceRoll, map?.id, currentUserId, currentUserName, isMaster]
   );
 
-  // Ouve rolagens em tempo real de qualquer jogador ou mestre conectado à sessão
+  // Ouve resultados em tempo real de outros jogadores ou Mestre (exibe banner no topo + histórico para todos, sem conflito de dado 3D)
   useEffect(() => {
     if (!remoteDiceRolls || remoteDiceRolls.length === 0) return;
 
-    // No primeiro snapshot ao abrir a página, registra o histórico existente sem re-animar dados antigos
+    // No primeiro snapshot ao abrir a página, registra o histórico existente sem disparar banner antigo
     if (!initialHistorySeededRef.current) {
       initialHistorySeededRef.current = true;
       remoteDiceRolls.forEach((r) => {
@@ -342,9 +379,9 @@ export function TacticalMapCanvas({
     if (latest.id) processedRollKeysRef.current.add(latest.id);
     if (seedKey) processedRollKeysRef.current.add(seedKey);
 
-    setRollingSeedKey(seedKey);
-    setActive3DRoll(latest);
-  }, [remoteDiceRolls, getRollSeedKey]);
+    // Exibe o banner de resultado na parte de cima para todos os outros participantes (o dado 3D só aparece para quem girou)
+    showTopResultBanner(latest);
+  }, [remoteDiceRolls, getRollSeedKey, showTopResultBanner]);
 
   // Histórico Lateral Sincronizado das últimas 15 rolagens de toda a mesa (exclui o dado que ainda está girando)
   const rollHistory = useMemo(() => {
@@ -659,25 +696,9 @@ export function TacticalMapCanvas({
     const seedKey = `${seed}_${validSides}_${roll}`;
     processedRollKeysRef.current.add(localRoll.id);
     processedRollKeysRef.current.add(seedKey);
-    // O resultado só é exibido quando o dado terminar de rolar (via handleRollSettled)
+    // O dado 3D roda apenas para a pessoa que girou; o resultado e a transmissão para todos ocorrem em handleRollSettled
     setRollingSeedKey(seedKey);
     setActive3DRoll(localRoll);
-
-    if (onDiceRoll && map?.id) {
-      try {
-        await onDiceRoll({
-          map_id: map.id,
-          user_id: currentUserId,
-          user_name: currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
-          user_role: isMaster ? 'master' : 'player',
-          sides: validSides,
-          roll,
-          seed,
-        });
-      } catch (err) {
-        console.error('Erro ao sincronizar rolagem de dados 3D:', err);
-      }
-    }
   };
 
   // Tokens visíveis (Mestre vê todos; jogadores não veem tokens com hidden === true)
@@ -1106,7 +1127,73 @@ export function TacticalMapCanvas({
         )}
       </div>
 
-      {/* ROLAGEM DE DADOS 3D INTERATIVA SOBRE O MAPA (TEMPO REAL) */}
+      {/* BANNER SUPERIOR DE RESULTADO SINCRONIZADO PARA TODOS (EXIBIDO APENAS APÓS O DADO PARAR DE ROLAR) */}
+      {sharedBannerRoll && (
+        <div
+          key={getRollSeedKey(sharedBannerRoll)}
+          className={cn(
+            'pointer-events-auto absolute top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-2xl transition-all duration-300 animate-in fade-in zoom-in-95',
+            sharedBannerRoll.is_max || sharedBannerRoll.isMax
+              ? 'bg-amber-950/90 border-amber-400/70 text-amber-200 shadow-[0_0_35px_rgba(245,158,11,0.3)]'
+              : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble
+              ? 'bg-rose-950/90 border-rose-400/70 text-rose-200 shadow-[0_0_35px_rgba(244,63,94,0.3)]'
+              : 'bg-[#0c101b]/92 border-white/20 text-white shadow-[0_0_30px_rgba(0,0,0,0.75)]'
+          )}
+        >
+          <div
+            className={cn(
+              'h-11 w-11 rounded-xl flex items-center justify-center font-black font-mono text-xl shadow-inner shrink-0',
+              sharedBannerRoll.is_max || sharedBannerRoll.isMax
+                ? 'bg-amber-500/25 border border-amber-400/60 text-amber-300'
+                : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble
+                ? 'bg-rose-500/25 border border-rose-400/60 text-rose-300'
+                : 'bg-white/10 border border-white/15 text-white'
+            )}
+          >
+            {sharedBannerRoll.roll}
+          </div>
+
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+              <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <span className="truncate max-w-[160px] font-bold text-white">
+                {sharedBannerRoll.user_name || 'Aventureiro'}
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                (d{sharedBannerRoll.sides})
+              </span>
+            </div>
+
+            <div className="text-sm font-black tracking-wide">
+              {sharedBannerRoll.is_max || sharedBannerRoll.isMax ? (
+                <span className="text-amber-300 flex items-center gap-1">
+                  <Zap className="h-4 w-4" />
+                  SUCESSO MÁXIMO! ({sharedBannerRoll.roll})
+                </span>
+              ) : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble ? (
+                <span className="text-rose-400 font-bold">
+                  FALHA CRÍTICA! (1)
+                </span>
+              ) : (
+                <span className="text-slate-100">
+                  Rolou {sharedBannerRoll.roll} no d{sharedBannerRoll.sides}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setSharedBannerRoll(null)}
+            className="ml-2 h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Fechar"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ROLAGEM DE DADOS 3D NA TELA (EXCLUSIVA PARA A PESSOA QUE GIROU O DADO, SEM CONFLITO) */}
       <TacticalDice3D
         currentRoll={active3DRoll}
         onSettled={handleRollSettled}

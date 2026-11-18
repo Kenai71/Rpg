@@ -141,11 +141,17 @@ export default function MasterPage() {
     setIsGenerating(true);
     try {
       const idToken = await auth.currentUser.getIdToken();
+      const existingDescriptions = shopItems
+        .filter((s) => s.type === 'weapon' && s.description)
+        .map((s) => `${s.item_name || ''}: ${s.description}`);
+
       const res = await fetch('/api/daily-generate', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ existingDescriptions }),
       });
       const rawText = await res.text();
       let data = null;

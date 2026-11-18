@@ -1,7 +1,10 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '../../../lib/firebase-admin';
-import { enforceItemBalance, enforceMissionBalance } from '../../../lib/dnd-rules.js';
+import {
+  enforceBatchItemUniqueness,
+  enforceMissionBalance,
+} from '../../../lib/dnd-rules.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -68,24 +71,33 @@ function parseModelJson(rawText) {
   return JSON.parse(cleaned);
 }
 
-async function generateWithGemini(apiKey) {
+async function generateWithGemini(apiKey, existingDescriptions = []) {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const prompt = `Seed: ${Date.now()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e (Livro do Jogador, Livro do Mestre e Escudo do DM) em Português do Brasil.
-Gere exatamente 2 Missões e 10 Itens variados para o Astralis RPG.
+  const recentHighRarityContext =
+    existingDescriptions.length > 0
+      ? `\nMEMÓRIA ANTI-REPETIÇÃO (NÃO repita nomes, passivas ou descrições parecidas com estes itens já existentes na loja):\n${existingDescriptions
+          .slice(0, 12)
+          .map((d, i) => `${i + 1}. ${String(d).slice(0, 160)}`)
+          .join('\n')}\n`
+      : '';
 
-DIRETRIZES OFICIAIS D&D 5.5e (2024) & D&D 5e:
-1. ITENS & ARMAS:
+  const prompt = `Seed: ${Date.now()}-${Math.random()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e (Livro do Jogador, Livro do Mestre e Escudo do DM) em Português do Brasil.
+Gere exatamente 2 Missões e 10 Itens variados para o Astralis RPG.
+${recentHighRarityContext}
+DIRETRIZES OFICIAIS D&D 5.5e (2024), D&D 5e & ESCALONAMENTO DE UNICIDADE POR RARIDADE:
+1. ITENS & ARMAS (QUANTO MAIOR A RARIDADE, MAIS ÚNICA, COMPLEXA E EXCLUSIVA DEVE SER A ARMA):
 - Toda descrição de item DEVE iniciar com a tag de raridade: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO> ou <MÍTICO>.
 - Se o item for uma arma, inclua o Dano Escalonado e a Maestria em Arma Oficial 2024 (Afligir, Ágil, Derrubar, Drenar, Empurrar, Garantido, Lentidão ou Trespassar).
-- ESCALONAMENTO DE DANO & BENEFÍCIOS:
-  * <COMUM>: Dano base de entrada (Espada Curta/Cimitarra 1d4, Espada Longa 1d6, Espadão 1d10, Adaga 1d4, Arco Curto 1d4, Arco Longo 1d6). Sem propriedades mágicas ou bônus. Preço: 30 a 100 G.
-  * <INCOMUM>: Dano padrão do livro (Espada Curta 1d6, Espada Longa 1d8 versátil 1d10, Espadão 2d6, Machado Grande 1d12, Arco Longo 1d8) + bônus +1 no acerto ou Maestria 2024. Preço: 150 a 500 G.
-  * <RARO>: Dano ampliado (1d8, 1d10, 2d8) + bônus +1/+2 + Maestria 2024 + EFEITO BÔNUS ELEMENTAL (+1d4/+1d6 de dano de fogo, frio, relâmpago, radiante ou necrótico). Preço: 800 a 3.000 G.
-  * <ÉPICO>: Dano de alto impacto (1d10, 1d12, 2d10) + bônus +2/+3 + Maestria 2024 + EFEITO DE STATUS NO INIMIGO (Sangramento 1d4/turno, Atordoado por 1 rodada em crítico, Queimadura contínua, Lentidão -3m, Cegueira temporária). Preço: 4.000 a 15.000 G.
-  * <LENDÁRIO>: Dano devastador (2d8, 2d10, 2d12, 3d6) + bônus +3 + STATUS SEVERO & PROPRIEDADE LENDÁRIA (Corte Dimensional que ignora resistências a dano físico, Crítico com margem 19-20, Petrificação). Preço: 20.000 a 60.000 G.
-  * <MÍTICO>: Dano supremo (2d10+4, 3d8, 4d6) + PASSIVA MÍTICA ÚNICA (Roubo de vida de 50%, Ressurreição imediata com 1 PV uma vez ao dia, Explosão divina). Preço: 75.000 a 200.000 G.
+- PROIBIDO repetir clichês como "Corte Dimensional" em todas as armas lendárias. Cada arma de alta raridade DEVE pertencer a um arquétipo semântico distinto (Gravitacional, Temporal, Devoradora de Feitiços, Sombras Gêmeas, Eclipse Solar/Lunar, Tectônica, Telecinética, Predador Abissal, Tempestade Encadeada, Zero Absoluto, Fênix Astral, Caça-Dragões, Sifão Sanguíneo, Psíquica, etc.).
+- ESCALONAMENTO DE DANO, PROFUNDIDADE NARRATIVA & MECÂNICAS EXCLUSIVAS:
+  * <COMUM>: Descrição curta e direta de forja mundana (ferro, aço, madeira). Dano base (Espada Curta/Cimitarra 1d4, Espada Longa 1d6, Espadão 1d10, Adaga 1d4, Arco Curto 1d4, Arco Longo 1d6). Sem magia. Preço: 30 a 100 G.
+  * <INCOMUM>: Obra-prima alquímica/rúnica (prata alquímica, aço élfico, têmpera anã). Dano padrão do livro (1d6, 1d8 versátil 1d10, 2d6, 1d12) + bônus +1 no acerto + Maestria 2024. Preço: 150 a 500 G.
+  * <RARO>: Infusão Elemental/Planar distinta (+1d4/+1d6 de fogo solar, frio de Stygia, relâmpago astral, trovão sísmico, ácido, veneno, radiante, necrótico ou psíquico) + gatilho reativo de combate + bônus +1/+2 + Maestria 2024. Preço: 800 a 3.000 G.
+  * <ÉPICO>: Relíquia de campeão com Efeito de Status Tático (Sangramento, Atordoado, Queimadura, Lentidão, Cegueira, Veneno, Amaldiçoado) + uma Técnica Ativa Nomeada exclusiva (ex: Hemorragia Carmesim, Passo da Ampulheta, Martelo do Trovão, Silêncio Rúnico) + bônus +2/+3. Preço: 4.000 a 15.000 G.
+  * <LENDÁRIO>: Arma Nomeada Única no mundo com identidade própria, Lore histórico de criação e Passiva Lendária Exclusiva (ex: Singularidade Gravitacional que puxa inimigos, Rebobinamento Temporal de ataque falho, Quebra-Magia que absorve feitiços, Clone Espectral que repete o golpe, Postura Dual Sol/Lua, Fragmentação Telecinética com +3m de alcance, Relâmpago em Cadeia para 2 alvos). Dano: 2d8, 2d10, 2d12 ou 3d6 (+3 ataque). Preço: 20.000 a 60.000 G.
+  * <MÍTICO>: Artefato Primordial Único do Multiverso com origem cosmológica, Dano Supremo (2d10+4, 3d8+4, 4d6+5, +4 ataque) e Dupla Passiva Mítica + Despertar Cataclísmico único. Preço: 75.000 a 200.000 G.
 - Tipos de itens permitidos: weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
-- Distribua raridades variadas entre os 10 itens (ex: 3 comuns, 3 incomuns, 2 raros, 1 épico, 1 lendário/mítico).
+- Distribua raridades variadas entre os 10 itens (ex: 3 comuns, 2 incomuns, 2 raros, 1 épico, 1 lendário, 1 mítico/lendário).
 
 2. MISSÕES (Tiers de Jogo e Encontros do Guia do Mestre D&D 2024/5e):
 - Rank F: Ameaças locais menores (100-250 XP | 40-100 G)
@@ -99,7 +111,7 @@ DIRETRIZES OFICIAIS D&D 5.5e (2024) & D&D 5e:
 
 NUNCA use ícones de estrela ou símbolos de estrela.
 Responda APENAS JSON válido no seguinte formato:
-{"missions":[{"title":"","description":"","rank":"D","xp_reward":600,"gold_reward":350}],"shop_items":[{"item_name":"","description":"<RARO> Dano: 1d8 cortante (+1 ataque, +1d6 de fogo). Maestria: Afligir (Vex). Forjada nas chamas da forja anã.","price":1200,"quantity":1,"type":"weapon"}]}`;
+{"missions":[{"title":"","description":"","rank":"D","xp_reward":600,"gold_reward":350}],"shop_items":[{"item_name":"","description":"<LENDÁRIO> Dano: 2d8 cortante (+3 no ataque) — [Paradoxo do Relógio Quebrado]: +1d10 Temporal e permite rebobinar 1 ataque falho por combate. Maestria: Afligir (Vex). Seus engastes contêm areia do Plano do Tempo.","price":38000,"quantity":1,"type":"weapon"}]}`;
 
   let resultText = null;
   let lastError = null;
@@ -144,7 +156,7 @@ Responda APENAS JSON válido no seguinte formato:
     : [];
 
   const shop_items = Array.isArray(parsed?.shop_items)
-    ? parsed.shop_items.map(enforceItemBalance)
+    ? enforceBatchItemUniqueness(parsed.shop_items, existingDescriptions)
     : [];
 
   return { missions, shop_items };
@@ -197,7 +209,31 @@ async function handleGenerate(request, isPost) {
   }
 
   try {
-    const { missions, shop_items } = await generateWithGemini(apiKey);
+    let existingDescriptions = [];
+    if (isPost) {
+      try {
+        const bodyJson = await request.clone().json();
+        if (Array.isArray(bodyJson?.existingDescriptions)) {
+          existingDescriptions = bodyJson.existingDescriptions
+            .map((d) => String(d || ''))
+            .filter(Boolean);
+        }
+      } catch {}
+    }
+
+    if (admin && existingDescriptions.length === 0) {
+      try {
+        const existingSnap = await admin.adminDb.collection('shop_items').limit(30).get();
+        existingSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data?.type === 'weapon' && data?.description) {
+            existingDescriptions.push(`${data.item_name || ''}: ${data.description}`);
+          }
+        });
+      } catch {}
+    }
+
+    const { missions, shop_items } = await generateWithGemini(apiKey, existingDescriptions);
 
     if (admin) {
       const { FieldValue } = await import('firebase-admin/firestore');

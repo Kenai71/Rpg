@@ -28,6 +28,7 @@ export function TacticalDice3D({
   currentRoll,
   onSettled,
   onDismiss,
+  showBanner = false,
   className = '',
 }) {
   const mountRef = useRef(null);
@@ -119,12 +120,8 @@ export function TacticalDice3D({
       fillLight.position.set(-6.0, -3.0, 5.0);
       scene.add(fillLight);
 
-      const rimColor = rollSnapshot.is_max
-        ? 0xf59e0b
-        : rollSnapshot.is_fumble
-        ? 0xf43f5e
-        : 0x94a3b8;
-      const rimLight = new THREE.DirectionalLight(rimColor, 2.1);
+      // Começa com iluminação neutra durante a rolagem para não revelar crítico/falha antes de parar
+      const rimLight = new THREE.DirectionalLight(0x94a3b8, 1.7);
       rimLight.position.set(0, 5.5, -4.0);
       scene.add(rimLight);
 
@@ -145,7 +142,10 @@ export function TacticalDice3D({
       const {
         diceGroup,
         faces,
+        faceMaterials,
         winningMaterial,
+        settledWinningTexture,
+        edgesMat,
         textures,
         materials,
         geometries,
@@ -327,14 +327,44 @@ export function TacticalDice3D({
           if (!soundPlayed.fanfare) {
             soundPlayed.fanfare = true;
             setPhase('settled');
-            if (onSettledRef.current) {
-              onSettledRef.current(rollSnapshot);
+
+            // Ativa o efeito visual e de cor NO DADO 3D somente agora que o resultado apareceu
+            if (winningMaterial && settledWinningTexture) {
+              winningMaterial.map = settledWinningTexture;
+              winningMaterial.needsUpdate = true;
             }
 
             if (rollSnapshot.is_max) {
+              if (edgesMat) {
+                edgesMat.color.setHex(0xfbbf24);
+                edgesMat.opacity = 1.0;
+              }
+              rimLight.color.setHex(0xf59e0b);
+              rimLight.intensity = 3.2;
+              faceMaterials.forEach((mat) => {
+                mat.emissive.setHex(0xf59e0b);
+                mat.emissiveIntensity = mat === winningMaterial ? 0.34 : 0.14;
+              });
               playCriticalSuccessSound();
             } else if (rollSnapshot.is_fumble) {
+              if (edgesMat) {
+                edgesMat.color.setHex(0xf43f5e);
+                edgesMat.opacity = 1.0;
+              }
+              rimLight.color.setHex(0xf43f5e);
+              rimLight.intensity = 3.2;
+              faceMaterials.forEach((mat) => {
+                mat.emissive.setHex(0xf43f5e);
+                mat.emissiveIntensity = mat === winningMaterial ? 0.36 : 0.16;
+              });
               playCriticalFumbleSound();
+            } else if (winningMaterial) {
+              winningMaterial.emissive.setHex(0x38bdf8);
+              winningMaterial.emissiveIntensity = 0.18;
+            }
+
+            if (onSettledRef.current) {
+              onSettledRef.current(rollSnapshot);
             }
           }
 
@@ -350,10 +380,11 @@ export function TacticalDice3D({
           shadowMesh.scale.setScalar(0.92);
           shadowMat.opacity = 0.75;
 
-          // Pulso luminoso sutil na face vencedora e no anel de impacto
+          // Pulso luminoso no dado e no anel de impacto após o resultado aparecer
           const pulse = 0.5 + 0.5 * Math.sin(postElapsed * 0.006);
           if (winningMaterial) {
-            winningMaterial.emissiveIntensity = 0.18 + pulse * 0.16;
+            const baseEmissive = rollSnapshot.is_max || rollSnapshot.is_fumble ? 0.24 : 0.14;
+            winningMaterial.emissiveIntensity = baseEmissive + pulse * 0.18;
           }
 
           ringMat.opacity = Math.max(0, (0.55 - postElapsed * 0.00012) * (0.75 + pulse * 0.25));
@@ -441,8 +472,8 @@ export function TacticalDice3D({
       {/* CANVAS WEBGL TRIDIMENSIONAL DO DADO */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
-      {/* BANNER REATIVO (EXIBIDO APENAS QUANDO O DADO PARA DE ROLAR) */}
-      {(phase === 'settled' || phase === 'fading') && (
+      {/* BANNER REATIVO INTERNO (SE ATIVADO) */}
+      {showBanner && (phase === 'settled' || phase === 'fading') && (
         <div
           className={`pointer-events-auto absolute top-5 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-2xl transition-all duration-300 animate-in fade-in zoom-in-95 transform ${
             phase === 'settled'
@@ -597,6 +628,7 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   const faces = [];
   const faceMaterials = [];
   let winningMaterial = null;
+  let settledWinningTexture = null;
   let vertexCursor = 0;
 
   faceGroups.forEach((group, idx) => {
@@ -739,35 +771,43 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
 
     const groupCount = vertexCursor - groupStart;
 
-    // Criação da textura 512x512 da face com moldura poligonal e numeral gravado
-    const faceTexture = createFacePolygonTexture(
+    // Durante a rolagem, TODAS as faces usam textura neutra (sem spoiler de cor de crítico/falha)
+    const neutralTexture = createFacePolygonTexture(
       THREE,
       faceNum,
       sides,
-      isWinningFace,
+      false,
       rollData,
       poly2D,
       uvSpan,
       minEdgeDist,
       maxAnisotropy
     );
-    if (faceTexture) textures.push(faceTexture);
+    if (neutralTexture) textures.push(neutralTexture);
 
-    const emissiveHex = isWinningFace
-      ? rollData.is_max
-        ? 0xf59e0b
-        : rollData.is_fumble
-        ? 0xf43f5e
-        : 0x38bdf8
-      : 0x000000;
+    // Pré-gera a textura iluminada da face sorteada para aplicar somente quando o dado parar e o resultado aparecer
+    if (isWinningFace) {
+      settledWinningTexture = createFacePolygonTexture(
+        THREE,
+        faceNum,
+        sides,
+        true,
+        rollData,
+        poly2D,
+        uvSpan,
+        minEdgeDist,
+        maxAnisotropy
+      );
+      if (settledWinningTexture) textures.push(settledWinningTexture);
+    }
 
     const mat = new THREE.MeshStandardMaterial({
-      map: faceTexture,
+      map: neutralTexture,
       roughness: 0.26,
       metalness: 0.62,
       flatShading: true,
-      emissive: new THREE.Color(emissiveHex),
-      emissiveIntensity: isWinningFace ? 0.14 : 0,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0,
     });
     materials.push(mat);
     faceMaterials.push(mat);
@@ -808,15 +848,10 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   const diceGroup = new THREE.Group();
   diceGroup.add(diceMesh);
 
-  // Arestas metálicas externas (threshold de 12 graus ignora diagonais internas de faces coplanares)
+  // Arestas metálicas externas (iniciam em tom neutro durante o giro e mudam de cor apenas ao parar)
   const edgesGeo = new THREE.EdgesGeometry(rawGeo, 12);
-  const edgesColor = rollData.is_max
-    ? 0xfbbf24
-    : rollData.is_fumble
-    ? 0xf43f5e
-    : 0x94a3b8;
   const edgesMat = new THREE.LineBasicMaterial({
-    color: edgesColor,
+    color: 0x94a3b8,
     transparent: true,
     opacity: 0.85,
   });
@@ -830,7 +865,10 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   return {
     diceGroup,
     faces,
+    faceMaterials,
     winningMaterial,
+    settledWinningTexture,
+    edgesMat,
     textures,
     materials,
     geometries,
