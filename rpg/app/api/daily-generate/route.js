@@ -4,6 +4,7 @@ import { getFirebaseAdmin } from '../../../lib/firebase-admin';
 import {
   enforceBatchItemUniqueness,
   enforceMissionBalance,
+  rollShopItemRarity,
 } from '../../../lib/dnd-rules.js';
 
 export const dynamic = 'force-dynamic';
@@ -73,45 +74,59 @@ function parseModelJson(rawText) {
 
 async function generateWithGemini(apiKey, existingDescriptions = []) {
   const genAI = new GoogleGenerativeAI(apiKey);
+
+  // Sorteia a raridade de cada um dos 10 itens (quanto maior a raridade, mais difícil aparecer na loja)
+  const rolledRarities = Array.from({ length: 10 }, () => rollShopItemRarity());
+  const raritySlotsList = rolledRarities.map((r, i) => `Item ${i + 1}: <${r}>`).join(', ');
+
   const recentHighRarityContext =
     existingDescriptions.length > 0
-      ? `\nMEMÓRIA ANTI-REPETIÇÃO (NÃO repita nomes, passivas ou descrições parecidas com estes itens já existentes na loja):\n${existingDescriptions
+      ? `\nMEMÓRIA ANTI-REPETIÇÃO (NÃO repita nomes ou descrições parecidas com estes itens já existentes na loja):\n${existingDescriptions
           .slice(0, 12)
           .map((d, i) => `${i + 1}. ${String(d).slice(0, 160)}`)
           .join('\n')}\n`
       : '';
 
-  const prompt = `Seed: ${Date.now()}-${Math.random()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e (Livro do Jogador, Livro do Mestre e Escudo do DM) em Português do Brasil.
+  const prompt = `Seed: ${Date.now()}-${Math.random()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e em Português do Brasil.
 Gere exatamente 2 Missões e 10 Itens variados para o Vallen RPG.
 ${recentHighRarityContext}
-DIRETRIZES OFICIAIS D&D 5.5e (2024), D&D 5e & ESCALONAMENTO DE UNICIDADE POR RARIDADE:
-1. ITENS & ARMAS (QUANTO MAIOR A RARIDADE, MAIS ÚNICA, COMPLEXA E EXCLUSIVA DEVE SER A ARMA):
-- Toda descrição de item DEVE iniciar com a tag de raridade: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO> ou <MÍTICO>.
-- Se o item for uma arma, inclua o Dano Escalonado e a Maestria em Arma Oficial 2024 (Afligir, Ágil, Derrubar, Drenar, Empurrar, Garantido, Lentidão ou Trespassar).
-- PROIBIDO repetir clichês como "Corte Dimensional" em todas as armas lendárias. Cada arma de alta raridade DEVE pertencer a um arquétipo semântico distinto (Gravitacional, Temporal, Devoradora de Feitiços, Sombras Gêmeas, Eclipse Solar/Lunar, Tectônica, Telecinética, Predador Abissal, Tempestade Encadeada, Zero Absoluto, Fênix Astral, Caça-Dragões, Sifão Sanguíneo, Psíquica, etc.).
-- ESCALONAMENTO DE DANO, PROFUNDIDADE NARRATIVA & MECÂNICAS EXCLUSIVAS:
-  * <COMUM>: Descrição curta e direta de forja mundana (ferro, aço, madeira). Dano base (Espada Curta/Cimitarra 1d4, Espada Longa 1d6, Espadão 1d10, Adaga 1d4, Arco Curto 1d4, Arco Longo 1d6). Sem magia. Preço: 30 a 100 G.
-  * <INCOMUM>: Obra-prima alquímica/rúnica (prata alquímica, aço élfico, têmpera anã). Dano padrão do livro (1d6, 1d8 versátil 1d10, 2d6, 1d12) + bônus +1 no acerto + Maestria 2024. Preço: 150 a 500 G.
-  * <RARO>: Infusão Elemental/Planar distinta (+1d4/+1d6 de fogo solar, frio de Stygia, relâmpago astral, trovão sísmico, ácido, veneno, radiante, necrótico ou psíquico) + gatilho reativo de combate + bônus +1/+2 + Maestria 2024. Preço: 800 a 3.000 G.
-  * <ÉPICO>: Relíquia de campeão com Efeito de Status Tático (Sangramento, Atordoado, Queimadura, Lentidão, Cegueira, Veneno, Amaldiçoado) + uma Técnica Ativa Nomeada exclusiva (ex: Hemorragia Carmesim, Passo da Ampulheta, Martelo do Trovão, Silêncio Rúnico) + bônus +2/+3. Preço: 4.000 a 15.000 G.
-  * <LENDÁRIO>: Arma Nomeada Única no mundo com identidade própria, Lore histórico de criação e Passiva Lendária Exclusiva (ex: Singularidade Gravitacional que puxa inimigos, Rebobinamento Temporal de ataque falho, Quebra-Magia que absorve feitiços, Clone Espectral que repete o golpe, Postura Dual Sol/Lua, Fragmentação Telecinética com +3m de alcance, Relâmpago em Cadeia para 2 alvos). Dano: 2d8, 2d10, 2d12 ou 3d6 (+3 ataque). Preço: 20.000 a 60.000 G.
-  * <MÍTICO>: Artefato Primordial Único do Multiverso com origem cosmológica, Dano Supremo (2d10+4, 3d8+4, 4d6+5, +4 ataque) e Dupla Passiva Mítica + Despertar Cataclísmico único. Preço: 75.000 a 200.000 G.
-- Tipos de itens permitidos: weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
-- Distribua raridades variadas entre os 10 itens (ex: 3 comuns, 2 incomuns, 2 raros, 1 épico, 1 lendário, 1 mítico/lendário).
+RARIDADES OBRIGATÓRIAS SORTEADAS PARA OS 10 ITENS DA LOJA (RESPEITE EXATAMENTE ESTA ORDEM):
+${raritySlotsList}
 
-2. MISSÕES (Tiers de Jogo e Encontros do Guia do Mestre D&D 2024/5e):
-- Rank F: Ameaças locais menores (100-250 XP | 40-100 G)
-- Rank E: Bandos de goblins/kobolds, defesa local (250-450 XP | 100-200 G)
-- Rank D: Acampamentos orcs, ogros, criptas com carniçais (500-800 XP | 250-450 G)
-- Rank C: Hidras, quimeras, gigantes da colina (900-1.500 XP | 500-900 G)
-- Rank B: Jovens dragões, vampiros, arquimagos (1.600-2.800 XP | 1.000-1.800 G)
-- Rank A: Dragões adultos, beholders, lichs (3.000-5.500 XP | 2.000-4.000 G)
-- Rank S: Titãs ancestrais, dragões anciões, lordes abissais (6.000-12.000 XP | 5.000-10.000 G)
-- Descrições de missões imersivas e objetivas (1 a 2 frases).
+DIRETRIZES DE ESCRITA NATURAL, MAESTRIAS ESCASSAS E EFEITOS DE STATUS:
+1. ESCRITA FLUIDA E NATURAL:
+- Escreva descrições claras, naturais e bem redigidas em português, sem colchetes artificiais "[...]", sem traços robóticos e sem termos em inglês como "(Vex)" ou "(Topple)".
+- Toda descrição DEVE começar apenas com a tag da raridade sorteada: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO> ou <MÍTICO>.
+- Quanto maior a raridade da arma, mais única e especial deve ser sua história e propriedade.
+
+2. MAESTRIAS DE ARMA MAIS RARAS:
+- Armas <COMUM> NUNCA possuem maestria.
+- Armas <INCOMUM> e <RARO> raramente possuem maestria (a maioria não tem).
+- A maestria "Derrubar" deve ser muito rara, aparecendo apenas ocasionalmente em armas pesadas de alta raridade.
+
+3. EFEITOS DE STATUS OFICIAIS DO SITE ( DIFÍCIL DE VIR E ESCALONADO POR RARIDADE ):
+- Os únicos efeitos de status permitidos são estes 10 do site:
+  Sangramento, Atordoado, Caído (Prone), Queimando, Lentidão (-3m), Cegueira, Envenenado, Amaldiçoado, Abençoado, Invisível.
+- Armas <COMUM> NUNCA têm efeito de status.
+- Armas <INCOMUM> quase nunca têm efeito de status (90% sem efeito; se tiver, apenas Lentidão (-3m) ou Sangramento leve).
+- Armas <RARO> têm baixa chance (~25%) de ter efeito de status (como Queimando, Sangramento, Lentidão (-3m) ou Envenenado).
+- Armas <ÉPICO>, <LENDÁRIO> e <MÍTICO> têm efeitos de status mais fortes e raros (como Atordoado, Cegueira, Amaldiçoado, Abençoado, Invisível, Caído (Prone), Sangramento severo ou Queimando intenso).
+
+4. ESCALONAMENTO DE DANO E PREÇO:
+- <COMUM>: Dano 1d4, 1d6 ou 1d10. Sem bônus mágico. Preço: 30 a 100 G.
+- <INCOMUM>: Dano 1d6, 1d8 ou 2d6 (+1 no acerto). Preço: 150 a 500 G.
+- <RARO>: Dano 1d8, 1d10 ou 2d8 (+1 no ataque). Preço: 800 a 3.000 G.
+- <ÉPICO>: Dano 1d10, 1d12 ou 2d10 (+2 no ataque). Preço: 4.000 a 15.000 G.
+- <LENDÁRIO>: Dano 2d8, 2d10 ou 2d12 (+3 no ataque). Preço: 20.000 a 60.000 G.
+- <MÍTICO>: Dano 2d10+4, 3d6+4 ou 4d6+5 (+4 no ataque). Preço: 75.000 a 200.000 G.
+- Tipos permitidos: weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
+
+5. MISSÕES (Tiers de Jogo do Guia do Mestre D&D):
+- Rank F (100-250 XP | 40-100 G), Rank E (250-450 XP | 100-200 G), Rank D (500-800 XP | 250-450 G), Rank C (900-1.500 XP | 500-900 G), Rank B (1.600-2.800 XP | 1.000-1.800 G), Rank A (3.000-5.500 XP | 2.000-4.000 G), Rank S (6.000-12.000 XP | 5.000-10.000 G).
 
 NUNCA use ícones de estrela ou símbolos de estrela.
-Responda APENAS JSON válido no seguinte formato:
-{"missions":[{"title":"","description":"","rank":"D","xp_reward":600,"gold_reward":350}],"shop_items":[{"item_name":"","description":"<LENDÁRIO> Dano: 2d8 cortante (+3 no ataque) — [Paradoxo do Relógio Quebrado]: +1d10 Temporal e permite rebobinar 1 ataque falho por combate. Maestria: Afligir (Vex). Seus engastes contêm areia do Plano do Tempo.","price":38000,"quantity":1,"type":"weapon"}]}`;
+Responda APENAS JSON válido no formato:
+{"missions":[{"title":"","description":"","rank":"D","xp_reward":600,"gold_reward":350}],"shop_items":[{"item_name":"","description":"<COMUM> Forjada em ferro temperado com empunhadura firme de couro. Causa 1d6 de dano cortante.","price":65,"quantity":1,"type":"weapon"}]}`;
 
   let resultText = null;
   let lastError = null;
@@ -155,9 +170,21 @@ Responda APENAS JSON válido no seguinte formato:
     ? parsed.missions.map(enforceMissionBalance)
     : [];
 
-  const shop_items = Array.isArray(parsed?.shop_items)
-    ? enforceBatchItemUniqueness(parsed.shop_items, existingDescriptions)
+  const rawItems = Array.isArray(parsed?.shop_items)
+    ? parsed.shop_items.map((item, idx) => {
+        const targetRarity = rolledRarities[idx] || rollShopItemRarity();
+        const cleanBody = String(item.description || '')
+          .replace(/^<(COMUM|INCOMUM|RARO|ÉPICO|LENDÁRIO|MÍTICO)>\s*/i, '')
+          .trim();
+        return {
+          ...item,
+          rarity: targetRarity,
+          description: `<${targetRarity}> ${cleanBody}`,
+        };
+      })
     : [];
+
+  const shop_items = enforceBatchItemUniqueness(rawItems, existingDescriptions);
 
   return { missions, shop_items };
 }

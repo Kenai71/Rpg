@@ -1,19 +1,29 @@
 /**
- * Regras, Equilíbrio D&D 5.5e (2024) & Motor de Machine Learning / NLP para Unicidade de Armas
+ * Regras, Equilíbrio D&D 5.5e (2024) & Motor de Geração e Unicidade de Armas (Vallen RPG)
  *
- * Baseado estritamente nos 5 manuais organizados em /rpg/livros/:
- * 1. LIVRO DO JOGADOR D&D 5.5e (2024 Revision) - Armas, Maestrias, Equipamento
- * 2. LIVRO DO MESTRE (DM) D&D 5.5e (2024 Revision) - Tesouros, Itens Mágicos, Tiers
- * 3. Escudo do DM 5.5e (2024) - Condições, DCs, Perigos, Ações de Combate
- * 4. Livro do Jogador D&D 5e - Armas e Regras Clássicas
- * 5. Guia do Mestre D&D 5e - Encontros, Recompensas e Economia de PO
- *
- * Motor de Unicidade Semântica (TF-IDF + Similaridade de Cosseno + Vetores de Arquétipo):
- * - Escala a complexidade, profundidade narrativa e exclusividade mecânica proporcionalmente à raridade:
- *   COMUM -> INCOMUM -> RARO -> ÉPICO -> LENDÁRIO -> MÍTICO.
- * - Calcula vetores de termos (TF) e similaridade de cosseno entre descrições de armas.
- * - Detecta descrições repetidas ou genéricas (especialmente em ÉPICO, LENDÁRIO e MÍTICO) e
- *   seleciona automaticamente o arquétipo de maior distância semântica (menor similaridade de cosseno).
+ * Diretrizes de Raridade, Maestrias, Status e Escrita Natural:
+ * 1. Aparição na Loja Escalonada por Probabilidade:
+ *    Quanto maior a raridade da arma/item, mais difícil de aparecer na loja
+ *    (COMUM: 48%, INCOMUM: 30%, RARO: 15%, ÉPICO: 5%, LENDÁRIO: 1.6%, MÍTICO: 0.4%).
+ * 2. Maestrias em Armas Escassas:
+ *    Armas comuns nunca têm maestria; armas incomuns/raras raramente possuem maestria,
+ *    e maestrias de controle pesado como "Derrubar" têm peso reduzido.
+ * 3. Efeitos de Status Oficiais do Site Escalonados:
+ *    Usa exclusivamente os 10 efeitos do sistema:
+ *    - Sangramento
+ *    - Atordoado
+ *    - Caído (Prone)
+ *    - Queimando
+ *    - Lentidão (-3m)
+ *    - Cegueira
+ *    - Envenenado
+ *    - Amaldiçoado
+ *    - Abençoado
+ *    - Invisível
+ *    Não é fácil uma arma vir com efeito de status nas raridades baixas (COMUM 0%, INCOMUM 10%, RARO 28%),
+ *    e a força/qualidade do efeito aumenta conforme a raridade sobe.
+ * 4. Escrita Natural e Fluida:
+ *    Descrições em português claro, imersivo e direto, sem colchetes robóticos ou termos artificiais.
  *
  * ZERO ÍCONES DE ESTRELA UTILIZADOS EM CONFORMIDADE COM AS DIRETRIZES DO PROJETO.
  */
@@ -32,89 +42,176 @@ export {
   DND_ENCOUNTERS_BY_TIER,
 };
 
-// Dados base por categoria e raridade (sem fixar uma única passiva repetitiva)
+// Probabilidade de aparição de itens na loja (quanto maior a raridade, mais difícil aparecer)
+export const SHOP_RARITY_WEIGHTS = [
+  { rarity: 'COMUM', weight: 48.0 },
+  { rarity: 'INCOMUM', weight: 30.0 },
+  { rarity: 'RARO', weight: 15.0 },
+  { rarity: 'ÉPICO', weight: 5.0 },
+  { rarity: 'LENDÁRIO', weight: 1.6 },
+  { rarity: 'MÍTICO', weight: 0.4 },
+];
+
+export function rollShopItemRarity() {
+  const rand = Math.random() * 100;
+  let acc = 0;
+  for (const entry of SHOP_RARITY_WEIGHTS) {
+    acc += entry.weight;
+    if (rand <= acc) return entry.rarity;
+  }
+  return 'COMUM';
+}
+
+// Dados base por categoria e raridade
 export const WEAPON_DAMAGE_DICE_BY_RARITY = {
   dagger: {
-    COMUM: '1d4 perfurante',
-    INCOMUM: '1d6 perfurante (+1 no acerto)',
-    RARO: '1d8 perfurante (+1 no ataque)',
-    ÉPICO: '1d10 perfurante (+2 no ataque)',
-    LENDÁRIO: '2d6 perfurante (+3 no ataque)',
-    MÍTICO: '2d8+4 perfurante (+4 no ataque)',
+    COMUM: '1d4 de dano perfurante',
+    INCOMUM: '1d6 de dano perfurante (+1 no acerto)',
+    RARO: '1d8 de dano perfurante (+1 no ataque)',
+    ÉPICO: '1d10 de dano perfurante (+2 no ataque)',
+    LENDÁRIO: '2d6 de dano perfurante (+3 no ataque)',
+    MÍTICO: '2d8+4 de dano perfurante (+4 no ataque)',
   },
   shortsword: {
-    COMUM: '1d4 cortante/perfurante',
-    INCOMUM: '1d6 cortante/perfurante (+1 no acerto)',
-    RARO: '1d8 cortante/perfurante (+1 no ataque)',
-    ÉPICO: '1d10 cortante/perfurante (+2 no ataque)',
-    LENDÁRIO: '2d8 cortante/perfurante (+3 no ataque)',
-    MÍTICO: '2d10+4 cortante/perfurante (+4 no ataque)',
+    COMUM: '1d4 de dano cortante',
+    INCOMUM: '1d6 de dano cortante (+1 no acerto)',
+    RARO: '1d8 de dano cortante (+1 no ataque)',
+    ÉPICO: '1d10 de dano cortante (+2 no ataque)',
+    LENDÁRIO: '2d8 de dano cortante (+3 no ataque)',
+    MÍTICO: '2d10+4 de dano cortante (+4 no ataque)',
   },
   longsword: {
-    COMUM: '1d6 (versátil 1d8) cortante',
-    INCOMUM: '1d8 (versátil 1d10) cortante (+1 no acerto)',
-    RARO: '1d10 (versátil 1d12) cortante (+1 no ataque)',
-    ÉPICO: '1d12 cortante (+2 no ataque)',
-    LENDÁRIO: '2d8 (versátil 2d10) cortante (+3 no ataque)',
-    MÍTICO: '3d6+4 (versátil 2d12+4) cortante (+4 no ataque)',
+    COMUM: '1d6 de dano cortante (1d8 com duas mãos)',
+    INCOMUM: '1d8 de dano cortante (+1 no acerto)',
+    RARO: '1d10 de dano cortante (+1 no ataque)',
+    ÉPICO: '1d12 de dano cortante (+2 no ataque)',
+    LENDÁRIO: '2d8 de dano cortante (+3 no ataque)',
+    MÍTICO: '3d6+4 de dano cortante (+4 no ataque)',
   },
   greatsword: {
-    COMUM: '1d10 cortante/contundente',
-    INCOMUM: '2d6 cortante/contundente (+1 no acerto)',
-    RARO: '2d8 cortante/contundente (+1 no ataque)',
-    ÉPICO: '2d10 cortante/contundente (+2 no ataque)',
-    LENDÁRIO: '2d12 cortante/contundente (+3 no ataque)',
-    MÍTICO: '4d6+5 cortante/contundente (+4 no ataque)',
+    COMUM: '1d10 de dano pesado',
+    INCOMUM: '2d6 de dano pesado (+1 no acerto)',
+    RARO: '2d8 de dano pesado (+1 no ataque)',
+    ÉPICO: '2d10 de dano pesado (+2 no ataque)',
+    LENDÁRIO: '2d12 de dano pesado (+3 no ataque)',
+    MÍTICO: '4d6+5 de dano pesado (+4 no ataque)',
   },
   ranged: {
-    COMUM: '1d6 perfurante',
-    INCOMUM: '1d8 perfurante (+1 em precisão)',
-    RARO: '1d10 perfurante (+1 no ataque)',
-    ÉPICO: '1d12 perfurante (+2 no ataque)',
-    LENDÁRIO: '2d8 perfurante (+3 no ataque)',
-    MÍTICO: '2d10+4 perfurante (+4 no ataque)',
+    COMUM: '1d4 de dano perfurante à distância',
+    INCOMUM: '1d8 de dano perfurante (+1 em precisão)',
+    RARO: '1d10 de dano perfurante (+1 no ataque)',
+    ÉPICO: '1d12 de dano perfurante (+2 no ataque)',
+    LENDÁRIO: '2d8 de dano perfurante (+3 no ataque)',
+    MÍTICO: '2d10+4 de dano perfurante (+4 no ataque)',
   },
 };
 
 export const WEAPON_DAMAGE_SCALE = WEAPON_DAMAGE_DICE_BY_RARITY;
 
-// Efeitos de Status Oficiais D&D 5.5e / 5e
+// Os 10 Efeitos de Status Oficiais presentes no site
 export const DND_STATUS_EFFECTS = [
   {
+    id: 'bleeding',
     name: 'Sangramento',
-    description: 'O inimigo perde 1d4 a 1d8 PV no início de cada um dos seus turnos devido a ferimentos profundos.',
-    minRarity: 'ÉPICO',
+    lowText: 'pode causar Sangramento leve (1d4 de dano no início do turno do alvo em acerto crítico)',
+    midText: 'aplica Sangramento no inimigo atingido, causando 1d6 de perda de vida por turno',
+    highText: 'abre cortes profundos que aplicam Sangramento severo de 2d6 por turno e dificultam a regeneração',
   },
   {
+    id: 'burning',
+    name: 'Queimando',
+    lowText: 'tem chance em acerto crítico de deixar o alvo Queimando com 1d4 de dano de fogo',
+    midText: 'envolve o inimigo em chamas, deixando-o Queimando com 1d6 de dano de fogo por 2 rodadas',
+    highText: 'incendeia a alma e a armadura do oponente, deixando-o Queimando com 2d6 de dano de fogo contínuo',
+  },
+  {
+    id: 'slowed',
+    name: 'Lentidão (-3m)',
+    lowText: 'entorpece o alvo em golpes certeiros, aplicando Lentidão (-3m) até o próximo turno',
+    midText: 'aplica Lentidão (-3m) ao acertar, reduzindo a mobilidade e a reação do inimigo',
+    highText: 'congela o ritmo de combate do adversário, aplicando Lentidão (-3m) e retirando sua reação na rodada',
+  },
+  {
+    id: 'poisoned',
+    name: 'Envenenado',
+    lowText: 'inocula uma toxina fraca em crítico que deixa o alvo Envenenado por 1 turno',
+    midText: 'secreta peçonha na lâmina que deixa o inimigo Envenenado (desvantagem em ataques) por 1 rodada',
+    highText: 'aplica o efeito Envenenado com toxina abissal que enfraquece os ataques do alvo e causa +1d8 de dano',
+  },
+  {
+    id: 'prone',
+    name: 'Caído (Prone)',
+    lowText: 'em impacto crítico pode desequilibrar o oponente, deixando-o Caído (Prone)',
+    midText: 'desfere golpes de impacto que deixam o inimigo Caído (Prone) caso falhe em teste de Força (CD 14)',
+    highText: 'libera uma onda de choque que derruba o adversário na condição Caído (Prone) em golpes pesados',
+  },
+  {
+    id: 'blinded',
+    name: 'Cegueira',
+    lowText: 'emite um lampejo breve em crítico que aplica Cegueira até o início do próximo turno',
+    midText: 'dispara um clarão no momento do corte que aplica Cegueira temporária no oponente atingido',
+    highText: 'ofusca completamente os sentidos do inimigo, aplicando Cegueira por 1 rodada e abrindo sua guarda',
+  },
+  {
+    id: 'cursed',
+    name: 'Amaldiçoado',
+    lowText: 'deixa um eco sombrio em crítico que torna o alvo Amaldiçoado (-1d4 no próximo ataque dele)',
+    midText: 'marca o adversário com o efeito Amaldiçoado, reduzindo suas jogadas de ataque e salvaguardas em 1d4',
+    highText: 'condena o inimigo com o efeito Amaldiçoado, reduzindo suas defesas e fazendo-o sofrer +1d8 de dano extra',
+  },
+  {
+    id: 'stunned',
     name: 'Atordoado',
-    description: 'Em acertos críticos ou impacto severo, o alvo fica atordoado por 1 rodada (incapaz de agir e falha em salvaguardas de For/Des).',
-    minRarity: 'ÉPICO',
+    lowText: 'em um 20 natural pode deixar o alvo brevemente Atordoado',
+    midText: 'aplica o efeito Atordoado por 1 rodada ao atingir um acerto crítico contra o inimigo',
+    highText: 'sobrecarrega os sentidos do oponente, deixando-o Atordoado por 1 rodada em acertos críticos ou golpes decisivos',
   },
   {
-    name: 'Queimadura Contínua',
-    description: 'Chamas arcanas aderem à armadura do alvo, causando 1d6 de dano de fogo recorrente a cada início de turno.',
-    minRarity: 'ÉPICO',
+    id: 'blessed',
+    name: 'Abençoado',
+    lowText: 'concede brevemente o efeito Abençoado ao portador ao derrotar um inimigo',
+    midText: 'envolve o portador com o efeito Abençoado (+1d4 em ataques e salvaguardas) após um acerto crítico',
+    highText: 'mantém o portador sob o efeito Abençoado em combate, somando +1d4 em ataques e resistências e curando 1d6 de vida por acerto',
   },
   {
-    name: 'Lentidão',
-    description: 'O impacto corta o fluxo motor do inimigo, reduzindo seu deslocamento pela metade e aplicando -2 na CA.',
-    minRarity: 'ÉPICO',
+    id: 'invisible',
+    name: 'Invisível',
+    lowText: 'envolve o usuário em névoa sutil ao abater um alvo',
+    midText: 'torna o portador Invisível por alguns instantes após realizar um acerto crítico',
+    highText: 'dobra a luz ao redor do portador, tornando-o Invisível até o início do seu próximo turno sempre que acerta um crítico ou abate um inimigo',
   },
-  {
-    name: 'Cegueira Temporária',
-    description: 'Um flash reluzente atinge os olhos do oponente; ataques contra ele têm vantagem e seus ataques têm desvantagem.',
-    minRarity: 'ÉPICO',
-  },
-  {
-    name: 'Corte Dimensional',
-    description: 'A lâmina fende a malha do espaço, ignorando resistências a dano físico e armaduras pesadas do adversário.',
-    minRarity: 'LENDÁRIO',
-  },
-  {
-    name: 'Drenagem de Alma',
-    description: 'Parte da essência vital do inimigo é extraída a cada golpe, curando o portador em 50% do dano causado.',
-    minRarity: 'MÍTICO',
-  },
+];
+
+// Chance de uma arma possuir efeito de status de acordo com sua raridade
+export const STATUS_EFFECT_CHANCE_BY_RARITY = {
+  COMUM: 0.0, // Nunca tem efeito de status
+  INCOMUM: 0.10, // 10% de chance (muito raro, e apenas efeito fraco)
+  RARO: 0.28, // 28% de chance (difícil, efeito moderado)
+  ÉPICO: 0.58, // 58% de chance (efeito tático forte)
+  LENDÁRIO: 0.88, // 88% de chance (efeito de elite)
+  MÍTICO: 1.0, // 100% de chance (efeito supremo)
+};
+
+// Chance de uma arma vir com propriedade de Maestria (escassa nas raridades menores)
+export const MASTERY_CHANCE_BY_RARITY = {
+  COMUM: 0.0, // Sem maestria
+  INCOMUM: 0.12, // 12% de chance
+  RARO: 0.24, // 24% de chance
+  ÉPICO: 0.42, // 42% de chance
+  LENDÁRIO: 0.68, // 68% de chance
+  MÍTICO: 0.92, // 92% de chance
+};
+
+// Pesos das Maestrias (Derrubar e Trespassar são muito mais raras que as demais)
+const WEIGHTED_MASTERIES = [
+  { name: 'Afligir (vantagem no próximo ataque ao acertar)', weight: 24 },
+  { name: 'Ágil (ataque leve adicional na mesma ação)', weight: 22 },
+  { name: 'Drenar (impõe desvantagem no próximo ataque do alvo)', weight: 20 },
+  { name: 'Lentidão (reduz o deslocamento do alvo em 3m)', weight: 14 },
+  { name: 'Garantido (causa dano igual ao modificador mesmo se errar)', weight: 9 },
+  { name: 'Empurrar (afasta o inimigo em até 3m no impacto)', weight: 6 },
+  { name: 'Trespassar (atinge um segundo inimigo adjacente)', weight: 3 },
+  { name: 'Derrubar (pode derrubar o alvo com teste de Constituição)', weight: 2 },
 ];
 
 // Faixas de Preço do Guia do Mestre (DMG Cap. 7)
@@ -128,251 +225,71 @@ export const DND_PRICE_RANGES = {
 };
 
 // ============================================================================
-// BANCO MULTIDIMENSIONAL DE ARQUÉTIPOS POR RARIDADE (PARA SÍNTESE & DIVERSIDADE ML)
+// REPERTÓRIO DE ORIGENS E HISTÓRIAS NATURAIS ESCALONADAS POR RARIDADE
 // ============================================================================
 
-const COMMON_CRAFT_TRAITS = [
-  'Forjada em ferro temperado de guarnição com cabo revestido em couro cru.',
-  'Lâmina de aço carbono equilibrada em bigorna militar para combate direto.',
-  'Construção robusta de oficina fronteiriça, sem adornos ou encantamentos.',
-  'Peça padronizada de infantaria com têmpera simples a óleo e guarda de bronze.',
-  'Acabamento rústico em aço cinzento, confiável para aventureiros iniciantes.',
-  'Empunhadura firme de freixo envernizado e metal polido em pedra de amolar.',
+const COMMON_LORE_POOL = [
+  'Forjada em ferro temperado com empunhadura revestida em couro firme para uso diário.',
+  'Peça de aço simples e bem equilibrada, saída das oficinas militares da fronteira.',
+  'Acabamento rústico e resistente em aço cinzento, sem adornos ou encantamentos.',
+  'Construída com madeira de freixo envernizada e metal polido em pedra de amolar.',
+  'Equipamento padrão de patrulha com guarda reforçada em bronze batido.',
+  'Armamento confiável de forja tradicional, ideal para aventureiros em início de jornada.',
 ];
 
-const UNCOMMON_CRAFT_TRAITS = [
-  'Banho de prata alquímica que brilha suavemente diante de criaturas sombrias e metamorfos.',
-  'Gravada com runas de equilíbrio anão que reduzem o peso e ampliam a precisão do golpe.',
-  'Liga de aço élfico flexível que não perde o fio mesmo contra couraças espessas.',
-  'Temperada em óleo de salamandra com contrapeso de safira bruta no pomo.',
-  'Metal dobrado doze vezes pelos mestres ferreiros da Cidadela, conferindo resposta imediata.',
-  'Incrustada com filigranas de cobre condutor que estabilizam a trajetória de cada ataque.',
+const UNCOMMON_LORE_POOL = [
+  'Recebeu um banho de prata alquímica que mantém o fio impecável mesmo após longos combates.',
+  'Trabalhada por mestres ferreiros anões com contrapeso preciso no pomo para golpes mais certeiros.',
+  'Forjada em liga leve de aço élfico, oferecendo manuseio ágil e resposta imediata.',
+  'Temperada em óleo mineral aromático com finas gravuras de proteção ao longo da guarda.',
+  'Metal dobrado várias vezes na bigorna real, garantindo dureza superior ao aço comum.',
+  'Possui acabamento polido com filigranas de cobre que melhoram a estabilidade do ataque.',
 ];
 
-const RARE_ELEMENTAL_ARCHETYPES = [
-  {
-    id: 'solar_fire',
-    bonus: '+1d6 de dano de Fogo Solar',
-    trait: 'Canaliza brasas da Forja de Muspelheim; ao acertar, incendeia o ar ao redor e ilumina 6m.',
-  },
-  {
-    id: 'stygian_frost',
-    bonus: '+1d6 de dano de Frio Glacial',
-    trait: 'Coberta por geada eterna de Stygia; recobre a armadura do alvo com cristais que reduzem seu deslocamento em 1,5m.',
-  },
-  {
-    id: 'astral_lightning',
-    bonus: '+1d6 de dano Elétrico',
-    trait: 'Conduz arcos voltaicos azuis; ataques contra inimigos usando armadura metálica recebem +2 na rolagem de acerto.',
-  },
-  {
-    id: 'seismic_thunder',
-    bonus: '+1d6 de dano Trovejante',
-    trait: 'Ressoa como um sino de guerra ao impacto, empurrando o oponente 1,5m para trás com ondas sonoras.',
-  },
-  {
-    id: 'venom_fang',
-    bonus: '+1d6 de dano de Veneno',
-    trait: 'Sulcos capilares secretam toxina de wyvern que enfraquece a resistência física do inimigo.',
-  },
-  {
-    id: 'celestial_radiance',
-    bonus: '+1d6 de dano Radiante',
-    trait: 'Abençoada em altar solar; causa +1d8 adicional contra mortos-vivos e criaturas abissais.',
-  },
-  {
-    id: 'umbral_necrotic',
-    bonus: '+1d6 de dano Necrótico',
-    trait: 'Absorve o calor ao redor da lâmina, drenando o vigor do alvo e concedendo 3 PV temporários ao portador em crítico.',
-  },
-  {
-    id: 'psychic_resonance',
-    bonus: '+1d6 de dano Psíquico',
-    trait: 'Forjada em cristal ressonante do Plano Astral; vibra na mente do adversário dificultando sua concentração.',
-  },
-  {
-    id: 'acid_vitriol',
-    bonus: '+1d6 de dano Ácido',
-    trait: 'Exsuda vitríolo alquímico esmeralda que corrói escudos e reduz a CA do alvo em -1 até o próximo turno.',
-  },
-  {
-    id: 'aether_force',
-    bonus: '+1d4 de dano de Energia Pura',
-    trait: 'Fio translúcido de força arcana condensada que atinge criaturas incorpóreas e etéreas sem penalidade.',
-  },
+const RARE_LORE_POOL = [
+  'Abençoada nas forjas profundas de Vallen, onde o metal absorveu centelhas de energia elemental pura.',
+  'Incrustada com uma gema canalizadora na guarda que desperta ao entrar em combate.',
+  'Temperada nas águas geladas do norte e selada com cânticos antigos de batalha.',
+  'O aço desta arma pulsa suavemente com o calor residual das cavernas vulcânicas onde foi moldada.',
+  'Criada para os capitães da guarda real, combinando metalurgia avançada e encantamento de precisão.',
+  'Forjada sob a luz de uma lua de sangue, mantendo um brilho sutil ao ser desembainhada.',
+  'Construída com fragmentos de minério astral caído nas montanhas, vibrando ao atingir o inimigo.',
+  'Banhada em resinas alquímicas raras que reagem ao impacto contra armaduras inimigas.',
 ];
 
-const EPIC_TACTICAL_ARCHETYPES = [
-  {
-    id: 'crimson_hemorrhage',
-    mechanic: 'inflige Sangramento (1d6 de perda por turno) e abre feridas que impedem cura mágica por 1 rodada',
-    lore: 'Técnica Ativa — Hemorragia Carmesim: ao acertar dois golpes seguidos no mesmo alvo, detona o sangue derramado causando +2d6 necrótico.',
-  },
-  {
-    id: 'thunder_concussion',
-    mechanic: 'aplica Atordoado por 1 rodada em acertos críticos (ou falha em CD 15 de Constituição)',
-    lore: 'Técnica Ativa — Martelo do Trovão: 1x por combate pode bater no chão criando onda sísmica de 3m que deixa inimigos Caídos.',
-  },
-  {
-    id: 'hellfire_brand',
-    mechanic: 'aplica Queimadura Contínua (1d6 de fogo/turno) e marca o alvo com brasas visíveis na escuridão',
-    lore: 'Técnica Ativa — Pira do Julgamento: ataques contra alvos já em chamas ignoram resistência a fogo e somam +1d8.',
-  },
-  {
-    id: 'chrono_slow',
-    mechanic: 'inflige Lentidão (-3m de deslocamento e -2 na CA) ao distorcer a inércia do oponente',
-    lore: 'Técnica Ativa — Passo da Ampulheta: ao abater ou atingir crítico, o portador ganha +3m de deslocamento sem provocar ataques de oportunidade.',
-  },
-  {
-    id: 'mirage_blindness',
-    mechanic: 'dispara um clarão prismático em acertos que aplica Cegueira Temporária até o próximo turno',
-    lore: 'Técnica Ativa — Reflexo Espelhado: concede Vantagem no próximo ataque contra qualquer inimigo cego ou desorientado.',
-  },
-  {
-    id: 'plague_curse',
-    mechanic: 'inocula Veneno Virulento e aplica Amaldiçoado (-1d4 nas jogadas de ataque do alvo)',
-    lore: 'Técnica Ativa — Colheita da Peste: quando um inimigo envenenado cai a 0 PV, a toxina salta para outro inimigo a até 3m.',
-  },
-  {
-    id: 'glacial_shatter',
-    mechanic: 'congela as articulações do inimigo aplicando Lentidão severa e +1d8 de dano de Frio',
-    lore: 'Técnica Ativa — Estilhaçar Gelo: acertar um inimigo já com Lentidão quebra a crosta glacial causando +2d6 contundente.',
-  },
-  {
-    id: 'spell_disruptor',
-    mechanic: 'causa +1d8 de Energia e impõe Desvantagem imediata em testes de Concentração de conjuradores',
-    lore: 'Técnica Ativa — Silêncio Rúnico: em acerto crítico, sela a voz do alvo por 1 rodada, impedindo magias com componente verbal.',
-  },
+const EPIC_LORE_POOL = [
+  'Relíquia pertencente aos antigos campeões da Cidadela de Vallen, forjada para decidir cercos impossíveis.',
+  'O metal escuro desta arma foi temperado em essência arcana condensada, deixando um rastro luminoso a cada golpe.',
+  'Criada nos salões subterrâneos dos mestres rúnicos, sua estrutura canaliza poder diretamente para o ponto de impacto.',
+  'Pertenceu a um lendário comandante de guilda; sua lâmina reconhece a tensão da batalha e amplifica a força do portador.',
+  'Forjada com aço damasco encantado e núcleo de cristal ressonante que ecoa a cada investida.',
+  'Arma de elite consagrada nos templos antigos, projetada para quebrar a linha de frente de exércitos inteiros.',
+  'Moldada a partir de ligas raras do Subterrâneo, combinando leveza sobrenatural e poder destrutivo.',
+  'Guardada por gerações nos cofres reais, desperta sua verdadeira força nas mãos de guerreiros experientes.',
 ];
 
-const LEGENDARY_UNIQUE_ARCHETYPES = [
-  {
-    id: 'gravity_singularity',
-    title: 'Singularidade Gravitacional',
-    mechanic: '+1d10 de Energia Gravitacional e Campo de Atração (puxa inimigos a até 4,5m para perto do alvo atingido, deixando-os Caídos em falha de Força CD 17)',
-    lore: 'Forjada ao redor do núcleo colapsado de um meteorito estelar. Uma vez por combate, pode inverter a gravidade num raio de 3m, suspendendo inimigos no ar.',
-  },
-  {
-    id: 'chrono_rewind',
-    title: 'Paradoxo do Relógio Quebrado',
-    mechanic: '+1d10 Temporal e Fio de Cronos (1x por combate, permite rebobinar uma rolagem de ataque falha e transformá-la em acerto automático com dano máximo)',
-    lore: 'Seus engastes contêm areia do Plano do Tempo. Sempre que o portador sofre um ataque, pode usar sua Reação para teleportar 4,5m para a posição em que estava no turno anterior.',
-  },
-  {
-    id: 'spell_devourer',
-    title: 'Devoradora de Arcanos',
-    mechanic: 'Quebra-Magia (+2d6 contra conjuradores, destrói escudos mágicos instantaneamente e absorve feitiços de até 3º círculo)',
-    lore: 'Criada pelos inquisidores de Karsus em metal nulo-mágico. Ao anular ou resistir a uma magia, converte a energia absorvida em +2d10 de dano no próximo golpe.',
-  },
-  {
-    id: 'phantom_twin',
-    title: 'Dança das Sombras Gêmeas',
-    mechanic: 'Eco Espectral (cada ataque cria uma projeção sombria que repete o golpe causando +1d8 necrótico adicional e aplica Cegueira em crítico)',
-    lore: 'Aço negro fundido com a própria sombra de um mestre assassino. Permite atravessar inimigos como fumaça sem provocar ataques de oportunidade.',
-  },
-  {
-    id: 'solar_eclipse_duality',
-    title: 'Veredito do Eclipse',
-    mechanic: 'Postura Dual de Sol e Lua (em turnos pares causa +2d6 Radiante e cura um aliado a 3m em 1d8 PV; em turnos ímpares causa +2d6 Necrótico e aplica Lentidão)',
-    lore: 'Duas lâminas gêmeas fundidas num único punho de ouro branco e obsidiana lunar durante um eclipse milenar.',
-  },
-  {
-    id: 'titan_faultline',
-    title: 'Cataclismo da Fenda Terrestre',
-    mechanic: 'Impacto Tectônico (+1d12 contundente/fogo; golpes abrem rachaduras de magma de 6m que causam Queimadura Contínua e derrubam inimigos)',
-    lore: 'Arrancada do coração de um Titã Primordial da Terra. O portador torna-se imune a ser empurrado ou derrubado enquanto empunhá-la.',
-  },
-  {
-    id: 'telekinetic_swarm',
-    title: 'Sinfonia das Mil Lâminas',
-    mechanic: 'Fragmentação Telecinética (a arma se divide em segmentos flutuantes ligados por energia pura, ampliando o alcance em +3m e atingindo até 2 alvos por ação)',
-    lore: 'Obra-prima psíquica dos Githzerai do Limbo; responde aos pensamentos do usuário e pode flutuar para defender seu portador concedendo +2 na CA.',
-  },
-  {
-    id: 'abyssal_predator',
-    title: 'Marca do Caçador Abissal',
-    mechanic: 'Sentença de Caça (o primeiro acerto marca a presa; contra o alvo marcado, a margem de crítico é 19-20, ignora cobertura e causa +2d6 de Sangramento)',
-    lore: 'Temperada no sangue de um lorde predador das Camadas Infinitas. O portador sente o batimento cardíaco do alvo marcado a até 1 km.',
-  },
-  {
-    id: 'storm_chain_sovereign',
-    title: 'Soberania da Tempestade Encadeada',
-    mechanic: 'Relâmpago em Cadeia (+1d10 Elétrico que salta automaticamente para até 2 outros inimigos a 4,5m causando 1d8 elétrico e Atordoado em crítico)',
-    lore: 'Forjada no pico mais alto do Monte Celestia a partir de um raio cristalizado. Concede resistência a dano elétrico e trovejante.',
-  },
-  {
-    id: 'frost_mirror_queen',
-    title: 'Trono do Inverno Eterno',
-    mechanic: 'Zero Absoluto (+1d10 de Frio; reduz o deslocamento do alvo pela metade e, em acerto crítico, petrifica/congela o inimigo em gelo sólido por 1 rodada)',
-    lore: 'Esculpida em gelo verdadeiro que jamais derrete nem sob fogo de dragão. Cria uma aura fria de 3m que extingue chamas mundanas e mágicas.',
-  },
-  {
-    id: 'phoenix_cinder_heart',
-    title: 'Coração da Fênix Renascida',
-    mechanic: 'Chama Imortal (+2d6 de Fogo Sagrado e Queimadura Contínua; ao acertar, purifica 1 condição negativa do portador)',
-    lore: 'No interior da guarda repousa uma pena viva de Fênix Astral. Emite calor reconfortante e explode numa onda de fogo curativo ao comando.',
-  },
-  {
-    id: 'dragon_slayer_oath',
-    title: 'Ruína dos Dragões Ancestrais',
-    mechanic: 'Perfura-Escamas (ignora +3 da CA de armaduras naturais, causa +2d8 contra dragões/monstros grandes ou maiores e aplica Sangramento Profundo)',
-    lore: 'Forjada a partir da presa de um Dragão Vermelho Ancião abatido na Primeira Era; vibra intensamente quando há tesouros ou dragões próximos.',
-  },
-  {
-    id: 'void_dimensional_rift',
-    title: 'Fenda do Horizonte de Eventos',
-    mechanic: 'Corte Dimensional (fende o espaço ignorando resistências físicas e permite teleportar até 6m diretamente para trás do alvo atingido)',
-    lore: 'Sua lâmina não reflete luz, mostrando apenas o céu estrelado do Plano Astral.',
-  },
-  {
-    id: 'blood_emperor_scepter',
-    title: 'Pacto do Imperador Carmesim',
-    mechanic: 'Sifão Sanguíneo (+1d10 Necrótico, aplica Sangramento acumulativo e converte 25% de todo o dano causado em escudo de PV temporários)',
-    lore: 'Relíquia ancestral da corte vampírica de Baróvia; quanto mais ferido estiver o portador, mais intenso é o brilho escarlate da arma.',
-  },
+const LEGENDARY_LORE_POOL = [
+  'Obra-prima única forjada na Primeira Era a partir do núcleo de uma estrela cadente que atingiu as montanhas de Vallen, capaz de distorcer a gravidade ao redor do golpe.',
+  'Relíquia histórica banhada nas areias do Plano do Tempo; conta a lenda que seu antigo portador jamais teve um golpe decisivo desviado.',
+  'Forjada pelos arquimagos inquisidores em metal nulo-mágico raro, capaz de cortar feitiços e desfazer defesas arcanas no instante do impacto.',
+  'Nascida durante um eclipse milenar através da fusão de ouro solar e obsidiana lunar, equilibrando luz curativa e sombra letal na mesma peça.',
+  'Arrancada do coração de um Titã ancestral adormecido sob a crosta do mundo; cada golpe faz o solo tremer sob os pés dos inimigos.',
+  'Forjada a partir da presa de um Dragão Ancião abatido nos picos de fogo, emanando uma presença majestosa que intimida qualquer criatura menor.',
+  'Relíquia sombria da antiga corte real, cujo aço espelhado absorve a luz do ambiente e projeta ecos espectrais que acompanham o movimento do usuário.',
+  'Abençoada no ponto mais alto do Monte Celestia por um raio cristalizado, conduzindo a fúria das tempestades em arcos voltaicos perfeitos.',
+  'Esculpida em gelo verdadeiro das profundezas astrais que jamais derrete, envolvendo o campo de batalha numa bruma silenciosa e cortante.',
+  'Guarda em seu interior uma pena viva de Fênix primordial, irradiando um calor sagrado que renova o vigor de quem a empunha.',
 ];
 
-const MYTHIC_ARTIFACT_ARCHETYPES = [
-  {
-    id: 'world_breaker_moradin',
-    title: 'Artefato Primordial: Quebra-Mundos',
-    mechanic: '+2d10 de impacto cósmico, ignora qualquer imunidade/resistência e aplica Atordoado em área de 3m em acertos críticos',
-    lore: 'Passiva Mítica — Forja da Criação: Roubo de vida de 50% do dano causado e Fúria Imortal (se o portador cair a 0 PV, permanece de pé com 1 PV e libera uma onda divina de 4d10 uma vez ao dia).',
-  },
-  {
-    id: 'chronos_eternity_edge',
-    title: 'Artefato Temporal: Gume da Eternidade',
-    mechanic: '+2d10 de dano de Força Temporal, margem de crítico 18-20 e aplica Paralisia Temporal no alvo em acertos críticos',
-    lore: 'Passiva Mítica — Senhor do Fluxo: Concede uma Ação adicional completa no primeiro turno de cada combate e permite anular completamente um ataque letal recebido uma vez ao dia.',
-  },
-  {
-    id: 'astral_nova_sovereign',
-    title: 'Artefato Cósmico: Estrela Cadente de Mystra',
-    mechanic: '+2d10 Radiante/Arcano, atravessa qualquer barreira mágica e silencia poderes arcanos do inimigo atingido',
-    lore: 'Passiva Mítica — Coroa da Trama: Regenera 10 PV e 2 de Mana no início de cada turno do portador e reflete feitiços de alvo único de volta ao conjurador em rolagem 20.',
-  },
-  {
-    id: 'abyssal_soul_harvester',
-    title: 'Artefato Abissal: Ceifadora de Almas Primordial',
-    mechanic: '+2d10 Necrótico, aplica Sangramento Abissal e Drenagem de Alma (cura o portador em 50% de todo o dano infligido)',
-    lore: 'Passiva Mítica — Trono dos Caídos: Cada inimigo derrotado concede +1 permanente de dano no combate atual e ressuscita o portador com 50% dos PV caso tombado (1x/dia).',
-  },
-  {
-    id: 'bahamut_platinum_wrath',
-    title: 'Artefato Dracônico: Garra de Platina de Bahamut',
-    mechanic: '+2d10 de energia Elemental Adaptativa (assume automaticamente o elemento ao qual o alvo é mais vulnerável) e derruba criaturas Colossais',
-    lore: 'Passiva Mítica — Sopro do Deus Dragão: Concede imunidade a medo, +2 na CA e permite disparar um Sopro de Platina em cone de 9m (6d10 de dano) uma vez por combate.',
-  },
-  {
-    id: 'ragnarok_twilight_spear',
-    title: 'Artefato do Crepúsculo: Prelúdio do Ragnarok',
-    mechanic: '+2d10 Trovejante/Fogo, nunca erra o primeiro ataque do combate e aplica Queimadura e Lentidão simultaneamente',
-    lore: 'Passiva Mítica — Juramento dos Einherjar: Quando o portador está abaixo de 50% de PV, seus ataques causam +2d8 extra e aliados a 6m recebem Vantagem em ataques.',
-  },
+const MYTHIC_LORE_POOL = [
+  'Artefato primordial forjado antes da divisão dos planos na própria Bigorna da Criação; sua simples presença altera a atmosfera do campo de batalha e concede ao portador uma fração do poder dos antigos deuses.',
+  'Relíquia suprema do multiverso tecida com fios da própria Trama Arcana e fragmentos de eternidade; um armamento vivo que transcende a mortalidade e impede que seu campeão tombe diante da escuridão.',
+  'Armamento divino empunhado na Guerra do Alvorecer contra os senhores do Abismo; cada golpe carrega o peso de eras inteiras, ignorando barreiras mundanas e restaurando a força vital de seu mestre.',
+  'Artefato cósmico moldado a partir do horizonte de eventos de um sol colapsado; sua lâmina guarda o silêncio do espaço profundo e desperta um poder cataclísmico quando seu portador enfrenta perigo mortal.',
 ];
 
 // ============================================================================
-// MOTOR DE NLP / MACHINE LEARNING: TOKENIZAÇÃO, TF-IDF & SIMILARIDADE DE COSSENO
+// MOTOR DE NLP / MACHINE LEARNING: TOKENIZAÇÃO & SIMILARIDADE DE COSSENO
 // ============================================================================
 
 const PT_STOPWORDS = new Set([
@@ -380,13 +297,9 @@ const PT_STOPWORDS = new Set([
   'uns', 'umas', 'por', 'para', 'com', 'sem', 'sob', 'sobre', 'entre', 'ate',
   'ao', 'aos', 'as', 'os', 'que', 'se', 'ou', 'e', 'a', 'o', 'seu', 'sua',
   'seus', 'suas', 'mais', 'menos', 'muito', 'como', 'quando', 'pelo', 'pela',
-  'dano', 'maestria', 'ataque', 'acerto', 'arma', 'comum', 'incomum', 'raro',
-  'epico', 'lendario', 'mitico',
+  'dano', 'maestria', 'ataque', 'acerto', 'arma', 'causa', 'efeito',
 ]);
 
-/**
- * Extrai tokens normalizados (stems semânticos de 5 caracteres) para vetorização NLP
- */
 export function tokenizeWeaponText(text) {
   if (!text) return [];
   return String(text)
@@ -400,9 +313,6 @@ export function tokenizeWeaponText(text) {
     .map((w) => (w.length > 6 ? w.slice(0, 6) : w));
 }
 
-/**
- * Constrói vetor de frequência de termos (Term Frequency - TF)
- */
 export function buildTermVector(text) {
   const tokens = tokenizeWeaponText(text);
   const vec = {};
@@ -412,9 +322,6 @@ export function buildTermVector(text) {
   return vec;
 }
 
-/**
- * Calcula a Similaridade de Cosseno entre dois textos de descrição (0.0 = totalmente únicos, 1.0 = idênticos)
- */
 export function computeCosineSimilarity(textA, textB) {
   const vecA = buildTermVector(textA);
   const vecB = buildTermVector(textB);
@@ -428,9 +335,7 @@ export function computeCosineSimilarity(textA, textB) {
 
   for (const k of keysA) {
     normA += vecA[k] * vecA[k];
-    if (vecB[k]) {
-      dot += vecA[k] * vecB[k];
-    }
+    if (vecB[k]) dot += vecA[k] * vecB[k];
   }
   for (const k of keysB) {
     normB += vecB[k] * vecB[k];
@@ -440,9 +345,6 @@ export function computeCosineSimilarity(textA, textB) {
   return denom > 0 ? dot / denom : 0;
 }
 
-/**
- * Hash determinístico baseado no nome e semente do item para distribuição uniforme de arquétipos
- */
 function hashStringSeed(str) {
   let h = 2166136261;
   const s = String(str || 'vallen');
@@ -454,143 +356,101 @@ function hashStringSeed(str) {
 }
 
 /**
- * Seleciona o arquétipo no banco de raridade que possui a MENOR similaridade de cosseno
- * (maior distância semântica) em relação às descrições já existentes no lote/loja.
+ * Sorteia uma maestria ponderada (Derrubar é muito rara) somente se a rolagem de probabilidade da raridade permitir
  */
-function selectMostUniqueArchetype(archetypes, itemName, comparisonDescriptions = []) {
-  const baseIdx = hashStringSeed(itemName) % archetypes.length;
-  if (!comparisonDescriptions || comparisonDescriptions.length === 0) {
-    return archetypes[baseIdx];
+function rollRareWeaponMastery(rarity, seedNum) {
+  const chance = MASTERY_CHANCE_BY_RARITY[rarity] ?? 0;
+  const roll01 = (seedNum % 1000) / 1000;
+  if (roll01 >= chance) return null;
+
+  const totalWeight = WEIGHTED_MASTERIES.reduce((acc, m) => acc + m.weight, 0);
+  let target = ((seedNum >>> 4) % totalWeight);
+  for (const m of WEIGHTED_MASTERIES) {
+    if (target < m.weight) return m.name;
+    target -= m.weight;
+  }
+  return WEIGHTED_MASTERIES[0].name;
+}
+
+/**
+ * Sorteia um Efeito de Status Oficial do site de acordo com a raridade da arma:
+ * - COMUM: nunca tem
+ * - INCOMUM / RARO: difícil ter, e quando tem usa os efeitos básicos e mais fracos
+ * - ÉPICO: chance moderada com efeitos táticos médios
+ * - LENDÁRIO / MÍTICO: alta chance com os melhores efeitos de status do site
+ */
+function rollScaledStatusEffect(rarity, seedNum, comparisonDescriptions = []) {
+  const chance = STATUS_EFFECT_CHANCE_BY_RARITY[rarity] ?? 0;
+  const roll01 = ((seedNum >>> 3) % 1000) / 1000;
+  if (roll01 >= chance) return null;
+
+  // Filtra quais efeitos estão disponíveis para esta faixa de raridade
+  let pool;
+  if (rarity === 'INCOMUM') {
+    // Apenas efeitos mais simples e em versão leve
+    pool = DND_STATUS_EFFECTS.filter((s) =>
+      ['slowed', 'bleeding', 'burning'].includes(s.id)
+    );
+  } else if (rarity === 'RARO') {
+    pool = DND_STATUS_EFFECTS.filter((s) =>
+      ['slowed', 'bleeding', 'burning', 'poisoned', 'prone'].includes(s.id)
+    );
+  } else if (rarity === 'ÉPICO') {
+    pool = DND_STATUS_EFFECTS.filter((s) =>
+      ['bleeding', 'burning', 'poisoned', 'prone', 'slowed', 'blinded', 'cursed'].includes(s.id)
+    );
+  } else {
+    // LENDÁRIO e MÍTICO: acesso aos melhores efeitos (Atordoado, Invisível, Abençoado, Amaldiçoado, Cegueira, etc.)
+    pool = DND_STATUS_EFFECTS;
   }
 
-  let bestArchetype = archetypes[baseIdx];
+  // Escolhe o efeito menos repetido nas descrições recentes
+  const startIdx = (seedNum >>> 7) % pool.length;
+  let chosen = pool[startIdx];
+  let bestScore = Infinity;
+
+  for (let i = 0; i < pool.length; i++) {
+    const candidate = pool[(startIdx + i) % pool.length];
+    const countInCorpus = comparisonDescriptions.filter((d) =>
+      String(d).toLowerCase().includes(candidate.name.toLowerCase())
+    ).length;
+    if (countInCorpus < bestScore) {
+      bestScore = countInCorpus;
+      chosen = candidate;
+    }
+  }
+
+  if (rarity === 'INCOMUM') return chosen.lowText;
+  if (rarity === 'RARO' || rarity === 'ÉPICO') return chosen.midText;
+  return chosen.highText;
+}
+
+/**
+ * Seleciona a frase de lore mais distinta das já existentes usando Similaridade de Cosseno
+ */
+function pickMostUniqueLore(lorePool, itemName, seedNum, comparisonDescriptions = []) {
+  const startIdx = (hashStringSeed(itemName) + seedNum) % lorePool.length;
+  if (!comparisonDescriptions || comparisonDescriptions.length === 0) {
+    return lorePool[startIdx];
+  }
+
+  let bestLore = lorePool[startIdx];
   let lowestMaxSim = Infinity;
 
-  for (let offset = 0; offset < archetypes.length; offset++) {
-    const candidate = archetypes[(baseIdx + offset) % archetypes.length];
-    const candidateText = `${candidate.title || ''} ${candidate.bonus || ''} ${candidate.mechanic || ''} ${candidate.trait || ''} ${candidate.lore || ''}`;
-
-    let maxSimAgainstExisting = 0;
-    for (const existingDesc of comparisonDescriptions) {
-      const sim = computeCosineSimilarity(candidateText, existingDesc);
-      if (sim > maxSimAgainstExisting) {
-        maxSimAgainstExisting = sim;
-      }
+  for (let i = 0; i < lorePool.length; i++) {
+    const candidate = lorePool[(startIdx + i) % lorePool.length];
+    let maxSim = 0;
+    for (const existing of comparisonDescriptions) {
+      const sim = computeCosineSimilarity(candidate, existing);
+      if (sim > maxSim) maxSim = sim;
     }
-
-    if (maxSimAgainstExisting < lowestMaxSim - 0.02) {
-      lowestMaxSim = maxSimAgainstExisting;
-      bestArchetype = candidate;
+    if (maxSim < lowestMaxSim - 0.01) {
+      lowestMaxSim = maxSim;
+      bestLore = candidate;
     }
   }
 
-  return bestArchetype;
-}
-
-/**
- * Detecta se uma descrição de arma de alta raridade está genérica, repetitiva (ex: clichê "Corte Dimensional")
- * ou similar demais a outras armas existentes.
- */
-function needsMLDiversification(bodyDesc, rarity, comparisonDescriptions = []) {
-  const clean = String(bodyDesc || '').trim();
-  const minExpectedLength = {
-    COMUM: 35,
-    INCOMUM: 65,
-    RARO: 95,
-    ÉPICO: 130,
-    LENDÁRIO: 165,
-    MÍTICO: 190,
-  }[rarity] || 40;
-
-  if (clean.length < minExpectedLength) return true;
-
-  // Verifica se é o texto estático antigo repetido em armas lendárias/míticas
-  if (
-    /Corte Dimensional:\s*ignora armadura e resist[êe]ncias/i.test(clean) ||
-    /Passiva M[íi]tica:\s*F[úu]ria Tit[âa]nica/i.test(clean) ||
-    /Forjada nas chamas da forja an[ãa]/i.test(clean)
-  ) {
-    return true;
-  }
-
-  // Verifica similaridade de cosseno contra outras armas já geradas ou na loja
-  if (comparisonDescriptions && comparisonDescriptions.length > 0) {
-    const threshold = rarity === 'MÍTICO' ? 0.28 : rarity === 'LENDÁRIO' ? 0.32 : 0.42;
-    for (const other of comparisonDescriptions) {
-      if (computeCosineSimilarity(clean, other) > threshold) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-/**
- * Sintetiza uma descrição de arma única e escalonada por raridade usando seleção por distância semântica (ML)
- */
-export function synthesizeUniqueWeaponDescription({
-  name,
-  rarity,
-  scaleType,
-  mastery,
-  existingDesc = '',
-  comparisonDescriptions = [],
-}) {
-  const baseDamage =
-    WEAPON_DAMAGE_DICE_BY_RARITY[scaleType]?.[rarity] ||
-    WEAPON_DAMAGE_DICE_BY_RARITY.longsword[rarity] ||
-    '1d8 cortante';
-
-  const seedIdx = hashStringSeed(`${name}_${Date.now()}_${Math.random()}`);
-
-  if (rarity === 'COMUM') {
-    const craft = COMMON_CRAFT_TRAITS[seedIdx % COMMON_CRAFT_TRAITS.length];
-    return `Dano: ${baseDamage}. Maestria: ${mastery}. ${craft}`;
-  }
-
-  if (rarity === 'INCOMUM') {
-    const craft = UNCOMMON_CRAFT_TRAITS[seedIdx % UNCOMMON_CRAFT_TRAITS.length];
-    return `Dano: ${baseDamage}. Maestria: ${mastery}. ${craft}`;
-  }
-
-  if (rarity === 'RARO') {
-    const arch = selectMostUniqueArchetype(
-      RARE_ELEMENTAL_ARCHETYPES,
-      name,
-      comparisonDescriptions
-    );
-    return `Dano: ${baseDamage} (${arch.bonus}). Maestria: ${mastery}. ${arch.trait}`;
-  }
-
-  if (rarity === 'ÉPICO') {
-    const arch = selectMostUniqueArchetype(
-      EPIC_TACTICAL_ARCHETYPES,
-      name,
-      comparisonDescriptions
-    );
-    return `Dano: ${baseDamage}, ${arch.mechanic}. Maestria: ${mastery}. ${arch.lore}`;
-  }
-
-  if (rarity === 'LENDÁRIO') {
-    const arch = selectMostUniqueArchetype(
-      LEGENDARY_UNIQUE_ARCHETYPES,
-      name,
-      comparisonDescriptions
-    );
-    return `Dano: ${baseDamage} — [${arch.title}]: ${arch.mechanic}. Maestria: ${mastery}. ${arch.lore}`;
-  }
-
-  if (rarity === 'MÍTICO') {
-    const arch = selectMostUniqueArchetype(
-      MYTHIC_ARTIFACT_ARCHETYPES,
-      name,
-      comparisonDescriptions
-    );
-    return `Dano: ${baseDamage} — [${arch.title}]: ${arch.mechanic}. Maestria: ${mastery}. ${arch.lore}`;
-  }
-
-  return `Dano: ${baseDamage}. Maestria: ${mastery}. ${existingDesc}`.trim();
+  return bestLore;
 }
 
 /**
@@ -638,8 +498,102 @@ export function classifyWeaponScaleType(name) {
 }
 
 /**
- * Normaliza e enriquece itens gerados assegurando equilíbrio D&D 5.5e / 5e
- * e unicidade progressiva por raridade (ML / Similaridade de Cosseno).
+ * Sintetiza uma descrição de arma natural, bem escrita e escalonada por raridade:
+ * - Respeita a raridade de Maestria (difícil vir com Derrubar ou outras maestrias)
+ * - Respeita a raridade de Efeito de Status (usa os 10 status do site, mais fortes nas raridades altas e ausentes/raros nas baixas)
+ * - Garante unicidade semântica via Similaridade de Cosseno (ML)
+ */
+export function synthesizeUniqueWeaponDescription({
+  name,
+  rarity,
+  scaleType,
+  comparisonDescriptions = [],
+}) {
+  const safeRarity = ['COMUM', 'INCOMUM', 'RARO', 'ÉPICO', 'LENDÁRIO', 'MÍTICO'].includes(rarity)
+    ? rarity
+    : 'COMUM';
+  const resolvedScale = scaleType || classifyWeaponScaleType(name);
+  const baseDamage =
+    WEAPON_DAMAGE_DICE_BY_RARITY[resolvedScale]?.[safeRarity] ||
+    WEAPON_DAMAGE_DICE_BY_RARITY.longsword[safeRarity];
+
+  const seedNum = hashStringSeed(`${name}_${safeRarity}_${comparisonDescriptions.length}_${Math.random()}`);
+
+  const lorePool =
+    {
+      COMUM: COMMON_LORE_POOL,
+      INCOMUM: UNCOMMON_LORE_POOL,
+      RARO: RARE_LORE_POOL,
+      ÉPICO: EPIC_LORE_POOL,
+      LENDÁRIO: LEGENDARY_LORE_POOL,
+      MÍTICO: MYTHIC_LORE_POOL,
+    }[safeRarity] || COMMON_LORE_POOL;
+
+  const loreSentence = pickMostUniqueLore(
+    lorePool,
+    name,
+    seedNum,
+    comparisonDescriptions
+  );
+
+  const statusText = rollScaledStatusEffect(
+    safeRarity,
+    seedNum,
+    comparisonDescriptions
+  );
+  const masteryText = rollRareWeaponMastery(safeRarity, seedNum);
+
+  const parts = [loreSentence];
+
+  if (statusText && masteryText) {
+    parts.push(
+      `Causa ${baseDamage}, ${statusText} e concede a maestria ${masteryText}.`
+    );
+  } else if (statusText) {
+    parts.push(`Causa ${baseDamage} e ${statusText}.`);
+  } else if (masteryText) {
+    parts.push(`Causa ${baseDamage} e possui a maestria ${masteryText}.`);
+  } else {
+    parts.push(`Causa ${baseDamage}.`);
+  }
+
+  return parts.join(' ');
+}
+
+function needsMLRewrite(bodyDesc, rarity, comparisonDescriptions = []) {
+  const clean = String(bodyDesc || '').trim();
+  if (!clean || clean.length < 35) return true;
+
+  // Detecta formatos robóticos antigos com colchetes, termos em inglês (Vex/Topple) ou clichês repetidos
+  if (
+    /\[.*?\]:/.test(clean) ||
+    /\(Vex\)|\(Nick\)|\(Topple\)|\(Sap\)|\(Push\)|\(Graze\)|\(Slow\)|\(Cleave\)/i.test(clean) ||
+    /Corte Dimensional:\s*ignora armadura/i.test(clean) ||
+    /Técnica Ativa\s*—/i.test(clean)
+  ) {
+    return true;
+  }
+
+  // Em armas COMUNS ou INCOMUNS, se vierem sempre com maestria ou status forçado pela IA, reescreve
+  if (rarity === 'COMUM' && /maestria|sangramento|atordoado|queimando|invis[íi]vel/i.test(clean)) {
+    return true;
+  }
+
+  if (comparisonDescriptions && comparisonDescriptions.length > 0) {
+    const threshold = rarity === 'MÍTICO' ? 0.28 : rarity === 'LENDÁRIO' ? 0.30 : 0.38;
+    for (const existing of comparisonDescriptions) {
+      if (computeCosineSimilarity(clean, existing) > threshold) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Normaliza e equilibra um item garantindo preço DMG, probabilidade real de raridade
+ * e descrição fluida sem clichês repetidos.
  */
 export function enforceItemBalance(item, comparisonDescriptions = []) {
   const rawDesc = String(item.description || '').trim();
@@ -651,39 +605,20 @@ export function enforceItemBalance(item, comparisonDescriptions = []) {
   const type = String(item.type || 'consumable').toLowerCase();
   const name = String(item.item_name || 'Equipamento Forjado').trim();
 
-  // Limpa descrições prévias da tag de raridade para reformatar
   let bodyDesc = rawDesc.replace(/^<(COMUM|INCOMUM|RARO|ÉPICO|LENDÁRIO|MÍTICO)>\s*/i, '').trim();
 
   if (type === 'weapon') {
-    const lowerName = name.toLowerCase();
-    const matchedWeapon = DND_EXPANDED_WEAPONS.find((w) =>
-      lowerName.includes(w.name.toLowerCase())
-    );
-    const mastery = matchedWeapon ? matchedWeapon.mastery : 'Afligir (Vex)';
     const scaleType = classifyWeaponScaleType(name);
-
-    // Avalia se a descrição precisa de síntese/diversificação por ML
-    if (needsMLDiversification(bodyDesc, rarity, comparisonDescriptions)) {
+    if (needsMLRewrite(bodyDesc, rarity, comparisonDescriptions)) {
       bodyDesc = synthesizeUniqueWeaponDescription({
         name,
         rarity,
         scaleType,
-        mastery,
-        existingDesc: bodyDesc,
         comparisonDescriptions,
       });
-    } else {
-      const hasDice = /\d+d\d+/i.test(bodyDesc);
-      if (!hasDice) {
-        const damageFormula = WEAPON_DAMAGE_DICE_BY_RARITY[scaleType]?.[rarity] || '1d8 cortante';
-        bodyDesc = `Dano: ${damageFormula}. Maestria: ${mastery}. ${bodyDesc}`.trim();
-      } else if (!bodyDesc.toLowerCase().includes('maestria')) {
-        bodyDesc = `${bodyDesc} (Maestria: ${mastery})`.trim();
-      }
     }
   }
 
-  // Preço balanceado conforme DMG
   const priceRange = DND_PRICE_RANGES[rarity] || DND_PRICE_RANGES.COMUM;
   const rawPrice = Number(item.price) || priceRange.min;
   const clampedPrice = Math.max(priceRange.min, Math.min(priceRange.max, rawPrice));
@@ -699,13 +634,24 @@ export function enforceItemBalance(item, comparisonDescriptions = []) {
 }
 
 /**
- * Processa um lote inteiro de itens aplicando deduplicação sequencial por Similaridade de Cosseno
- * contra o histórico existente da loja e contra os próprios itens do lote.
+ * Processa um lote de itens da loja aplicando a tabela de probabilidades de raridade
+ * (quanto maior a raridade, mais difícil aparecer) e deduplicação por Similaridade de Cosseno.
  */
-export function enforceBatchItemUniqueness(items = [], existingDescriptions = []) {
+export function enforceBatchItemUniqueness(
+  items = [],
+  existingDescriptions = [],
+  enforceRarityRoll = false
+) {
   const memoryCorpus = [...existingDescriptions];
+
   return items.map((item) => {
-    const balanced = enforceItemBalance(item, memoryCorpus);
+    let targetItem = { ...item };
+
+    if (enforceRarityRoll && Array.isArray(item._forcedRarity)) {
+      targetItem.rarity = item._forcedRarity;
+    }
+
+    const balanced = enforceItemBalance(targetItem, memoryCorpus);
     if (balanced.type === 'weapon') {
       memoryCorpus.push(balanced.description);
     }

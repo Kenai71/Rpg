@@ -86,18 +86,12 @@ export function MasterShop({ shopItems }) {
   const synthesizeWeaponText = useCallback(
     (itemName, rarity, comparisonList) => {
       const safeName = String(itemName || 'Arma Forjada').trim();
-      const lowerName = safeName.toLowerCase();
-      const matchedWeapon = DND_EXPANDED_WEAPONS.find((w) =>
-        lowerName.includes(w.name.toLowerCase())
-      );
-      const mastery = matchedWeapon ? matchedWeapon.mastery : 'Afligir (Vex)';
       const scaleType = classifyWeaponScaleType(safeName);
 
       return synthesizeUniqueWeaponDescription({
         name: safeName,
         rarity: String(rarity || 'COMUM').toUpperCase(),
         scaleType,
-        mastery,
         comparisonDescriptions: comparisonList,
       });
     },
@@ -134,9 +128,12 @@ export function MasterShop({ shopItems }) {
         const rarity = getRarityFromItem(w);
         const currentClean = cleanDescription(w.description);
         const isGeneric =
-          currentClean.length < 75 ||
+          currentClean.length < 50 ||
+          /\[.*?\]:/.test(currentClean) ||
+          /\(Vex\)|\(Nick\)|\(Topple\)|\(Sap\)|\(Push\)|\(Graze\)|\(Slow\)|\(Cleave\)/i.test(currentClean) ||
           /Corte Dimensional:\s*ignora armadura/i.test(currentClean) ||
-          /Forjada nas chamas da forja an/i.test(currentClean);
+          /Forjada nas chamas da forja an/i.test(currentClean) ||
+          (rarity === 'COMUM' && /maestria/i.test(currentClean));
 
         const isTooSimilar = acceptedCorpus.some(
           (prev) => computeCosineSimilarity(currentClean, prev) > 0.3
