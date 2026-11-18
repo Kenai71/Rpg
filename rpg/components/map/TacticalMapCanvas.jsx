@@ -1315,10 +1315,10 @@ export function TacticalMapCanvas({
                   isMovable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                 )}
               >
-                {/* Condições de Status Ativas com Ícones (Mini Badges Flutuantes Acima) */}
+                {/* Condições de Status Ativas com Ícones (Dobro do Tamanho: 32x32px / h-8 w-8 com ícone 20x20px / h-5 w-5) */}
                 {Array.isArray(token.conditions) && token.conditions.length > 0 && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center justify-center gap-0.5 z-20 pointer-events-none">
-                    {token.conditions.slice(0, 4).map((condId) => {
+                  <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 flex items-center justify-center gap-1 z-20 pointer-events-none">
+                    {token.conditions.slice(0, 5).map((condId) => {
                       const meta = TOKEN_CONDITIONS.find((c) => c.id === condId);
                       const CondIcon = CONDITION_ICONS[condId];
                       if (!CondIcon) return null;
@@ -1326,30 +1326,43 @@ export function TacticalMapCanvas({
                         <span
                           key={condId}
                           title={meta?.label || condId}
-                          className="h-4 w-4 rounded-full flex items-center justify-center shadow-md border border-white/25 backdrop-blur-md"
-                          style={{ backgroundColor: `${meta?.color || '#ef4444'}f0` }}
+                          className="h-8 w-8 rounded-full flex items-center justify-center border-2 border-white/45 backdrop-blur-md transition-transform"
+                          style={{
+                            backgroundColor: `${meta?.color || '#ef4444'}f2`,
+                            boxShadow: `0 4px 12px rgba(0, 0, 0, 0.85), 0 0 12px ${meta?.color || '#ef4444'}99`,
+                          }}
                         >
-                          <CondIcon className="h-2.5 w-2.5 text-white" />
+                          <CondIcon className="h-5 w-5 text-white drop-shadow" />
                         </span>
                       );
                     })}
+                    {token.conditions.length > 5 && (
+                      <span className="h-7 px-1.5 rounded-full bg-black/90 border border-white/30 text-[11px] font-mono font-black text-white flex items-center justify-center shadow-lg">
+                        +{token.conditions.length - 5}
+                      </span>
+                    )}
                   </div>
                 )}
 
-                {/* Círculo Principal do Bonequinho (Perfeita Centralização no ponto exato) */}
+                {/* Círculo Principal do Bonequinho (Miniatura Tática com Anel Metálico e Centralização Exata) */}
                 <div
                   className={cn(
-                    'w-full h-full rounded-full flex items-center justify-center font-black font-mono shadow-lg relative transition-transform duration-150',
+                    'w-full h-full rounded-full flex items-center justify-center font-black font-mono relative transition-transform duration-150',
                     'group-hover:scale-105 group-active:scale-95',
                     isCurrentTurn && 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black animate-pulse',
                     token.hidden && 'opacity-60 border-dashed'
                   )}
                   style={{
-                    backgroundColor: token.color ? `${token.color}dd` : '#3b82f6dd',
-                    border: `2px solid ${token.color || '#60a5fa'}`,
-                    boxShadow: `0 0 12px ${token.color || '#60a5fa'}55`,
+                    background: token.avatar
+                      ? '#0c101b'
+                      : `radial-gradient(circle at 32% 28%, ${token.color || '#3b82f6'}ff 0%, ${token.color || '#3b82f6'}cc 55%, #090d16 100%)`,
+                    border: `2.5px solid ${token.color || '#60a5fa'}`,
+                    boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), inset 0 -3px 6px rgba(0, 0, 0, 0.75), 0 6px 16px rgba(0, 0, 0, 0.8), 0 0 16px ${token.color || '#60a5fa'}66`,
                   }}
                 >
+                  {/* Aro interno sutil de acabamento de peça de tabuleiro */}
+                  <div className="absolute inset-0.5 rounded-full border border-white/25 pointer-events-none" />
+
                   {token.avatar ? (
                     <img
                       src={token.avatar}
@@ -1357,23 +1370,26 @@ export function TacticalMapCanvas({
                       className="w-full h-full rounded-full object-cover pointer-events-none"
                     />
                   ) : (
-                    <span className="text-white text-xs drop-shadow truncate px-1">
+                    <span
+                      className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate px-1 tracking-tight"
+                      style={{ fontSize: `${Math.max(11, Math.round(tokenPx * 0.34))}px` }}
+                    >
                       {token.name?.slice(0, 2).toUpperCase()}
                     </span>
                   )}
 
                   {/* Ícone de Oculto se for Token Invisível aos jogadores */}
                   {token.hidden && (
-                    <div className="absolute -top-1 -right-1 p-0.5 rounded-full bg-black/80 text-amber-300">
-                      <EyeOff className="h-2.5 w-2.5" />
+                    <div className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-black/90 border border-amber-400/50 text-amber-300 shadow-lg">
+                      <EyeOff className="h-3.5 w-3.5" />
                     </div>
                   )}
                 </div>
 
-                {/* Rótulo de Vida e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
-                <div className="absolute top-full left-1/2 -translate-x-1/2 pt-1 flex flex-col items-center pointer-events-none z-10 w-36">
-                  {/* Barra de Vida Mini sob o Token */}
-                  <div className="w-10 h-1 bg-black/80 rounded-full overflow-hidden border border-white/20">
+                {/* Rótulo de Vida, Mana e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
+                <div className="absolute top-full left-1/2 -translate-x-1/2 pt-1.5 flex flex-col items-center pointer-events-none z-10 w-40">
+                  {/* Barra de Vida Aprimorada sob o Token */}
+                  <div className="w-12 h-1.5 bg-black/90 rounded-full overflow-hidden border border-white/25 shadow-md">
                     <div
                       className={cn(
                         'h-full transition-all duration-200',
@@ -1383,10 +1399,13 @@ export function TacticalMapCanvas({
                     />
                   </div>
 
-                  {/* Nome do Token sob a Barra de Vida */}
-                  <div className="text-center mt-0.5">
-                    <span className="px-1.5 py-0.2 rounded bg-black/85 backdrop-blur-sm text-[10px] font-bold text-white border border-white/10 whitespace-nowrap shadow block truncate max-w-[120px]">
-                      {token.name}
+                  {/* Placa de Nome e CA sob a Barra de Vida */}
+                  <div className="text-center mt-1 flex items-center justify-center gap-1 max-w-[148px]">
+                    <span className="px-2 py-0.5 rounded-md bg-[#0c101b]/95 backdrop-blur-md text-[10px] font-bold text-white border border-white/15 whitespace-nowrap shadow-[0_4px_12px_rgba(0,0,0,0.85)] flex items-center gap-1 truncate">
+                      <span className="truncate">{token.name}</span>
+                      <span className="text-[9px] font-mono text-slate-300 pl-1 border-l border-white/15 shrink-0">
+                        {token.hp}/{token.max_hp}
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -1410,15 +1429,19 @@ export function TacticalMapCanvas({
       >
         {activeSelectedToken && (
           <div className="space-y-4 py-1">
-            {/* Cabeçalho do Token */}
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+            {/* Cabeçalho Aprimorado do Token */}
+            <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-[#0c101b] border border-white/15 shadow-inner">
               <div
-                className="h-12 w-12 rounded-full flex items-center justify-center font-bold text-white shrink-0 border-2"
+                className="h-16 w-16 rounded-full flex items-center justify-center font-black text-lg text-white shrink-0 relative"
                 style={{
-                  backgroundColor: activeSelectedToken.color || '#3b82f6',
-                  borderColor: activeSelectedToken.color || '#60a5fa',
+                  background: activeSelectedToken.avatar
+                    ? '#0c101b'
+                    : `radial-gradient(circle at 32% 28%, ${activeSelectedToken.color || '#3b82f6'}ff 0%, ${activeSelectedToken.color || '#3b82f6'}cc 55%, #090d16 100%)`,
+                  border: `2.5px solid ${activeSelectedToken.color || '#60a5fa'}`,
+                  boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), 0 0 18px ${activeSelectedToken.color || '#60a5fa'}55`,
                 }}
               >
+                <div className="absolute inset-0.5 rounded-full border border-white/25 pointer-events-none" />
                 {activeSelectedToken.avatar ? (
                   <img
                     src={activeSelectedToken.avatar}
@@ -1430,9 +1453,11 @@ export function TacticalMapCanvas({
                 )}
               </div>
 
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-white truncate">{activeSelectedToken.name}</h3>
+                  <h3 className="text-lg font-extrabold text-white truncate">
+                    {activeSelectedToken.name}
+                  </h3>
                   <Badge className="bg-white/10 text-slate-300 border-white/15 text-[10px]">
                     {activeSelectedToken.type === 'monster'
                       ? 'Monstro'
@@ -1464,6 +1489,22 @@ export function TacticalMapCanvas({
                 </div>
                 <div className="text-xl font-black font-mono text-white">
                   {activeSelectedToken.hp} / {activeSelectedToken.max_hp}
+                </div>
+                <div className="w-full h-1.5 bg-black/60 rounded-full overflow-hidden border border-rose-500/30">
+                  <div
+                    className="h-full bg-rose-400 transition-all duration-200"
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          Math.round(
+                            ((activeSelectedToken.hp || 0) / (activeSelectedToken.max_hp || 1)) * 100
+                          )
+                        )
+                      )}%`,
+                    }}
+                  />
                 </div>
                 {isMaster && (
                   <div className="flex items-center gap-1 pt-1 flex-wrap">
@@ -1591,6 +1632,24 @@ export function TacticalMapCanvas({
                 <div className="text-xl font-black font-mono text-white">
                   {activeSelectedToken.mana ?? 0} / {activeSelectedToken.max_mana ?? 0}
                 </div>
+                <div className="w-full h-1.5 bg-black/60 rounded-full overflow-hidden border border-purple-500/30">
+                  <div
+                    className="h-full bg-purple-400 transition-all duration-200"
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          Math.round(
+                            ((activeSelectedToken.mana || 0) /
+                              Math.max(1, activeSelectedToken.max_mana || 1)) *
+                              100
+                          )
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
                 {isMaster && (
                   <div className="flex items-center gap-1 pt-1 flex-wrap">
                     <button
@@ -1637,23 +1696,23 @@ export function TacticalMapCanvas({
               </div>
             </div>
 
-            {/* SE FOR JOGADOR: VISUALIZAÇÃO DOS EFEITOS DE STATUS ATIVOS */}
+            {/* SE FOR JOGADOR: VISUALIZAÇÃO DOS EFEITOS DE STATUS ATIVOS (DOBRO DO TAMANHO: 64x64px / h-16 w-16 com ícone 32x32px / h-8 w-8) */}
             {!isMaster && (
-              <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 space-y-2.5">
+              <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <ShieldAlert className="h-3.5 w-3.5 text-slate-400" />
+                    <ShieldAlert className="h-4 w-4 text-slate-300" />
                     Efeitos de Status Ativos
                   </span>
                   {Array.isArray(activeSelectedToken.conditions) && activeSelectedToken.conditions.length > 0 && (
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 text-slate-300 font-bold">
+                    <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-white/10 text-white font-bold">
                       {activeSelectedToken.conditions.length} ativo{activeSelectedToken.conditions.length > 1 ? 's' : ''}
                     </span>
                   )}
                 </div>
 
                 {Array.isArray(activeSelectedToken.conditions) && activeSelectedToken.conditions.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2.5">
                     {activeSelectedToken.conditions.map((condId) => {
                       const cond = TOKEN_CONDITIONS.find((c) => c.id === condId);
                       const CondIcon = CONDITION_ICONS[condId];
@@ -1661,32 +1720,33 @@ export function TacticalMapCanvas({
                       return (
                         <div
                           key={condId}
-                          className="p-2.5 rounded-xl border flex items-center gap-2.5 transition-all shadow-sm"
+                          className="p-3 rounded-2xl border flex items-center gap-3.5 transition-all shadow-lg"
                           style={{
-                            borderColor: `${cond.color}50`,
-                            backgroundColor: `${cond.color}15`,
+                            borderColor: `${cond.color}65`,
+                            backgroundColor: `${cond.color}1a`,
                           }}
                         >
                           <span
-                            className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 shadow"
+                            className="h-16 w-16 rounded-2xl flex items-center justify-center shrink-0 shadow-xl"
                             style={{
-                              backgroundColor: `${cond.color}30`,
-                              border: `1px solid ${cond.color}70`,
+                              backgroundColor: `${cond.color}35`,
+                              border: `2px solid ${cond.color}90`,
+                              boxShadow: `0 0 18px ${cond.color}55`,
                             }}
                           >
-                            {CondIcon && <CondIcon className="h-4 w-4" style={{ color: cond.color }} />}
+                            {CondIcon && <CondIcon className="h-8 w-8" style={{ color: cond.color }} />}
                           </span>
                           <div className="min-w-0">
-                            <div className="text-xs font-bold text-white truncate">{cond.label}</div>
-                            <div className="text-[10px] text-slate-300 font-mono">Condição Ativa</div>
+                            <div className="text-base font-extrabold text-white truncate">{cond.label}</div>
+                            <div className="text-xs text-slate-300 font-mono">Condição de Status Ativa</div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="p-3 rounded-lg bg-black/40 border border-white/5 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                     Nenhum efeito de status ativo (Condição Normal)
                   </div>
                 )}
@@ -1781,12 +1841,12 @@ export function TacticalMapCanvas({
                   </div>
                 </div>
 
-                {/* Condições de Status D&D com Ícones Representativos */}
+                {/* Condições de Status D&D com Ícones Representativos (DOBRO DO TAMANHO: 40x40px / h-10 w-10 com ícone 24x24px / h-6 w-6) */}
                 <div>
-                  <label className="text-xs font-bold text-slate-300 mb-1.5 block">
+                  <label className="text-xs font-bold text-slate-300 mb-2 block">
                     Condições de Status Ativas:
                   </label>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     {TOKEN_CONDITIONS.map((cond) => {
                       const active = activeSelectedToken.conditions?.includes(cond.id);
                       const CondIcon = CONDITION_ICONS[cond.id];
@@ -1804,19 +1864,31 @@ export function TacticalMapCanvas({
                             }
                           }}
                           className={cn(
-                            'px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-2 text-left',
+                            'p-2.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-2.5 text-left',
                             active
-                              ? 'bg-white/20 text-white border-white/35 shadow-md ring-1 ring-white/20'
+                              ? 'bg-white/20 text-white border-white/40 shadow-lg ring-1 ring-white/25'
                               : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
                           )}
+                          style={
+                            active
+                              ? {
+                                  borderColor: `${cond.color}88`,
+                                  backgroundColor: `${cond.color}22`,
+                                }
+                              : undefined
+                          }
                         >
                           <span
-                            className="h-5 w-5 rounded-lg flex items-center justify-center shrink-0"
-                            style={{ backgroundColor: `${cond.color}25`, border: `1px solid ${cond.color}60` }}
+                            className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                            style={{
+                              backgroundColor: `${cond.color}30`,
+                              border: `1.5px solid ${cond.color}75`,
+                              boxShadow: active ? `0 0 12px ${cond.color}66` : undefined,
+                            }}
                           >
-                            {CondIcon && <CondIcon className="h-3 w-3" style={{ color: cond.color }} />}
+                            {CondIcon && <CondIcon className="h-6 w-6" style={{ color: cond.color }} />}
                           </span>
-                          <span className="truncate">{cond.label}</span>
+                          <span className="truncate text-sm">{cond.label}</span>
                         </button>
                       );
                     })}
