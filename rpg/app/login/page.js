@@ -238,7 +238,7 @@ export default function LoginPage() {
       <div className="relative z-10 flex min-h-screen flex-col md:landscape:flex-row">
         {/* LADO VISUAL: Cena Interativa 3D do Dado de 20 Lados (D20) */}
         <section
-          className="w-full md:landscape:w-[54%] lg:w-[56%] xl:w-[58%] flex items-center justify-center p-4 lg:p-8 relative min-h-[380px] md:landscape:min-h-screen"
+          className="w-full md:landscape:w-[50%] lg:w-[54%] xl:w-[58%] flex items-center justify-center p-3 lg:p-6 xl:p-8 relative min-h-[320px] md:landscape:min-h-screen"
           aria-label="Cena Interativa do Vallen RPG"
         >
           <InteractiveD20Scene className="w-full h-full max-w-2xl mx-auto" />
@@ -246,23 +246,23 @@ export default function LoginPage() {
 
         {/* LADO DE AUTENTICAÇÃO: Posicionado um pouco mais para a esquerda na coluna */}
         <section
-          className="relative flex min-h-screen w-full flex-col justify-between p-6 sm:p-10 md:landscape:w-[46%] lg:w-[44%] xl:w-[42%]"
+          className="relative flex min-h-screen w-full flex-col justify-between p-4 sm:p-6 xl:p-10 md:landscape:w-[50%] lg:w-[46%] xl:w-[42%] overflow-y-auto"
           aria-label="Formulário de Entrada"
         >
           {/* Top Header: Logo do Dado de 20 Lados (Branco Meio Cinza) */}
-          <header className="pt-4 pb-2 w-full max-w-[400px] mx-auto md:landscape:ml-6 lg:landscape:ml-12 md:landscape:mr-auto">
+          <header className="pt-2 pb-1 w-full max-w-[400px] mx-auto md:landscape:ml-6 lg:landscape:ml-10 xl:landscape:ml-12 md:landscape:mr-auto">
             <a
               href="/"
               className="inline-block transition-transform duration-200 hover:scale-[1.02] focus:outline-none"
               aria-label="Vallen RPG Início"
             >
-              <Logo size={42} showText={true} subtitle="Mundo RPG" />
+              <Logo size={38} showText={true} subtitle="Mundo RPG" />
             </a>
           </header>
 
-          {/* Card de Autenticação: Ajustado um pouco mais para a esquerda dentro da coluna */}
-          <div className="flex flex-1 items-center justify-center md:landscape:justify-start my-auto w-full py-4">
-            <div className="w-full max-w-[400px] md:landscape:ml-6 lg:landscape:ml-12 md:landscape:mr-auto rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-6 sm:p-8 shadow-2xl shadow-black/60 space-y-5">
+          {/* Card de Autenticação: Ajustado para caber perfeitamente em telas de notebook */}
+          <div className="flex flex-1 items-center justify-center md:landscape:justify-start my-auto w-full py-2">
+            <div className="w-full max-w-[400px] md:landscape:ml-6 lg:landscape:ml-10 xl:landscape:ml-12 md:landscape:mr-auto rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5 sm:p-6 xl:p-8 shadow-2xl shadow-black/60 space-y-4">
               {/* Heading */}
               <div className="text-center md:landscape:text-left space-y-1.5">
                 <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-tight">

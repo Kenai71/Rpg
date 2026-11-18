@@ -147,12 +147,12 @@ export function TacticalMapCanvas({
     return { width: baseW, height: baseH };
   }, [naturalDimensions]);
 
-  // Ajustar mapa à tela (Fit to screen)
+  // Ajustar mapa à tela (Fit to screen — essencial para notebooks e telas menores)
   const handleFitToScreen = useCallback(() => {
     const container = containerRef.current;
     if (!container || !mapDisplaySize.width || !mapDisplaySize.height) return;
-    const cWidth = container.clientWidth - 40;
-    const cHeight = container.clientHeight - 40;
+    const cWidth = Math.max(240, container.clientWidth - 24);
+    const cHeight = Math.max(200, container.clientHeight - 24);
     const scaleW = cWidth / mapDisplaySize.width;
     const scaleH = cHeight / mapDisplaySize.height;
     const fitScale = Math.min(scaleW, scaleH);
@@ -161,14 +161,12 @@ export function TacticalMapCanvas({
     setPan({ x: 0, y: 0 });
   }, [mapDisplaySize]);
 
-  // Auto-ajuste na primeira carga se não houver escala customizada
+  // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro em notebooks
   useEffect(() => {
-    if (map?.scale) {
-      setZoom(map.scale);
-    } else if (map?.id) {
+    if (map?.id && imageStatus === 'loaded') {
       handleFitToScreen();
     }
-  }, [map?.id, map?.scale, handleFitToScreen]);
+  }, [map?.id, imageStatus, handleFitToScreen]);
 
   // Zoom suave com Scroll do Mouse dentro do mapa sem rolar a página externa
   useEffect(() => {
@@ -727,7 +725,7 @@ export function TacticalMapCanvas({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[78vh] min-h-[540px] rounded-2xl overflow-hidden border border-white/10 bg-[#070913] select-none shadow-2xl transition-all"
+      className="relative w-full h-[calc(100dvh-11.5rem)] min-h-[420px] max-h-[840px] xl:h-[78vh] xl:min-h-[520px] rounded-2xl overflow-hidden border border-white/10 bg-[#070913] select-none shadow-2xl transition-all"
       style={{
         backgroundImage: 'radial-gradient(circle at 50% 50%, #0d121f 0%, #06080e 100%)',
         boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 60px -12px rgba(0, 0, 0, 0.85)',
@@ -1009,8 +1007,8 @@ export function TacticalMapCanvas({
       {/* PAINEL LATERAL: HISTÓRICO DAS ÚLTIMAS 15 ROLAGENS DE DADOS */}
       <div
         className={cn(
-          'absolute left-3 z-20 w-60 rounded-2xl bg-[#0c101b]/88 backdrop-blur-xl border border-white/15 shadow-2xl transition-all duration-200 pointer-events-auto',
-          initiativeOpen && initiativeOrder.length > 0 ? 'top-28' : 'top-16'
+          'absolute left-3 z-20 w-52 sm:w-56 xl:w-60 rounded-2xl bg-[#0c101b]/88 backdrop-blur-xl border border-white/15 shadow-2xl transition-all duration-200 pointer-events-auto',
+          initiativeOpen && initiativeOrder.length > 0 ? 'top-28' : 'top-14 sm:top-16'
         )}
       >
         <button
@@ -1036,7 +1034,7 @@ export function TacticalMapCanvas({
         </button>
 
         {rollHistoryOpen && (
-          <div className="px-2.5 pb-2.5 pt-1 border-t border-white/10 space-y-1.5 max-h-[310px] overflow-y-auto">
+          <div className="px-2.5 pb-2.5 pt-1 border-t border-white/10 space-y-1.5 max-h-[38vh] sm:max-h-[250px] xl:max-h-[310px] overflow-y-auto">
             {rollingSeedKey && active3DRoll && (
               <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/15 animate-pulse">
                 <div className="min-w-0">

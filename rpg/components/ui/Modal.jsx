@@ -21,17 +21,17 @@ export function Modal({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm data-[state=open]:animate-in" />
         <Dialog.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2',
+            'fixed left-1/2 top-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2',
             'rounded-2xl bg-[var(--surface-1)] border border-[var(--border-strong)] shadow-2xl',
-            'max-h-[90vh] flex flex-col overflow-hidden focus:outline-none',
+            'max-h-[92dvh] flex flex-col overflow-hidden focus:outline-none',
             maxWidth
           )}
         >
           {(title || !hideClose) && (
-            <div className="px-6 pt-5 pb-4 border-b border-[var(--border-subtle)] flex items-start justify-between gap-4 shrink-0">
-              <div className="space-y-1 min-w-0">
+            <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 pb-3 border-b border-[var(--border-subtle)] flex items-start justify-between gap-3 shrink-0">
+              <div className="space-y-0.5 min-w-0">
                 {title && (
-                  <Dialog.Title className="text-lg font-bold text-slate-50 tracking-tight">
+                  <Dialog.Title className="text-base sm:text-lg font-bold text-slate-50 tracking-tight">
                     {title}
                   </Dialog.Title>
                 )}
@@ -46,7 +46,7 @@ export function Modal({
                   <button
                     type="button"
                     aria-label="Fechar janela"
-                    className="h-9 w-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+                    className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -55,10 +55,10 @@ export function Modal({
             </div>
           )}
 
-          <div className="px-6 py-5 overflow-y-auto flex-1">{children}</div>
+          <div className="px-4 sm:px-6 py-3.5 sm:py-4 overflow-y-auto flex-1">{children}</div>
 
           {footer && (
-            <div className="px-6 py-4 border-t border-[var(--border-subtle)] bg-[var(--surface-0)]/50 flex flex-wrap items-center justify-end gap-2.5 shrink-0">
+            <div className="px-4 sm:px-6 py-3 sm:py-3.5 border-t border-[var(--border-subtle)] bg-[var(--surface-0)]/50 flex flex-wrap items-center justify-end gap-2 shrink-0">
               {footer}
             </div>
           )}

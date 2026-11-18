@@ -367,9 +367,9 @@ export function MasterMapManager({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5 sm:space-y-3.5">
       {/* Barra Superior do Mestre */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 p-4 rounded-2xl bg-[var(--surface-1)] border border-[var(--border-subtle)] backdrop-blur-xl">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2.5 p-3 sm:p-3.5 rounded-2xl bg-[var(--surface-1)] border border-[var(--border-subtle)] backdrop-blur-xl">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-10 w-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
             <Compass className="h-5 w-5 text-slate-300" />
