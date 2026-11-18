@@ -77,9 +77,7 @@ export default function PlayerPage() {
       subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
         console.error('Erro ao ouvir pings:', err)
       ),
-      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, (err) =>
-        console.error('Erro ao ouvir rolagens 3D:', err)
-      ),
+      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, () => {}),
       subscribeCollection(
         'trade_requests',
         [where('receiver_id', '==', user.uid)],

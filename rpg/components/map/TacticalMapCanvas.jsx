@@ -225,6 +225,7 @@ export function TacticalMapCanvas({
   const visiblePings = useMemo(() => {
     const cutoff = now - 5000; // Dura no máximo 5 segundos (5000ms)
     const combined = [...pings, ...localPings].filter((p) => {
+      if (p.event_type === 'dice_roll' || p.roll !== undefined) return false;
       if (p.map_id && map?.id && p.map_id !== map.id) return false;
       const t = getPingTime(p);
       return t >= cutoff && t <= now + 10000;
@@ -245,7 +246,7 @@ export function TacticalMapCanvas({
     return deduped;
   }, [pings, localPings, now, map?.id]);
 
-  // Rolador Rápido de Dados Integrado & Histórico Lateral (Limite de 15 rolagens)
+  // Rolador Rápido de Dados Integrado & Histórico Lateral Sincronizado (Limite de 15 rolagens)
   const MAX_ROLL_HISTORY = 15;
   const [diceOpen, setDiceOpen] = useState(false);
   const [rollHistoryOpen, setRollHistoryOpen] = useState(true);
@@ -254,6 +255,7 @@ export function TacticalMapCanvas({
   const [rollingSeedKey, setRollingSeedKey] = useState(null);
   const [settledLocalRolls, setSettledLocalRolls] = useState([]);
   const processedRollKeysRef = useRef(new Set());
+  const initialHistorySeededRef = useRef(false);
 
   const getRollSeedKey = useCallback((r) => {
     if (!r) return '';
@@ -262,12 +264,31 @@ export function TacticalMapCanvas({
 
   const getRollTime = useCallback((r) => {
     if (!r) return 0;
-    if (typeof r.createdAtMs === 'number') return r.createdAtMs;
     if (r.createdAt?.toMillis) return r.createdAt.toMillis();
     if (r.createdAt?.seconds) return r.createdAt.seconds * 1000;
+    if (typeof r.createdAtMs === 'number') return r.createdAtMs;
     if (r.createdAt instanceof Date) return r.createdAt.getTime();
     if (typeof r.createdAt === 'string') return new Date(r.createdAt).getTime();
     return Date.now();
+  }, []);
+
+  // Consolida rolagens vindas do canal em tempo real (map_pings com event_type === 'dice_roll' + map_rolls)
+  const remoteDiceRolls = useMemo(() => {
+    const fromPings = (pings || []).filter(
+      (p) => p.event_type === 'dice_roll' || (p.roll !== undefined && p.sides !== undefined)
+    );
+    const fromRolls = diceRolls || [];
+    const merged = [...fromPings, ...fromRolls];
+    merged.sort((a, b) => getRollTime(b) - getRollTime(a));
+    return merged;
+  }, [pings, diceRolls, getRollTime]);
+
+  // Marca o carregamento inicial após 800ms caso a mesa comece com 0 rolagens
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      initialHistorySeededRef.current = true;
+    }, 800);
+    return () => clearTimeout(timer);
   }, []);
 
   // Chamado pelo TacticalDice3D exatamente quando o dado 3D para de rolar na mesa
@@ -292,41 +313,42 @@ export function TacticalMapCanvas({
     [getRollSeedKey]
   );
 
-  // Ouve rolagens em tempo real (do Firestore) pertencentes a este mapa
+  // Ouve rolagens em tempo real de qualquer jogador ou mestre conectado à sessão
   useEffect(() => {
-    if (!diceRolls || diceRolls.length === 0 || !map?.id) return;
-    const latest = diceRolls.find((r) => r.map_id === map.id);
-    if (!latest || !latest.id) return;
+    if (!remoteDiceRolls || remoteDiceRolls.length === 0) return;
+
+    // No primeiro snapshot ao abrir a página, registra o histórico existente sem re-animar dados antigos
+    if (!initialHistorySeededRef.current) {
+      initialHistorySeededRef.current = true;
+      remoteDiceRolls.forEach((r) => {
+        if (r.id) processedRollKeysRef.current.add(r.id);
+        const k = getRollSeedKey(r);
+        if (k) processedRollKeysRef.current.add(k);
+      });
+      return;
+    }
+
+    const latest = remoteDiceRolls[0];
+    if (!latest) return;
 
     const seedKey = getRollSeedKey(latest);
     if (
-      processedRollKeysRef.current.has(latest.id) ||
-      processedRollKeysRef.current.has(seedKey)
+      (latest.id && processedRollKeysRef.current.has(latest.id)) ||
+      (seedKey && processedRollKeysRef.current.has(seedKey))
     ) {
       return;
     }
 
-    const rollTime = getRollTime(latest);
-    // Anima em 3D apenas se foi criado há menos de 15 segundos
-    if (Date.now() - rollTime > 15000) {
-      processedRollKeysRef.current.add(latest.id);
-      processedRollKeysRef.current.add(seedKey);
-      return;
-    }
+    if (latest.id) processedRollKeysRef.current.add(latest.id);
+    if (seedKey) processedRollKeysRef.current.add(seedKey);
 
-    processedRollKeysRef.current.add(latest.id);
-    processedRollKeysRef.current.add(seedKey);
     setRollingSeedKey(seedKey);
     setActive3DRoll(latest);
-  }, [diceRolls, map?.id, getRollSeedKey, getRollTime]);
+  }, [remoteDiceRolls, getRollSeedKey]);
 
-  // Histórico Lateral das últimas 15 rolagens (exclui o dado que ainda está girando no ar)
+  // Histórico Lateral Sincronizado das últimas 15 rolagens de toda a mesa (exclui o dado que ainda está girando)
   const rollHistory = useMemo(() => {
-    const remoteForMap = (diceRolls || []).filter((r) => r.map_id === map?.id);
-    const localForMap = settledLocalRolls.filter(
-      (r) => !r.map_id || !map?.id || r.map_id === map.id
-    );
-    const combined = [...localForMap, ...remoteForMap];
+    const combined = [...settledLocalRolls, ...remoteDiceRolls];
     const seenKeys = new Set();
     const deduped = [];
 
@@ -342,7 +364,7 @@ export function TacticalMapCanvas({
     deduped.sort((a, b) => getRollTime(b) - getRollTime(a));
     // Limite estrito das últimas 15 rolagens: toda vez que entra uma nova, a 15ª mais antiga sai
     return deduped.slice(0, MAX_ROLL_HISTORY);
-  }, [diceRolls, settledLocalRolls, map?.id, rollingSeedKey, getRollSeedKey, getRollTime]);
+  }, [remoteDiceRolls, settledLocalRolls, rollingSeedKey, getRollSeedKey, getRollTime]);
 
   // Ordem de Combate / Iniciativa
   const [initiativeOpen, setInitiativeOpen] = useState(Boolean(map?.combat_active));

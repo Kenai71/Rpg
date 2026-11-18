@@ -1236,7 +1236,8 @@ export async function broadcastMapDiceRoll({
   const isFumble = validSides === 20 && numRoll === 1;
 
   const nowMs = Date.now();
-  const docRef = await addDoc(collection(firestore, 'map_rolls'), {
+  const rollPayload = {
+    event_type: 'dice_roll',
     map_id: String(map_id),
     user_id: String(user_id || 'anon'),
     user_name: String(user_name || 'Aventureiro').slice(0, 60),
@@ -1246,29 +1247,48 @@ export async function broadcastMapDiceRoll({
     seed: Number(seed),
     is_max: Boolean(isMax),
     is_fumble: Boolean(isFumble),
+    x: 50,
+    y: 50,
+    color: isMax ? '#f59e0b' : isFumble ? '#f43f5e' : '#38bdf8',
     createdAtMs: nowMs,
     createdAt: serverTimestamp(),
-  });
+  };
 
-  // Limite estrito das últimas 15 rolagens por mapa: apaga as mais antigas acima de 15
+  // Usa map_pings (coleção já autorizada no Firestore em produção para Mestre e Jogadores)
+  const docRef = await addDoc(collection(firestore, 'map_pings'), rollPayload);
+
+  // Limite estrito das últimas 15 rolagens de dados: apaga a 15ª mais antiga ao entrar uma nova
   try {
-    const q = query(
-      collection(firestore, 'map_rolls'),
-      where('map_id', '==', String(map_id))
+    const snap = await getDocs(collection(firestore, 'map_pings'));
+    const getDocTime = (d) => {
+      const data = d.data();
+      if (data?.createdAt?.toMillis) return data.createdAt.toMillis();
+      if (data?.createdAt?.seconds) return data.createdAt.seconds * 1000;
+      if (typeof data?.createdAtMs === 'number') return data.createdAtMs;
+      return nowMs;
+    };
+
+    const rollDocs = snap.docs.filter(
+      (d) => d.data()?.event_type === 'dice_roll' || d.data()?.roll !== undefined
     );
-    const snap = await getDocs(q);
-    if (snap.docs.length > 15) {
-      const getDocTime = (d) => {
-        const data = d.data();
-        if (typeof data?.createdAtMs === 'number') return data.createdAtMs;
-        if (data?.createdAt?.toMillis) return data.createdAt.toMillis();
-        if (data?.createdAt?.seconds) return data.createdAt.seconds * 1000;
-        return 0;
-      };
-      const sorted = [...snap.docs].sort((a, b) => getDocTime(b) - getDocTime(a));
-      const excess = sorted.slice(15);
+    if (rollDocs.length > 15) {
+      const sortedRolls = [...rollDocs].sort((a, b) => getDocTime(b) - getDocTime(a));
+      const excessRolls = sortedRolls.slice(15);
       await Promise.all(
-        excess.map((oldDoc) => deleteDoc(doc(firestore, 'map_rolls', oldDoc.id)))
+        excessRolls.map((oldDoc) => deleteDoc(doc(firestore, 'map_pings', oldDoc.id)))
+      );
+    }
+
+    // Limpa também pings de radar expirados (> 30s) para manter a coleção enxuta
+    const expiredPings = snap.docs.filter((d) => {
+      const data = d.data();
+      if (data?.event_type === 'dice_roll' || data?.roll !== undefined) return false;
+      const t = getDocTime(d);
+      return t > 0 && nowMs - t > 30000;
+    });
+    if (expiredPings.length > 0) {
+      await Promise.all(
+        expiredPings.map((oldPing) => deleteDoc(doc(firestore, 'map_pings', oldPing.id)))
       );
     }
   } catch (cleanupErr) {
@@ -1277,15 +1297,6 @@ export async function broadcastMapDiceRoll({
 
   return {
     id: docRef.id,
-    map_id: String(map_id),
-    user_id: String(user_id || 'anon'),
-    user_name: String(user_name || 'Aventureiro').slice(0, 60),
-    user_role: String(user_role || 'player'),
-    sides: validSides,
-    roll: numRoll,
-    seed: Number(seed),
-    is_max: Boolean(isMax),
-    is_fumble: Boolean(isFumble),
-    createdAtMs: nowMs,
+    ...rollPayload,
   };
 }
