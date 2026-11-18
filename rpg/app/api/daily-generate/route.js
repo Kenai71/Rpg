@@ -82,7 +82,7 @@ async function generateWithGemini(apiKey, existingDescriptions = []) {
       : '';
 
   const prompt = `Seed: ${Date.now()}-${Math.random()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e (Livro do Jogador, Livro do Mestre e Escudo do DM) em Português do Brasil.
-Gere exatamente 2 Missões e 10 Itens variados para o Astralis RPG.
+Gere exatamente 2 Missões e 10 Itens variados para o Vallen RPG.
 ${recentHighRarityContext}
 DIRETRIZES OFICIAIS D&D 5.5e (2024), D&D 5e & ESCALONAMENTO DE UNICIDADE POR RARIDADE:
 1. ITENS & ARMAS (QUANTO MAIOR A RARIDADE, MAIS ÚNICA, COMPLEXA E EXCLUSIVA DEVE SER A ARMA):

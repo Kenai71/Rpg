@@ -20,7 +20,7 @@ export function AppProviders({ children }) {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem('astralis-realm-theme');
+      const saved = window.localStorage.getItem('vallen-realm-theme');
       if (saved && THEMES.some((t) => t.id === saved)) {
         setThemeState(saved);
       }
@@ -37,7 +37,7 @@ export function AppProviders({ children }) {
   const setTheme = (nextTheme) => {
     setThemeState(nextTheme);
     try {
-      window.localStorage.setItem('astralis-realm-theme', nextTheme);
+      window.localStorage.setItem('vallen-realm-theme', nextTheme);
     } catch {
       // Ignore storage access restrictions
     }

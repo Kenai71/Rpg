@@ -167,7 +167,7 @@ export default function LoginPage() {
     try {
       const credential = await signInWithPopup(auth, googleProvider);
       await ensureUserProfile(credential.user);
-      toast.success('Entrando no Astralis...');
+      toast.success('Entrando no Vallen...');
       router.replace('/');
     } catch (err) {
       const message = mapFirebaseAuthError(err);
@@ -239,7 +239,7 @@ export default function LoginPage() {
         {/* LADO VISUAL: Cena Interativa 3D do Dado de 20 Lados (D20) */}
         <section
           className="w-full md:landscape:w-[54%] lg:w-[56%] xl:w-[58%] flex items-center justify-center p-4 lg:p-8 relative min-h-[380px] md:landscape:min-h-screen"
-          aria-label="Cena Interativa do Astralis RPG"
+          aria-label="Cena Interativa do Vallen RPG"
         >
           <InteractiveD20Scene className="w-full h-full max-w-2xl mx-auto" />
         </section>
@@ -254,7 +254,7 @@ export default function LoginPage() {
             <a
               href="/"
               className="inline-block transition-transform duration-200 hover:scale-[1.02] focus:outline-none"
-              aria-label="Astralis RPG Início"
+              aria-label="Vallen RPG Início"
             >
               <Logo size={42} showText={true} subtitle="Mundo RPG" />
             </a>
@@ -382,7 +382,7 @@ export default function LoginPage() {
                       <input
                         id="email"
                         type="email"
-                        placeholder="heroi@astralis.com"
+                        placeholder="heroi@vallen.com"
                         autoComplete="email"
                         className="w-full h-11 pl-10 pr-3.5 rounded-xl border border-white/15 bg-black/30 text-white placeholder:text-slate-500 text-sm backdrop-blur-sm transition-colors focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30"
                         {...register('email')}
@@ -463,7 +463,7 @@ export default function LoginPage() {
               <div className="text-center md:landscape:text-left text-xs text-slate-400 pt-1">
                 {isLogin ? (
                   <span>
-                    Novo no Astralis?{' '}
+                    Novo no Vallen?{' '}
                     <button
                       type="button"
                       onClick={() => switchMode('register')}
@@ -513,7 +513,7 @@ export default function LoginPage() {
       <Modal
         open={helpModalOpen}
         onOpenChange={setHelpModalOpen}
-        title="Guia do Astralis RPG"
+        title="Guia do Vallen RPG"
         description="Informações essenciais para Mestres e Jogadores."
         maxWidth="max-w-md"
       >

@@ -1,5 +1,5 @@
 /**
- * Presets de Mapas de Batalha e Monstros Táticos para o Astralis RPG.
+ * Presets de Mapas de Batalha e Monstros Táticos para o Vallen RPG.
  * Fornece mapas de alta qualidade atmosféricos prontos para jogar e modelos de monstros/NPCs.
  *
  * ZERO ÍCONES DE ESTRELA CONFORME AS DIRETRIZES DO PROJETO.

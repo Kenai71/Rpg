@@ -1,4 +1,4 @@
-# Astralis RPG — Diretrizes do Projeto
+# Vallen RPG — Diretrizes do Projeto
 
 ## Arquitetura e Manuais de RPG
 - O aplicativo Next.js (App Router) fica em `rpg/`, com camada de dados/transações em `rpg/lib/rpg-service.js`, catálogo de armas e itens em `rpg/lib/dnd-catalog.js`, regras D&D 5.5e/5e em `rpg/lib/dnd-rules.js` e constantes em `rpg/lib/constants.js`.
@@ -20,7 +20,7 @@
 - **Cards da Loja do Jogador (`PlayerShop.jsx`):**
   - Todas as bordas externas do card são circuladas/contornadas com a cor da raridade do item (`borderColor: rarityMeta.color`, ex: Épico = roxo `#a78bfa`, Raro = azul `#60a5fa`, Incomum = verde `#4ade80`, Lendário = dourado `#fbbf24`, Mítico = carmesim `#f87171`, Comum = slate `#94a3b8`) com leve brilho ambiente (`boxShadow: 0 0 16px -4px ${rarityMeta.color}33`).
   - No interior do card, não exibir a tag de raridade (`RarityBadge`) nem o badge "Runa OK"/"Runa Disponível", mantendo apenas o badge do tipo do item (`<Badge>{itemTypeLabel}</Badge>`: Arma, Armadura, etc.), nome em branco neutro (`text-white`), descrição limpa, preço e quantidade em estoque.
-- **Identidade e Logo:** O logo oficial do Astralis RPG é um **Dado de 20 Lados (D20)** em tons off-white e cinza-prateado (`#ffffff`, `#f1f5f9`, `#cbd5e1`, `#94a3b8`), com facetas isométricas 3D, arestas metálicas nítidas e numeral 20 na face frontal.
+- **Identidade e Logo:** O logo oficial do Vallen RPG é um **Dado de 20 Lados (D20)** em tons off-white e cinza-prateado (`#ffffff`, `#f1f5f9`, `#cbd5e1`, `#94a3b8`), com facetas isométricas 3D, arestas metálicas nítidas e numeral 20 na face frontal.
 - **Cena Visual Interativa 3D (`InteractiveD20Scene`):**
   - Renderiza um D20 tridimensional em Three.js WebGL com geometria icosaédrica pura de arestas e vértices retos, sem esferas ou bolinhas nas pontas.
   - Suporta dinamicamente carregamento de modelos 3D exportados pelo usuário (`/models/d20.glb`, `/models/d20.stl`, `/models/d20.obj`), rotação física 3D sensível ao cursor/arrasto com inércia, anéis orbitais rúnicos e partículas de poeira cósmica em profundidade. O arquivo original CAD `d20.SLDPRT` é preservado em `public/models/`.

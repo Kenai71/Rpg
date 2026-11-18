@@ -15,7 +15,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: 'Astralis RPG — Mural de Missões & Gestão do Reino',
+  title: 'Vallen RPG — Mural de Missões & Gestão do Reino',
   description: 'Plataforma de RPG medieval para mestres e aventureiros em tempo real.',
 };
 

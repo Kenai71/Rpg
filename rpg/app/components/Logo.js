@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Astralis RPG Logo — D20 (Dado de 20 Lados)
+ * Vallen RPG Logo — D20 (Dado de 20 Lados)
  * Facetas isométricas em branco meio cinza (off-white / silver-gray)
  * com iluminação tridimensional, arestas metálicas e o numeral 20 na face frontal.
  * Zero ícones de estrela.
@@ -210,7 +210,7 @@ export default function Logo({
       {showText && (
         <div className="flex flex-col leading-none">
           <span className="font-sans font-extrabold text-lg tracking-tight text-slate-50">
-            ASTRALIS
+            VALLEN
           </span>
           <span className="font-mono text-[10px] tracking-[0.24em] text-slate-400 uppercase mt-1">
             {subtitle}

@@ -965,7 +965,7 @@ function createFacePolygonTexture(
   const isMax = rollData?.is_max && isWinningFace;
   const isFumble = rollData?.is_fumble && isWinningFace;
 
-  // 1. Fundo sólido facetado (Obsidian / Astralis Silver-Slate)
+  // 1. Fundo sólido facetado (Obsidian / Vallen Silver-Slate)
   const bgGrad = ctx.createRadialGradient(
     centerPx,
     centerPx,

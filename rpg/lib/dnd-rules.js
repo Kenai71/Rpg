@@ -445,7 +445,7 @@ export function computeCosineSimilarity(textA, textB) {
  */
 function hashStringSeed(str) {
   let h = 2166136261;
-  const s = String(str || 'astralis');
+  const s = String(str || 'vallen');
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
