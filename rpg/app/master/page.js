@@ -285,7 +285,11 @@ export default function MasterPage() {
       {activeSection === 'shop' && <MasterShop shopItems={shopItems} />}
 
       {activeSection === 'players' && (
-        <MasterPlayers players={allProfiles} parties={parties} />
+        <MasterPlayers
+          players={allProfiles}
+          parties={parties}
+          currentUserProfile={profile}
+        />
       )}
 
       {activeSection === 'requests' && (

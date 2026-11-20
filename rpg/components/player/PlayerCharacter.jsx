@@ -41,6 +41,7 @@ import { DetailDrawer } from '../ui/DetailDrawer';
 import { ConfirmDialog, Modal } from '../ui/Modal';
 import { FormField, Input } from '../ui/Input';
 import { Badge, RarityBadge } from '../ui/Badge';
+import { CharacterSheetPreviewCard } from '../sheet/EditablePdfSheet';
 
 const SLOT_ICONS = {
   head: { icon: Crown, label: 'Cabeça', gridArea: 'head' },
@@ -221,7 +222,11 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
   const bagFilterTerm = bagSearch.trim().toLowerCase();
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+    <div className="space-y-6">
+      {/* Ficha Oficial Editável (Ficha.pdf) em Pré-Visualização Completa Reduzida */}
+      <CharacterSheetPreviewCard profile={profile} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* Paper Doll Equipment */}
       <Card className="lg:col-span-5">
         <CardHeader className="border-b border-[var(--border-subtle)] pb-4">
@@ -559,6 +564,7 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
         loading={busy}
         onConfirm={handleDiscard}
       />
+      </div>
     </div>
   );
 }

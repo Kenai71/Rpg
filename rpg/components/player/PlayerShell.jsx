@@ -56,6 +56,7 @@ export function PlayerShell({
   const xpData = getXpProgress(profile?.level, profile?.xp);
   const rankMeta = getRankMeta(profile?.rank);
   const isPartyLeader = Boolean(myParty && myParty.leader_id === profile?.uid);
+  const isMapTab = activeTab === 'map';
 
   const openRenameModal = () => {
     setNewName(profile?.username || '');
@@ -81,10 +82,20 @@ export function PlayerShell({
   };
 
   return (
-    <div className="min-h-screen realm-backdrop flex flex-col pb-20 md:pb-6">
+    <div
+      className={cn(
+        'realm-backdrop flex flex-col',
+        isMapTab ? 'h-[100dvh] overflow-hidden' : 'min-h-screen pb-20 md:pb-6'
+      )}
+    >
       {/* Top Navbar */}
-      <header className="sticky top-0 z-30 border-b border-[var(--border-subtle)] bg-[var(--surface-0)]/85 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-2.5">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--surface-0)]/85 backdrop-blur-xl">
+        <div
+          className={cn(
+            'mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-2.5',
+            isMapTab ? 'w-full max-w-none' : 'max-w-7xl'
+          )}
+        >
           <div className="flex items-center gap-3 lg:gap-5 min-w-0">
             <Logo size={32} subtitle="Guilda" />
 
@@ -148,117 +159,117 @@ export function PlayerShell({
         </div>
       </header>
 
-      {/* Hero Status HUD */}
-      <div className="max-w-7xl w-full mx-auto px-3 sm:px-5 xl:px-8 pt-3 sm:pt-4 space-y-3 sm:space-y-4">
-        <section
-          aria-label="Resumo do personagem"
-          className={cn(
-            'rounded-2xl surface-card relative overflow-hidden transition-all',
-            activeTab === 'map' ? 'p-2.5 sm:px-4 sm:py-2.5' : 'p-3.5 sm:p-4'
-          )}
-        >
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4">
-            {/* Identity */}
-            <div className="flex items-center gap-3 min-w-0">
-              <UserAvatar
-                src={profile?.photoURL}
-                name={profile?.username}
-                className={cn(
-                  'rounded-2xl shrink-0',
-                  activeTab === 'map' ? 'h-10 w-10 text-sm' : 'h-12 w-12 sm:h-14 sm:w-14 text-base sm:text-lg'
-                )}
-                borderColor={`${rankMeta.color}66`}
-              />
+      {/* Main Content: Fullscreen immersive canvas on Map tab; Hero Status HUD + centered container on other tabs */}
+      {isMapTab ? (
+        <main className="flex-1 min-h-0 w-full flex flex-col pb-[60px] md:pb-0 overflow-hidden">
+          {children}
+        </main>
+      ) : (
+        <div className="max-w-7xl w-full mx-auto px-3 sm:px-5 xl:px-8 pt-3 sm:pt-4 space-y-3 sm:space-y-4">
+          <section
+            aria-label="Resumo do personagem"
+            className="rounded-2xl surface-card relative overflow-hidden transition-all p-3.5 sm:p-4"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4">
+              {/* Identity */}
+              <div className="flex items-center gap-3 min-w-0">
+                <UserAvatar
+                  src={profile?.photoURL}
+                  name={profile?.username}
+                  className="rounded-2xl shrink-0 h-12 w-12 sm:h-14 sm:w-14 text-base sm:text-lg"
+                  borderColor={`${rankMeta.color}66`}
+                />
 
-              <div className="min-w-0 space-y-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
-                    {profile?.username}
-                  </h1>
-                  <button
-                    type="button"
-                    onClick={openRenameModal}
-                    aria-label="Editar nome do personagem"
-                    title="Alterar nome do personagem"
-                    className="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  {isPartyLeader && (
-                    <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30">
-                      <Crown className="h-3 w-3" /> Líder
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
+                      {profile?.username}
+                    </h1>
+                    <button
+                      type="button"
+                      onClick={openRenameModal}
+                      aria-label="Editar nome do personagem"
+                      title="Alterar nome do personagem"
+                      className="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    {isPartyLeader && (
+                      <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30">
+                        <Crown className="h-3 w-3" /> Líder
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <RankBadge rank={profile?.rank || 'F'} />
+                    <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono text-[11px]">
+                      LVL {profile?.level || 1}
                     </Badge>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <RankBadge rank={profile?.rank || 'F'} />
-                  <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono text-[11px]">
-                    LVL {profile?.level || 1}
-                  </Badge>
-                  {myParty && (
-                    <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 text-[11px]">
-                      {myParty.name}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Stats & Quick Action */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 lg:gap-5">
-              <div className="flex items-center gap-4">
-                <div className="space-y-0.5">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">
-                    Ouro
-                  </span>
-                  <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-amber-300 tabular-nums">
-                    <Coins className="h-4 w-4 text-amber-400" aria-hidden="true" />
-                    {formatNumber(profile?.gold || 0)}
+                    {myParty && (
+                      <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 text-[11px]">
+                        {myParty.name}
+                      </Badge>
+                    )}
                   </div>
                 </div>
+              </div>
 
-                <div className="flex-1 sm:w-44 xl:w-52 space-y-1">
-                  <div className="flex items-center justify-between text-[10px] sm:text-[11px]">
-                    <span className="text-slate-400 font-semibold inline-flex items-center gap-1">
-                      <Zap className="h-3 w-3 text-slate-300" aria-hidden="true" />
-                      Experiência
+              {/* Stats & Quick Action */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 lg:gap-5">
+                <div className="flex items-center gap-4">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">
+                      Ouro
                     </span>
-                    <span className="font-mono text-slate-300 tabular-nums">{xpData.text}</span>
+                    <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-amber-300 tabular-nums">
+                      <Coins className="h-4 w-4 text-amber-400" aria-hidden="true" />
+                      {formatNumber(profile?.gold || 0)}
+                    </div>
                   </div>
-                  <div
-                    role="progressbar"
-                    aria-valuenow={Math.round(xpData.percent)}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-label="Progresso de experiência"
-                    className="h-2 w-full rounded-full bg-[var(--surface-0)] border border-[var(--border-subtle)] overflow-hidden"
-                  >
+
+                  <div className="flex-1 sm:w-44 xl:w-52 space-y-1">
+                    <div className="flex items-center justify-between text-[10px] sm:text-[11px]">
+                      <span className="text-slate-400 font-semibold inline-flex items-center gap-1">
+                        <Zap className="h-3 w-3 text-slate-300" aria-hidden="true" />
+                        Experiência
+                      </span>
+                      <span className="font-mono text-slate-300 tabular-nums">{xpData.text}</span>
+                    </div>
                     <div
-                      className="h-full rounded-full bg-slate-200 transition-all duration-500"
-                      style={{ width: `${xpData.percent}%` }}
-                    />
+                      role="progressbar"
+                      aria-valuenow={Math.round(xpData.percent)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label="Progresso de experiência"
+                      className="h-2 w-full rounded-full bg-[var(--surface-0)] border border-[var(--border-subtle)] overflow-hidden"
+                    >
+                      <div
+                        className="h-full rounded-full bg-slate-200 transition-all duration-500"
+                        style={{ width: `${xpData.percent}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
+
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onOpenRoulette || onRequestSpin}
+                  className="border-white/15 hover:border-white/30 hover:bg-white/5 whitespace-nowrap"
+                  title="Girar a Roleta de Runas Arcanas"
+                >
+                  <Dices className="h-4 w-4 text-slate-300" aria-hidden="true" />
+                  Roleta Arcana
+                </Button>
               </div>
-
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={onOpenRoulette || onRequestSpin}
-                className="border-white/15 hover:border-white/30 hover:bg-white/5 whitespace-nowrap"
-                title="Girar a Roleta de Runas Arcanas"
-              >
-                <Dices className="h-4 w-4 text-slate-300" aria-hidden="true" />
-                Roleta Arcana
-              </Button>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* Active Tab Content */}
-        <main>{children}</main>
-      </div>
+          {/* Active Tab Content */}
+          <main>{children}</main>
+        </div>
+      )}
 
       {/* Mobile Bottom Navigation */}
       <nav

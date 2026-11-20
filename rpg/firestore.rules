@@ -156,6 +156,17 @@ service cloud.firestore {
     //   - is_fumble: bool (optional)
     //   - createdAt: timestamp (optional)
     //
+    // Collection: character_sheets
+    // Document ID: {uid} (Firebase Auth UID of the hero)
+    // Fields:
+    //   - uid: string (1..128 chars, matches document ID, immutable)
+    //   - fields: map (size <= 500, dynamic Ficha.pdf form field key-value entries)
+    //   - updatedBy: string | null (optional, 0..128 chars)
+    //   - updatedByName: string | null (optional, 0..60 chars)
+    //   - updatedByRole: string | null (optional, 'player' | 'master')
+    //   - createdAt: timestamp (optional, immutable once set)
+    //   - updatedAt: timestamp (optional)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -363,6 +374,16 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'is_max') &&
         isSafeOptionalBool(data, 'is_fumble') &&
         isSafeOptionalTimestamp(data, 'createdAt');
+    }
+
+    function isValidCharacterSheet(data, uid) {
+      return 'uid' in data && isSafeString(data.uid, 1, 128) && data.uid == uid &&
+        'fields' in data && data.fields is map && data.fields.size() <= 500 &&
+        isSafeOptionalString(data, 'updatedBy', 0, 128) &&
+        isSafeOptionalString(data, 'updatedByName', 0, 60) &&
+        (!('updatedByRole' in data) || data.updatedByRole == null || data.updatedByRole in ['player', 'master']) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
     }
 
     // ===============================================================
@@ -574,6 +595,39 @@ service cloud.firestore {
     // Real-time Tactical 3D Map Dice Rolls (Player/Master rolls)
     match /map_rolls/{rollId} {
       allow read, create, update, delete: if isAuthenticated();
+    }
+
+    // Editable D&D 2024 Character Sheets (Ficha.pdf real-time sync between Hero and Master)
+    match /character_sheets/{uid} {
+      allow read: if isOwner(uid) || isMaster();
+
+      allow create: if (isOwner(uid) || isMaster()) &&
+        isValidCharacterSheet(request.resource.data, uid) &&
+        (
+          isMaster() ||
+          (
+            (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == null || request.resource.data.updatedBy == '' || request.resource.data.updatedBy == request.auth.uid) &&
+            (!('updatedByRole' in request.resource.data) || request.resource.data.updatedByRole == null || request.resource.data.updatedByRole == 'player')
+          )
+        );
+
+      allow update: if (isOwner(uid) || isMaster()) &&
+        isValidCharacterSheet(request.resource.data, uid) &&
+        request.resource.data.uid == resource.data.uid &&
+        (
+          !('createdAt' in resource.data) ||
+          resource.data.createdAt == null ||
+          ('createdAt' in request.resource.data && request.resource.data.createdAt == resource.data.createdAt)
+        ) &&
+        (
+          isMaster() ||
+          (
+            (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == null || request.resource.data.updatedBy == '' || request.resource.data.updatedBy == request.auth.uid || ('updatedBy' in resource.data && request.resource.data.updatedBy == resource.data.updatedBy)) &&
+            (!('updatedByRole' in request.resource.data) || request.resource.data.updatedByRole == null || request.resource.data.updatedByRole == 'player' || ('updatedByRole' in resource.data && request.resource.data.updatedByRole == resource.data.updatedByRole))
+          )
+        );
+
+      allow delete: if isMaster();
     }
 
     // Default deny catch-all for any unmatched paths or collections

@@ -5,6 +5,7 @@ import {
   Backpack,
   Coins,
   Crown,
+  FileText,
   Minus,
   Plus,
   SlidersHorizontal,
@@ -40,11 +41,15 @@ import { DataTable } from '../ui/DataTable';
 import { FormField, Input, Select, Textarea } from '../ui/Input';
 import { Badge, RankBadge, RoleBadge } from '../ui/Badge';
 import { EmptyState } from '../ui/EmptyState';
+import { CharacterSheetModal } from '../sheet/EditablePdfSheet';
 
-export function MasterPlayers({ players, parties }) {
+export function MasterPlayers({ players, parties, currentUserProfile }) {
   const [subTab, setSubTab] = useState('heroes'); // 'heroes' | 'parties'
   const [rankFilter, setRankFilter] = useState('ALL');
   const [partyFilter, setPartyFilter] = useState('ALL');
+
+  // Character sheet (Ficha.pdf) real-time modal target
+  const [sheetTargetUid, setSheetTargetUid] = useState(null);
 
   // Party creation
   const [partyName, setPartyName] = useState('');
@@ -71,6 +76,11 @@ export function MasterPlayers({ players, parties }) {
   const selectedPlayerForInv = useMemo(
     () => players.find((p) => p.uid === invTargetUid) || null,
     [players, invTargetUid]
+  );
+
+  const selectedPlayerForSheet = useMemo(
+    () => players.find((p) => p.uid === sheetTargetUid) || null,
+    [players, sheetTargetUid]
   );
 
   const filteredPlayers = useMemo(() => {
@@ -317,7 +327,15 @@ export function MasterPlayers({ players, parties }) {
         cell: ({ row }) => {
           const p = row.original;
           return (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setSheetTargetUid(p.uid)}
+              >
+                <FileText className="h-3.5 w-3.5 text-slate-300" />
+                Abrir Ficha
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -478,30 +496,41 @@ export function MasterPlayers({ players, parties }) {
                   <span className="text-sky-300">{formatNumber(p.xp)} XP</span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
                   <Button
-                    variant="outline"
+                    variant="primary"
                     size="sm"
-                    onClick={() => {
-                      setResourceTarget(p);
-                      setGoldDelta('');
-                      setXpDelta('');
-                    }}
+                    className="w-full"
+                    onClick={() => setSheetTargetUid(p.uid)}
                   >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                    Ouro / XP
+                    <FileText className="h-3.5 w-3.5 text-slate-300" />
+                    Abrir Ficha
                   </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setInvTargetUid(p.uid);
-                      setSlotAddQty(1);
-                    }}
-                  >
-                    <Backpack className="h-3.5 w-3.5" />
-                    Mochila
-                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setResourceTarget(p);
+                        setGoldDelta('');
+                        setXpDelta('');
+                      }}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      Ouro / XP
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setInvTargetUid(p.uid);
+                        setSlotAddQty(1);
+                      }}
+                    >
+                      <Backpack className="h-3.5 w-3.5" />
+                      Mochila
+                    </Button>
+                  </div>
                 </div>
               </Card>
             );
@@ -580,16 +609,28 @@ export function MasterPlayers({ players, parties }) {
                                 </span>
                                 <RankBadge rank={member.rank} className="text-[10px] px-2 py-0" />
                               </div>
-                              {!isLeader && (
+                              <div className="flex items-center gap-1.5 shrink-0">
                                 <Button
-                                  variant="ghost"
+                                  variant="primary"
                                   size="sm"
-                                  onClick={() => handleMakeLeader(party.id, member)}
+                                  onClick={() => setSheetTargetUid(member.uid)}
+                                  className="h-8 px-2.5 text-xs"
                                 >
-                                  <Crown className="h-3.5 w-3.5 text-amber-400" />
-                                  Tornar Líder
+                                  <FileText className="h-3.5 w-3.5 text-slate-300" />
+                                  Abrir Ficha
                                 </Button>
-                              )}
+                                {!isLeader && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleMakeLeader(party.id, member)}
+                                    className="h-8 px-2 text-xs"
+                                  >
+                                    <Crown className="h-3.5 w-3.5 text-amber-400" />
+                                    <span className="hidden sm:inline">Tornar Líder</span>
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           );
                         })
@@ -848,6 +889,16 @@ export function MasterPlayers({ players, parties }) {
         confirmLabel="Excluir Grupo"
         loading={deletingParty}
         onConfirm={handleDeleteParty}
+      />
+
+      {/* Ficha Editável (Ficha.pdf) sincronizada em tempo real com o Jogador */}
+      <CharacterSheetModal
+        open={Boolean(selectedPlayerForSheet)}
+        onOpenChange={(open) => !open && setSheetTargetUid(null)}
+        heroUid={selectedPlayerForSheet?.uid}
+        heroName={selectedPlayerForSheet?.username}
+        editorProfile={currentUserProfile}
+        isMasterView={true}
       />
     </div>
   );

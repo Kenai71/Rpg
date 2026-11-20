@@ -4,10 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
-  Check,
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   Compass,
   Crosshair,
   Dices,
@@ -21,9 +18,10 @@ import {
   Heart,
   Lock,
   Maximize2,
-  Minimize2,
   Minus,
   Move,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RotateCcw,
   Ruler,
@@ -65,6 +63,7 @@ export function TacticalMapCanvas({
   currentUserId,
   currentUserName,
   isMaster = false,
+  fullViewport = false,
   onUpdateTokenPosition,
   onUpdateTokenStats,
   onDeleteToken,
@@ -161,12 +160,15 @@ export function TacticalMapCanvas({
     setPan({ x: 0, y: 0 });
   }, [mapDisplaySize]);
 
-  // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro em notebooks
+  // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro na viewport
   useEffect(() => {
     if (map?.id && imageStatus === 'loaded') {
-      handleFitToScreen();
+      const raf = requestAnimationFrame(() => {
+        handleFitToScreen();
+      });
+      return () => cancelAnimationFrame(raf);
     }
-  }, [map?.id, imageStatus, handleFitToScreen]);
+  }, [map?.id, imageStatus, fullViewport, handleFitToScreen]);
 
   // Zoom suave com Scroll do Mouse dentro do mapa sem rolar a página externa
   useEffect(() => {
@@ -174,6 +176,9 @@ export function TacticalMapCanvas({
     if (!container) return;
 
     const handleWheel = (e) => {
+      // Permite rolagem natural dentro dos painéis laterais da sidebar (Histórico de Dados / Iniciativa)
+      if (e.target?.closest?.('[data-map-overlay-scroll]')) return;
+
       // Impede a rolagem vertical/horizontal da página
       e.preventDefault();
 
@@ -244,10 +249,10 @@ export function TacticalMapCanvas({
     return deduped;
   }, [pings, localPings, now, map?.id]);
 
-  // Rolador Rápido de Dados Integrado & Histórico Lateral Sincronizado (Limite de 15 rolagens)
+  // Sidebar do Mapa: Painéis contextuais integrados ('dice' | 'initiative' | null) & collapse mobile
   const MAX_ROLL_HISTORY = 15;
-  const [diceOpen, setDiceOpen] = useState(false);
-  const [rollHistoryOpen, setRollHistoryOpen] = useState(true);
+  const [sidebarPanel, setSidebarPanel] = useState(map?.combat_active ? 'initiative' : null);
+  const [mobileRailOpen, setMobileRailOpen] = useState(true);
   const [recentRoll, setRecentRoll] = useState(null);
   const [active3DRoll, setActive3DRoll] = useState(null);
   const [sharedBannerRoll, setSharedBannerRoll] = useState(null);
@@ -256,6 +261,10 @@ export function TacticalMapCanvas({
   const processedRollKeysRef = useRef(new Set());
   const initialHistorySeededRef = useRef(false);
   const bannerTimerRef = useRef(null);
+
+  const toggleSidebarPanel = (panel) => {
+    setSidebarPanel((prev) => (prev === panel ? null : panel));
+  };
 
   const showTopResultBanner = useCallback((rollObj) => {
     if (!rollObj) return;
@@ -400,9 +409,6 @@ export function TacticalMapCanvas({
     // Limite estrito das últimas 15 rolagens: toda vez que entra uma nova, a 15ª mais antiga sai
     return deduped.slice(0, MAX_ROLL_HISTORY);
   }, [remoteDiceRolls, settledLocalRolls, rollingSeedKey, getRollSeedKey, getRollTime]);
-
-  // Ordem de Combate / Iniciativa
-  const [initiativeOpen, setInitiativeOpen] = useState(Boolean(map?.combat_active));
 
   useEffect(() => {
     setIsLocked(Boolean(map?.is_locked));
@@ -724,406 +730,614 @@ export function TacticalMapCanvas({
 
   return (
     <div
-      ref={containerRef}
-      className="relative w-full h-[calc(100dvh-11.5rem)] min-h-[420px] max-h-[840px] xl:h-[78vh] xl:min-h-[520px] rounded-2xl overflow-hidden border border-white/10 bg-[#070913] select-none shadow-2xl transition-all"
+      className={cn(
+        'relative flex w-full overflow-hidden bg-[#070913] select-none transition-all',
+        fullViewport
+          ? 'flex-1 h-full min-h-0'
+          : 'h-[calc(100dvh-13rem)] min-h-[480px] xl:h-[76vh] xl:min-h-[540px] rounded-2xl border border-white/10 shadow-2xl'
+      )}
       style={{
         backgroundImage: 'radial-gradient(circle at 50% 50%, #0d121f 0%, #06080e 100%)',
-        boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 60px -12px rgba(0, 0, 0, 0.85)',
+        boxShadow: fullViewport
+          ? undefined
+          : 'inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 60px -12px rgba(0, 0, 0, 0.85)',
       }}
     >
-      {/* BARRA DE FERRAMENTAS SUPERIOR FLUTUANTE (ÍCONES LIMPOS, SEM TEXTOS) */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between gap-2 pointer-events-none">
-        {/* Lado Esquerdo: Controles de Mapa & Ferramentas (Apenas Ícones) */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-black/75 backdrop-blur-xl border border-white/12 pointer-events-auto shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
-          <Button
-            size="sm"
-            variant={activeTool === 'select' ? 'primary' : 'ghost'}
-            onClick={() => setActiveTool('select')}
-            title="Selecionar e mover bonequinhos"
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg"
-            aria-label="Mover"
+      {/* SIDEBAR LATERAL DE FERRAMENTAS TÁTICAS DO MAPA (HARMONIOSA, RESPONSIVA E NEUTRA) */}
+      <aside
+        aria-label="Ferramentas do Mapa"
+        className={cn(
+          'relative z-40 flex flex-col items-center justify-between shrink-0 border-r border-white/10 bg-[#0a0d16]/95 backdrop-blur-2xl transition-all duration-200',
+          'shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]',
+          mobileRailOpen
+            ? 'w-[52px] sm:w-[58px] xl:w-[62px] py-2.5 px-1.5 overflow-y-auto md:overflow-visible'
+            : 'w-0 overflow-hidden border-r-0 p-0 md:w-[58px] xl:w-[62px] md:overflow-visible md:border-r md:py-2.5 md:px-1.5'
+        )}
+      >
+        {/* Bloco Superior: Ferramentas, Mapa & Painéis */}
+        <div className="flex flex-col items-center gap-1.5 w-full">
+          {/* Recolher barra no mobile */}
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarPanel(null);
+              setMobileRailOpen(false);
+            }}
+            aria-label="Recolher barra lateral do mapa"
+            title="Recolher ferramentas"
+            className="md:hidden h-8 w-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors mb-0.5"
           >
-            <Move className="h-4 w-4 text-slate-300" />
-          </Button>
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
 
-          <Button
-            size="sm"
-            variant={activeTool === 'ruler' ? 'primary' : 'ghost'}
-            onClick={() => setActiveTool((t) => (t === 'ruler' ? 'select' : 'ruler'))}
-            title="Medir distância em metros/pés"
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg"
-            aria-label="Régua"
-          >
-            <Ruler className="h-4 w-4 text-slate-300" />
-          </Button>
+          {/* Grupo 1: Ferramentas de Interação */}
+          <div className="flex flex-col items-center gap-1 w-full">
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => setActiveTool('select')}
+                aria-label="Mover bonequinhos"
+                aria-pressed={activeTool === 'select'}
+                title="Selecionar e mover bonequinhos"
+                className={cn(
+                  'h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  activeTool === 'select'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Move className="h-4 w-4 text-slate-300" />
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Mover Tokens
+              </span>
+            </div>
 
-          <Button
-            size="sm"
-            variant={activeTool === 'ping' ? 'primary' : 'ghost'}
-            onClick={() => setActiveTool((t) => (t === 'ping' ? 'select' : 'ping'))}
-            title={`Sinalizar radar (${pingCharges}/3 disponíveis a cada 15s)`}
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg relative"
-            aria-label="Sinalizar"
-          >
-            <Crosshair className="h-4 w-4 text-slate-300" />
-            <span
-              className={cn(
-                'absolute -bottom-1 -right-1 text-[9px] font-mono font-bold px-1 rounded-full border leading-tight',
-                pingCharges > 0
-                  ? 'bg-black/90 border-white/20 text-slate-300'
-                  : 'bg-rose-950 border-rose-500/40 text-rose-300'
-              )}
-            >
-              {pingCharges}
-            </span>
-          </Button>
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => setActiveTool((t) => (t === 'ruler' ? 'select' : 'ruler'))}
+                aria-label="Régua tática"
+                aria-pressed={activeTool === 'ruler'}
+                title="Medir distância em metros/pés"
+                className={cn(
+                  'h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  activeTool === 'ruler'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Ruler className="h-4 w-4 text-slate-300" />
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Régua de Distância
+              </span>
+            </div>
 
-          <div className="h-4 w-px bg-white/10 mx-0.5" />
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => setActiveTool((t) => (t === 'ping' ? 'select' : 'ping'))}
+                aria-label="Sinalizar radar"
+                aria-pressed={activeTool === 'ping'}
+                title={`Sinalizar radar (${pingCharges}/3 disponíveis a cada 15s)`}
+                className={cn(
+                  'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  activeTool === 'ping'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Crosshair className="h-4 w-4 text-slate-300" />
+                <span
+                  className={cn(
+                    'absolute -bottom-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-mono font-bold border flex items-center justify-center leading-none',
+                    pingCharges > 0
+                      ? 'bg-[#0c101b] border-white/20 text-slate-200'
+                      : 'bg-rose-950 border-rose-500/50 text-rose-300'
+                  )}
+                >
+                  {pingCharges}
+                </span>
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Sinalizar ({pingCharges}/3)
+              </span>
+            </div>
+          </div>
 
-          {/* Botão Fixar / Destravar Mapa (Apenas Ícone) */}
-          <Button
-            size="sm"
-            variant={isLocked ? 'primary' : 'ghost'}
-            onClick={handleToggleLock}
-            title={isLocked ? 'Mapa fixado: clique e arraste tokens facilmente' : 'Mapa destravado: arraste para mover a tela'}
-            className={cn('h-8 w-8 p-0 flex items-center justify-center rounded-lg', isLocked && 'bg-white/20 border-white/20')}
-            aria-label={isLocked ? 'Fixado' : 'Livre'}
-          >
-            {isLocked ? (
-              <Lock className="h-4 w-4 text-amber-300" />
-            ) : (
-              <Unlock className="h-4 w-4 text-slate-300" />
-            )}
-          </Button>
+          <div className="w-7 h-px bg-white/10 my-0.5 shrink-0" />
 
-          {/* Alternar Grade Tática */}
-          <Button
-            size="sm"
-            variant={showGrid ? 'secondary' : 'ghost'}
-            onClick={() => setShowGrid((g) => !g)}
-            title="Alternar grade tática"
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg"
-            aria-label="Grade"
-          >
-            <Grid className="h-4 w-4 text-slate-300" />
-          </Button>
+          {/* Grupo 2: Controle do Mapa (Bloquear, Grade, Enquadrar) */}
+          <div className="flex flex-col items-center gap-1 w-full">
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={handleToggleLock}
+                aria-label={isLocked ? 'Destravar mapa' : 'Bloquear mapa'}
+                aria-pressed={isLocked}
+                title={
+                  isLocked
+                    ? 'Mapa bloqueado: arraste tokens sem mover o fundo'
+                    : 'Mapa livre: clique para bloquear a posição do mapa'
+                }
+                className={cn(
+                  'h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  isLocked
+                    ? 'bg-white/15 text-amber-300 border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                {isLocked ? (
+                  <Lock className="h-4 w-4 text-amber-300" />
+                ) : (
+                  <Unlock className="h-4 w-4 text-slate-300" />
+                )}
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                {isLocked ? 'Mapa Bloqueado' : 'Bloquear Mapa'}
+              </span>
+            </div>
 
-          {/* Ajustar Mapa à Tela (Exibir Mapa Inteiro sem Cortar Bordas) */}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleFitToScreen}
-            title="Ajustar mapa à tela (mostrar inteiro)"
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg text-slate-300 hover:text-white"
-            aria-label="Ajustar à Tela"
-          >
-            <Maximize2 className="h-4 w-4" />
-          </Button>
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => setShowGrid((g) => !g)}
+                aria-label="Alternar grade tática"
+                aria-pressed={showGrid}
+                title="Exibir ou ocultar grade tática"
+                className={cn(
+                  'h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  showGrid
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Grid className="h-4 w-4 text-slate-300" />
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                {showGrid ? 'Ocultar Grade' : 'Exibir Grade'}
+              </span>
+            </div>
+
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={handleFitToScreen}
+                aria-label="Ajustar mapa à tela"
+                title="Enquadrar mapa inteiro na tela"
+                className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border border-transparent text-slate-300 hover:text-white hover:bg-white/10"
+              >
+                <Maximize2 className="h-4 w-4 text-slate-300" />
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Ajustar à Tela
+              </span>
+            </div>
+          </div>
+
+          <div className="w-7 h-px bg-white/10 my-0.5 shrink-0" />
+
+          {/* Grupo 3: Painéis da Mesa (Dados 3D + Histórico & Ordem de Combate) */}
+          <div className="flex flex-col items-center gap-1 w-full">
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => toggleSidebarPanel('dice')}
+                aria-label="Dados e histórico de rolagens"
+                aria-expanded={sidebarPanel === 'dice'}
+                title="Rolador de Dados 3D e Histórico da Mesa"
+                className={cn(
+                  'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  sidebarPanel === 'dice'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Dices className="h-4 w-4 text-slate-300" />
+                {rollHistory.length > 0 && (
+                  <span className="absolute -bottom-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#0c101b] border border-white/20 text-[9px] font-mono font-bold text-slate-200 flex items-center justify-center leading-none">
+                    {rollHistory.length}
+                  </span>
+                )}
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Dados &amp; Histórico
+              </span>
+            </div>
+
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => toggleSidebarPanel('initiative')}
+                aria-label="Ordem de combate e iniciativa"
+                aria-expanded={sidebarPanel === 'initiative'}
+                title="Ordem de Iniciativa do Combate"
+                className={cn(
+                  'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  sidebarPanel === 'initiative'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Shield className="h-4 w-4 text-slate-300" />
+                {initiativeOrder.length > 0 && (
+                  <span className="absolute -bottom-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#0c101b] border border-white/20 text-[9px] font-mono font-bold text-slate-200 flex items-center justify-center leading-none">
+                    {initiativeOrder.length}
+                  </span>
+                )}
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Ordem de Combate ({initiativeOrder.length})
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Lado Direito: Combate, Dados e Zoom */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-black/75 backdrop-blur-xl border border-white/12 pointer-events-auto shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
-          {/* Tracker de Iniciativa Toggle */}
-          <Button
-            size="sm"
-            variant={initiativeOpen ? 'secondary' : 'ghost'}
-            onClick={() => setInitiativeOpen((o) => !o)}
-            title="Ordem de Iniciativa do Combate"
-            className="h-8 px-2 text-xs gap-1 rounded-lg"
-            aria-label="Turnos"
-          >
-            <Shield className="h-4 w-4 text-slate-300" />
-            {initiativeOrder.length > 0 && (
-              <span className="h-4 px-1 rounded-full bg-white/15 text-[10px] font-mono">
-                {initiativeOrder.length}
-              </span>
-            )}
-          </Button>
-
-          {/* Rolador Rápido de Dados */}
-          <Button
-            size="sm"
-            variant={diceOpen ? 'primary' : 'ghost'}
-            onClick={() => setDiceOpen((d) => !d)}
-            title="Rolador rápido de dados D&D"
-            className="h-8 w-8 p-0 flex items-center justify-center rounded-lg"
-            aria-label="Dados"
-          >
-            <Dices className="h-4 w-4 text-slate-300" />
-          </Button>
-
-          <div className="h-4 w-px bg-white/10 mx-0.5" />
-
-          {/* Zoom In, Out, Reset */}
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={handleZoomOut}
-              aria-label="Diminuir zoom do mapa"
-              title="Diminuir zoom"
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
-            >
-              <Minimize2 className="h-3.5 w-3.5" />
-            </button>
-            <span className="font-mono text-[11px] text-slate-300 w-10 text-center font-bold">
-              {Math.round(zoom * 100)}%
-            </span>
+        {/* Bloco Inferior: Controles Compactos de Zoom */}
+        <div className="flex flex-col items-center gap-1 w-full pt-2 border-t border-white/10 shrink-0">
+          <div className="relative group flex justify-center w-full">
             <button
               type="button"
               onClick={handleZoomIn}
               aria-label="Aumentar zoom do mapa"
               title="Aumentar zoom"
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
+            <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+              Zoom +
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleResetView}
+            title="Restaurar zoom para 100%"
+            aria-label="Zoom atual"
+            className="w-full py-0.5 rounded-lg text-[10px] font-mono font-bold text-slate-300 hover:text-white hover:bg-white/10 transition-colors text-center tabular-nums"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+
+          <div className="relative group flex justify-center w-full">
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              aria-label="Diminuir zoom do mapa"
+              title="Diminuir zoom"
+              className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+              Zoom -
+            </span>
+          </div>
+
+          <div className="relative group flex justify-center w-full">
             <button
               type="button"
               onClick={handleResetView}
               aria-label="Restaurar visão (100%)"
               title="Restaurar visão (100%)"
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Barra de Iniciativa / Ordem de Turnos (Topo) */}
-      {initiativeOpen && initiativeOrder.length > 0 && (
-        <div className="absolute top-16 left-3 right-3 z-20 flex items-center gap-2 p-2 rounded-xl bg-black/80 backdrop-blur-md border border-white/10 overflow-x-auto shadow-xl">
-          <div className="flex items-center gap-1.5 shrink-0 pr-2 border-r border-white/10">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
-              Combate
+            <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+              Restaurar (100%)
             </span>
-            {isMaster && (
-              <Button size="sm" onClick={handleNextTurn} className="h-6 px-2 text-[11px] gap-1">
-                Próximo
-                <ChevronRight className="h-3 w-3" />
-              </Button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 overflow-x-auto py-0.5">
-            {initiativeOrder.map((tok) => {
-              const isCurrentTurn = map?.current_turn_token_id === tok.id;
-              return (
-                <button
-                  key={tok.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedTokenId(tok.id);
-                    setInspectModalOpen(true);
-                  }}
-                  className={cn(
-                    'flex items-center gap-2 px-2.5 py-1 rounded-lg border transition-all shrink-0 text-left',
-                    isCurrentTurn
-                      ? 'bg-amber-500/20 border-amber-400/50 text-white shadow-sm ring-1 ring-amber-400/30'
-                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                  )}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full shrink-0"
-                    style={{ backgroundColor: tok.color || '#60a5fa' }}
-                  />
-                  <span className="text-xs font-bold truncate max-w-[90px]">{tok.name}</span>
-                  <span className="font-mono text-[10px] text-slate-400">
-                    {tok.hp}/{tok.max_hp}
-                  </span>
-                </button>
-              );
-            })}
           </div>
         </div>
-      )}
+      </aside>
 
-      {/* Rolador Rápido de Dados Flutuante */}
-      {diceOpen && (
-        <div className="absolute bottom-4 right-4 z-30 p-3 rounded-2xl bg-black/85 backdrop-blur-xl border border-white/15 shadow-2xl space-y-3 w-72">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Dices className="h-3.5 w-3.5 text-slate-300" />
-              Rolador D&D
-            </span>
-            <button
-              type="button"
-              onClick={() => setDiceOpen(false)}
-              className="text-slate-400 hover:text-white"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-3 gap-1.5">
-            {[4, 6, 8, 10, 12, 20].map((sides) => (
-              <button
-                key={sides}
-                type="button"
-                onClick={() => rollDice(sides)}
-                className="py-1.5 px-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/15 text-xs font-mono font-bold text-white transition-all text-center"
-              >
-                d{sides}
-              </button>
-            ))}
-          </div>
-
-          {rollingSeedKey && active3DRoll ? (
-            <div className="p-2.5 rounded-xl border border-white/15 bg-white/5 text-center animate-pulse">
-              <div className="text-[10px] uppercase font-bold text-slate-400">
-                Rolando d{active3DRoll.sides}...
-              </div>
-              <div className="text-lg font-bold font-mono text-slate-300">
-                Aguardando dado parar...
-              </div>
-            </div>
-          ) : (
-            recentRoll && (
-              <div
-                key={recentRoll.id || recentRoll.seed}
-                className={cn(
-                  'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95',
-                  recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit
-                    ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                    : recentRoll.is_fumble || recentRoll.isFumble
-                    ? 'bg-rose-500/20 border-rose-400 text-rose-200'
-                    : 'bg-white/10 border-white/15 text-white'
-                )}
-              >
-                <div className="text-[10px] uppercase font-bold text-slate-400">
-                  Resultado d{recentRoll.sides}
-                </div>
-                <div className="text-2xl font-black font-mono">
-                  {recentRoll.roll}
-                  {(recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit) && ' (Máximo!)'}
-                  {(recentRoll.is_fumble || recentRoll.isFumble) && ' (Falha Crítica!)'}
-                </div>
-              </div>
-            )
-          )}
-        </div>
-      )}
-
-      {/* PAINEL LATERAL: HISTÓRICO DAS ÚLTIMAS 15 ROLAGENS DE DADOS */}
-      <div
-        className={cn(
-          'absolute left-3 z-20 w-52 sm:w-56 xl:w-60 rounded-2xl bg-[#0c101b]/88 backdrop-blur-xl border border-white/15 shadow-2xl transition-all duration-200 pointer-events-auto',
-          initiativeOpen && initiativeOrder.length > 0 ? 'top-28' : 'top-14 sm:top-16'
+      {/* VIEWPORT DO MAPA (OCUPA 100% DO ESPAÇO AO LADO DA SIDEBAR) */}
+      <div ref={containerRef} className="relative flex-1 min-w-0 h-full overflow-hidden">
+        {/* Botão Flutuante Mobile para reabrir a Sidebar quando recolhida */}
+        {!mobileRailOpen && (
+          <button
+            type="button"
+            onClick={() => setMobileRailOpen(true)}
+            aria-label="Abrir barra lateral de ferramentas"
+            title="Ferramentas do Mapa"
+            className="md:hidden absolute top-3 left-3 z-30 h-10 w-10 rounded-xl bg-[#0c101b]/90 border border-white/15 text-slate-200 hover:text-white hover:bg-white/15 backdrop-blur-xl shadow-xl flex items-center justify-center"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
         )}
-      >
-        <button
-          type="button"
-          onClick={() => setRollHistoryOpen((prev) => !prev)}
-          className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/5 rounded-2xl transition-colors"
-          title="Alternar histórico das últimas 15 rolagens"
-        >
-          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-200">
-            <Dices className="h-3.5 w-3.5 text-slate-300 shrink-0" />
-            Histórico de Dados
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="px-1.5 py-0.5 rounded-full bg-white/10 border border-white/10 text-[10px] font-mono font-bold text-slate-300">
-              {rollHistory.length}/{MAX_ROLL_HISTORY}
-            </span>
-            {rollHistoryOpen ? (
-              <ChevronUp className="h-3.5 w-3.5 text-slate-400" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-            )}
-          </span>
-        </button>
 
-        {rollHistoryOpen && (
-          <div className="px-2.5 pb-2.5 pt-1 border-t border-white/10 space-y-1.5 max-h-[38vh] sm:max-h-[250px] xl:max-h-[310px] overflow-y-auto">
-            {rollingSeedKey && active3DRoll && (
-              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/15 animate-pulse">
-                <div className="min-w-0">
-                  <div className="text-[11px] font-bold text-white truncate">
-                    {active3DRoll.user_name || 'Aventureiro'}
+        {/* PAINEL EXPANSÍVEL DA SIDEBAR: DADOS 3D & HISTÓRICO / ORDEM DE COMBATE */}
+        {sidebarPanel && (
+          <div
+            data-map-overlay-scroll="true"
+            className="absolute left-0 top-0 bottom-0 z-30 w-[264px] sm:w-[292px] max-w-[calc(100%-0.5rem)] bg-[#0a0d17]/94 backdrop-blur-2xl border-r border-white/12 shadow-[12px_0_40px_rgba(0,0,0,0.65)] flex flex-col overflow-hidden pointer-events-auto"
+          >
+            {sidebarPanel === 'dice' && (
+              <>
+                <div className="px-3.5 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Dices className="h-4 w-4 text-slate-300 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-100 truncate">
+                      Dados &amp; Histórico
+                    </span>
                   </div>
-                  <div className="text-[10px] text-slate-400 font-mono">
-                    Rolando d{active3DRoll.sides}...
-                  </div>
-                </div>
-                <div className="h-7 w-7 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center font-mono text-xs font-bold text-slate-300">
-                  ?
-                </div>
-              </div>
-            )}
-
-            {rollHistory.length === 0 && !rollingSeedKey ? (
-              <div className="py-3 text-center text-[11px] text-slate-400">
-                Nenhuma rolagem registrada.
-              </div>
-            ) : (
-              rollHistory.map((item, idx) => {
-                const isMax = Boolean(item.is_max || item.isMax || item.isCrit || item.is_crit);
-                const isFumble = Boolean(item.is_fumble || item.isFumble);
-                const itemKey = getRollSeedKey(item) || item.id || idx;
-
-                return (
-                  <div
-                    key={itemKey}
-                    className={cn(
-                      'flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border transition-all',
-                      isMax
-                        ? 'bg-amber-950/45 border-amber-400/40 text-amber-100'
-                        : isFumble
-                        ? 'bg-rose-950/45 border-rose-400/40 text-rose-100'
-                        : 'bg-white/[0.04] border-white/10 text-slate-200'
-                    )}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] font-mono text-slate-500 shrink-0">
-                          #{idx + 1}
-                        </span>
-                        <User className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span className="text-xs font-bold text-white truncate">
-                          {item.user_name || 'Aventureiro'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 pl-4">
-                        <span className="text-[10px] font-mono font-semibold text-slate-400">
-                          d{item.sides}
-                        </span>
-                        {item.user_role === 'master' && (
-                          <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-300 font-semibold">
-                            Mestre
-                          </span>
-                        )}
-                        {isMax && (
-                          <span className="text-[9px] font-bold text-amber-300">
-                            Máximo!
-                          </span>
-                        )}
-                        {isFumble && (
-                          <span className="text-[9px] font-bold text-rose-400">
-                            Falha!
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div
-                      className={cn(
-                        'h-8 min-w-[2rem] px-1.5 rounded-lg flex items-center justify-center font-mono font-black text-sm shrink-0 border',
-                        isMax
-                          ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
-                          : isFumble
-                          ? 'bg-rose-500/20 border-rose-400/50 text-rose-300'
-                          : 'bg-white/10 border-white/15 text-white'
-                      )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="px-1.5 py-0.5 rounded-full bg-white/10 border border-white/10 text-[10px] font-mono font-bold text-slate-300">
+                      {rollHistory.length}/{MAX_ROLL_HISTORY}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSidebarPanel(null)}
+                      aria-label="Fechar painel de dados"
+                      className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
                     >
-                      {item.roll}
-                    </div>
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                );
-              })
+                </div>
+
+                {/* Rolador Rápido 3D */}
+                <div className="p-3.5 border-b border-white/10 space-y-2.5 shrink-0 bg-white/[0.02]">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    Rolador D&amp;D 3D
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[4, 6, 8, 10, 12, 20].map((sides) => (
+                      <button
+                        key={sides}
+                        type="button"
+                        onClick={() => rollDice(sides)}
+                        className="py-2 px-2 rounded-xl bg-white/[0.06] border border-white/12 hover:bg-white/15 hover:border-white/25 active:scale-95 text-xs font-mono font-bold text-white transition-all text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                      >
+                        d{sides}
+                      </button>
+                    ))}
+                  </div>
+
+                  {rollingSeedKey && active3DRoll ? (
+                    <div className="p-2.5 rounded-xl border border-white/15 bg-white/5 text-center animate-pulse">
+                      <div className="text-[10px] uppercase font-bold text-slate-400">
+                        Rolando d{active3DRoll.sides}...
+                      </div>
+                      <div className="text-xs font-bold font-mono text-slate-200 mt-0.5">
+                        Aguardando dado parar...
+                      </div>
+                    </div>
+                  ) : (
+                    recentRoll && (
+                      <div
+                        key={recentRoll.id || recentRoll.seed}
+                        className={cn(
+                          'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95',
+                          recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit
+                            ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
+                            : recentRoll.is_fumble || recentRoll.isFumble
+                            ? 'bg-rose-500/15 border-rose-400/50 text-rose-200'
+                            : 'bg-white/8 border-white/15 text-white'
+                        )}
+                      >
+                        <div className="text-[10px] uppercase font-bold text-slate-400">
+                          Último Resultado (d{recentRoll.sides})
+                        </div>
+                        <div className="text-2xl font-black font-mono leading-tight mt-0.5">
+                          {recentRoll.roll}
+                        </div>
+                        {(recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit) && (
+                          <div className="text-[10px] font-bold text-amber-300 mt-0.5">
+                            Sucesso Máximo!
+                          </div>
+                        )}
+                        {(recentRoll.is_fumble || recentRoll.isFumble) && (
+                          <div className="text-[10px] font-bold text-rose-300 mt-0.5">
+                            Falha Crítica!
+                          </div>
+                        )}
+                      </div>
+                    )
+                  )}
+                </div>
+
+                {/* Histórico das últimas 15 rolagens */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-0.5 mb-1">
+                    Histórico da Mesa
+                  </span>
+
+                  {rollingSeedKey && active3DRoll && (
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white/5 border border-white/15 animate-pulse">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">
+                          {active3DRoll.user_name || 'Aventureiro'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          Rolando d{active3DRoll.sides}...
+                        </div>
+                      </div>
+                      <div className="h-7 w-7 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center font-mono text-xs font-bold text-slate-300">
+                        ?
+                      </div>
+                    </div>
+                  )}
+
+                  {rollHistory.length === 0 && !rollingSeedKey ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      Nenhuma rolagem registrada ainda.
+                    </div>
+                  ) : (
+                    rollHistory.map((item, idx) => {
+                      const isMax = Boolean(item.is_max || item.isMax || item.isCrit || item.is_crit);
+                      const isFumble = Boolean(item.is_fumble || item.isFumble);
+                      const itemKey = getRollSeedKey(item) || item.id || idx;
+
+                      return (
+                        <div
+                          key={itemKey}
+                          className={cn(
+                            'flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl border transition-all',
+                            isMax
+                              ? 'bg-amber-950/40 border-amber-400/40 text-amber-100'
+                              : isFumble
+                              ? 'bg-rose-950/40 border-rose-400/40 text-rose-100'
+                              : 'bg-white/[0.04] border-white/10 text-slate-200'
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-mono text-slate-500 shrink-0">
+                                #{idx + 1}
+                              </span>
+                              <User className="h-3 w-3 text-slate-400 shrink-0" />
+                              <span className="text-xs font-bold text-white truncate">
+                                {item.user_name || 'Aventureiro'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5 pl-4">
+                              <span className="text-[10px] font-mono font-semibold text-slate-400">
+                                d{item.sides}
+                              </span>
+                              {item.user_role === 'master' && (
+                                <span className="text-[9px] px-1 rounded bg-white/10 text-slate-300 font-semibold">
+                                  Mestre
+                                </span>
+                              )}
+                              {isMax && (
+                                <span className="text-[9px] font-bold text-amber-300">
+                                  Máximo!
+                                </span>
+                              )}
+                              {isFumble && (
+                                <span className="text-[9px] font-bold text-rose-400">
+                                  Falha!
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div
+                            className={cn(
+                              'h-8 min-w-[2rem] px-1.5 rounded-lg flex items-center justify-center font-mono font-black text-sm shrink-0 border',
+                              isMax
+                                ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                                : isFumble
+                                ? 'bg-rose-500/20 border-rose-400/50 text-rose-300'
+                                : 'bg-white/10 border-white/15 text-white'
+                            )}
+                          >
+                            {item.roll}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            )}
+
+            {sidebarPanel === 'initiative' && (
+              <>
+                <div className="px-3.5 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Shield className="h-4 w-4 text-slate-300 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-100 truncate">
+                      Ordem de Combate
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="px-1.5 py-0.5 rounded-full bg-white/10 border border-white/10 text-[10px] font-mono font-bold text-slate-300">
+                      {initiativeOrder.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSidebarPanel(null)}
+                      aria-label="Fechar ordem de combate"
+                      className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {isMaster && initiativeOrder.length > 0 && (
+                  <div className="p-3 border-b border-white/10 shrink-0 bg-white/[0.02]">
+                    <Button
+                      size="sm"
+                      onClick={handleNextTurn}
+                      className="w-full h-9 text-xs gap-1.5"
+                    >
+                      Avançar Próximo Turno
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+                  {initiativeOrder.length === 0 ? (
+                    <div className="py-10 text-center text-xs text-slate-400">
+                      Nenhum token visível neste mapa.
+                    </div>
+                  ) : (
+                    initiativeOrder.map((tok, index) => {
+                      const isCurrentTurn = map?.current_turn_token_id === tok.id;
+                      const tokHpPct = Math.max(
+                        0,
+                        Math.min(100, Math.round(((tok.hp || 0) / (tok.max_hp || 1)) * 100))
+                      );
+                      return (
+                        <button
+                          key={tok.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedTokenId(tok.id);
+                            setInspectModalOpen(true);
+                          }}
+                          className={cn(
+                            'w-full flex flex-col gap-1.5 p-2.5 rounded-xl border transition-all text-left',
+                            isCurrentTurn
+                              ? 'bg-amber-500/15 border-amber-400/50 text-white shadow-sm ring-1 ring-amber-400/25'
+                              : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/10'
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                                #{index + 1}
+                              </span>
+                              <span
+                                className="h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: tok.color || '#60a5fa' }}
+                              />
+                              <span className="text-xs font-bold text-white truncate">
+                                {tok.name}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[10px] text-slate-300 shrink-0">
+                              {tok.hp}/{tok.max_hp} PV
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-black/60 overflow-hidden border border-white/10">
+                            <div
+                              className={cn(
+                                'h-full transition-all duration-200',
+                                tokHpPct > 50
+                                  ? 'bg-emerald-400'
+                                  : tokHpPct > 25
+                                  ? 'bg-amber-400'
+                                  : 'bg-rose-500'
+                              )}
+                              style={{ width: `${tokHpPct}%` }}
+                            />
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
-      </div>
 
       {/* BANNER SUPERIOR DE RESULTADO SINCRONIZADO PARA TODOS (EXIBIDO APENAS APÓS O DADO PARAR DE ROLAR) */}
       {sharedBannerRoll && (
@@ -2051,6 +2265,7 @@ export function TacticalMapCanvas({
           </div>
         )}
       </Modal>
+      </div>
     </div>
   );
 }

@@ -41,20 +41,71 @@
   box-sizing: border-box;
 }
 
-/* Universal high-contrast dark inputs, textareas & selects */
-input:not([type="checkbox"]):not([type="radio"]),
-textarea,
-select {
+/* Universal high-contrast dark inputs, textareas & selects (excludes light-paper PDF sheet overlay fields) */
+input:not([type="checkbox"]):not([type="radio"]):not(.pdf-sheet-field),
+textarea:not(.pdf-sheet-field),
+select:not(.pdf-sheet-field) {
   background-color: #0c101b !important;
   color: #ffffff !important;
   border-color: rgba(255, 255, 255, 0.15) !important;
   caret-color: #ffffff !important;
 }
 
-input::placeholder,
-textarea::placeholder {
+input:not(.pdf-sheet-field)::placeholder,
+textarea:not(.pdf-sheet-field)::placeholder {
   color: #94a3b8 !important;
   opacity: 1 !important;
+}
+
+/* Editable PDF Character Sheet (Ficha.pdf) transparent ink fields */
+.pdf-sheet-page {
+  container-type: inline-size;
+}
+
+.pdf-sheet-field {
+  background-color: transparent !important;
+  color: #111827 !important;
+  caret-color: #0f172a !important;
+  border-color: transparent !important;
+}
+
+.pdf-sheet-field:hover {
+  background-color: rgba(14, 165, 233, 0.08) !important;
+}
+
+.pdf-sheet-field:focus {
+  background-color: rgba(14, 165, 233, 0.12) !important;
+  outline: 1.5px solid rgba(2, 132, 199, 0.7) !important;
+  outline-offset: -1px !important;
+}
+
+.pdf-sheet-field::placeholder {
+  color: rgba(15, 23, 42, 0.3) !important;
+}
+
+.pdf-sheet-field::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.pdf-sheet-field::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.25);
+  border-radius: 9999px;
+}
+
+@keyframes pdfRemotePulse {
+  0% {
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.85);
+    background-color: rgba(16, 185, 129, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    background-color: transparent;
+  }
+}
+
+.pdf-remote-flash {
+  animation: pdfRemotePulse 1.4s ease-out;
 }
 
 /* Ensure browser autofill never overrides with white background or dark text */

@@ -58,34 +58,37 @@ export function PlayerMapView({
 
   if (!activeMap) {
     return (
-      <Card className="p-12 text-center space-y-4 max-w-xl mx-auto my-8">
-        <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto text-slate-400">
-          <Compass className="h-8 w-8 text-slate-300" />
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold text-white">Mesa Aguardando o Mestre</h2>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            O Mestre da mesa ainda não ativou o mapa tático da sessão. Assim que um mapa for revelado,
-            seu herói surgirá no campo de batalha para exploração e combate em tempo real.
-          </p>
-        </div>
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-mono text-slate-300">
-          <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-          Sincronização Ativa com a Mesa
-        </div>
-      </Card>
+      <div className="flex-1 min-h-0 w-full h-full flex items-center justify-center p-4 sm:p-6">
+        <Card className="p-10 sm:p-12 text-center space-y-4 max-w-xl w-full">
+          <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto text-slate-400">
+            <Compass className="h-8 w-8 text-slate-300" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-white">Mesa Aguardando o Mestre</h2>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              O Mestre da mesa ainda não ativou o mapa tático da sessão. Assim que um mapa for revelado,
+              seu herói surgirá no campo de batalha para exploração e combate em tempo real.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-mono text-slate-300">
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+            Sincronização Ativa com a Mesa
+          </div>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <div className="w-full">
-      {/* CANVAS TÁTICO INTERATIVO PARA O JOGADOR (SEM BARRA REDUNDANTE) */}
+    <div className="flex-1 min-h-0 w-full h-full flex flex-col">
+      {/* CANVAS TÁTICO FULL-VIEWPORT COM SIDEBAR INTEGRADA */}
       <TacticalMapCanvas
         map={activeMap}
         tokens={activeTokens}
         currentUserId={profile?.uid}
         currentUserName={profile?.username || 'Aventureiro'}
         isMaster={false}
+        fullViewport={true}
         onUpdateTokenPosition={updateMapTokenPosition}
         onUpdateTokenStats={updateMapTokenStats}
         onPing={handlePing}

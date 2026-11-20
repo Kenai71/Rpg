@@ -1300,3 +1300,230 @@ export async function broadcastMapDiceRoll({
     ...rollPayload,
   };
 }
+
+// =========================================================================
+// FICHA EDITÁVEL EM PDF (Ficha.pdf) — SINCRONIZAÇÃO EM TEMPO REAL
+// =========================================================================
+
+function sanitizeSheetFieldValue(val) {
+  if (typeof val === 'boolean') return val;
+  if (val === null || val === undefined) return '';
+  return String(val).slice(0, 6000);
+}
+
+function isPermissionDeniedError(err) {
+  const code = String(err?.code || '').toLowerCase();
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    code === 'permission-denied' ||
+    code.includes('permission') ||
+    msg.includes('insufficient permissions') ||
+    msg.includes('permission_denied')
+  );
+}
+
+/**
+ * Inscreve-se em tempo real na ficha editável (Ficha.pdf) de um herói.
+ * Usa a coleção dedicada `character_sheets/{uid}` e faz fallback automático
+ * para `profiles/{uid}.sheet_fields` caso as regras da nova coleção ainda
+ * não tenham sido publicadas em produção, garantindo 100% de sincronização
+ * em tempo real entre Jogador e Mestre sem erro de permissão.
+ */
+export function subscribeCharacterSheet(heroUid, onData, onError) {
+  if (!heroUid) return () => {};
+  const firestore = requireDb();
+  const sheetRef = doc(firestore, 'character_sheets', heroUid);
+  const profileRef = doc(firestore, 'profiles', heroUid);
+
+  let active = true;
+  let unsubFallback = null;
+  let usingFallback = false;
+
+  const startProfileFallback = () => {
+    if (!active || usingFallback) return;
+    usingFallback = true;
+    unsubFallback = onSnapshot(
+      profileRef,
+      (snap) => {
+        if (!active) return;
+        const data = snap.exists() ? snap.data() : {};
+        onData({
+          uid: heroUid,
+          fields: data?.sheet_fields && typeof data.sheet_fields === 'object' ? data.sheet_fields : {},
+          updatedBy: data?.sheet_updated_by || null,
+          updatedByName: data?.sheet_updated_by_name || null,
+          updatedByRole: data?.sheet_updated_by_role || null,
+          updatedAt: data?.sheet_updated_at || data?.updatedAt || null,
+          storageMode: 'profile-fallback',
+        });
+      },
+      (err) => {
+        if (active && onError) onError(err);
+      }
+    );
+  };
+
+  const unsubPrimary = onSnapshot(
+    sheetRef,
+    async (snap) => {
+      if (!active || usingFallback) return;
+      if (snap.exists()) {
+        const data = snap.data();
+        onData({
+          uid: heroUid,
+          fields: data?.fields && typeof data.fields === 'object' ? data.fields : {},
+          updatedBy: data?.updatedBy || null,
+          updatedByName: data?.updatedByName || null,
+          updatedByRole: data?.updatedByRole || null,
+          updatedAt: data?.updatedAt || null,
+          storageMode: 'collection',
+        });
+      } else {
+        // Se ainda não existe documento em character_sheets, verifica se já há dados legados no perfil
+        try {
+          const profSnap = await getDoc(profileRef);
+          if (!active || usingFallback) return;
+          const profData = profSnap.exists() ? profSnap.data() : {};
+          const legacyFields =
+            profData?.sheet_fields && typeof profData.sheet_fields === 'object'
+              ? profData.sheet_fields
+              : {};
+          onData({
+            uid: heroUid,
+            fields: legacyFields,
+            updatedBy: profData?.sheet_updated_by || null,
+            updatedByName: profData?.sheet_updated_by_name || null,
+            updatedByRole: profData?.sheet_updated_by_role || null,
+            updatedAt: profData?.sheet_updated_at || null,
+            storageMode: 'collection',
+          });
+        } catch {
+          if (!active || usingFallback) return;
+          onData({
+            uid: heroUid,
+            fields: {},
+            updatedBy: null,
+            updatedByName: null,
+            updatedByRole: null,
+            updatedAt: null,
+            storageMode: 'collection',
+          });
+        }
+      }
+    },
+    (err) => {
+      if (!active) return;
+      if (isPermissionDeniedError(err)) {
+        startProfileFallback();
+      } else if (onError) {
+        onError(err);
+      }
+    }
+  );
+
+  return () => {
+    active = false;
+    if (typeof unsubPrimary === 'function') unsubPrimary();
+    if (typeof unsubFallback === 'function') unsubFallback();
+  };
+}
+
+/**
+ * Salva um ou mais campos editados da ficha (Ficha.pdf) de forma granular,
+ * evitando conflito quando Jogador e Mestre editam campos diferentes simultaneamente.
+ */
+export async function saveCharacterSheetFields(
+  heroUid,
+  fieldPatch,
+  editorMeta = {},
+  preferredStorage = 'collection'
+) {
+  if (!heroUid || !fieldPatch || typeof fieldPatch !== 'object') return;
+  const entries = Object.entries(fieldPatch).filter(([k]) => /^[A-Za-z0-9_-]+$/.test(k));
+  if (entries.length === 0) return;
+
+  const firestore = requireDb();
+  const cleanFieldsMap = {};
+  entries.forEach(([k, v]) => {
+    cleanFieldsMap[k] = sanitizeSheetFieldValue(v);
+  });
+
+  const editorUid = editorMeta?.uid ? String(editorMeta.uid).slice(0, 128) : null;
+  const editorName = editorMeta?.username ? String(editorMeta.username).slice(0, 60) : null;
+  const editorRole = editorMeta?.role === 'master' ? 'master' : 'player';
+
+  const saveToProfileFallback = async () => {
+    const profileRef = doc(firestore, 'profiles', heroUid);
+    await setDoc(
+      profileRef,
+      {
+        sheet_fields: cleanFieldsMap,
+        sheet_updated_by: editorUid,
+        sheet_updated_by_name: editorName,
+        sheet_updated_by_role: editorRole,
+        sheet_updated_at: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return 'profile-fallback';
+  };
+
+  if (preferredStorage === 'profile-fallback') {
+    return await saveToProfileFallback();
+  }
+
+  const sheetRef = doc(firestore, 'character_sheets', heroUid);
+  const dotPayload = {
+    uid: heroUid,
+    updatedBy: editorUid,
+    updatedByName: editorName,
+    updatedByRole: editorRole,
+    updatedAt: serverTimestamp(),
+  };
+  entries.forEach(([k]) => {
+    dotPayload[`fields.${k}`] = cleanFieldsMap[k];
+  });
+
+  try {
+    await updateDoc(sheetRef, dotPayload);
+    return 'collection';
+  } catch (err) {
+    if (err?.code === 'not-found') {
+      try {
+        let initialFields = { ...cleanFieldsMap };
+        try {
+          const profSnap = await getDoc(doc(firestore, 'profiles', heroUid));
+          const legacy = profSnap.exists() ? profSnap.data()?.sheet_fields : null;
+          if (legacy && typeof legacy === 'object') {
+            initialFields = { ...legacy, ...cleanFieldsMap };
+          }
+        } catch {}
+
+        await setDoc(
+          sheetRef,
+          {
+            uid: heroUid,
+            fields: initialFields,
+            updatedBy: editorUid,
+            updatedByName: editorName,
+            updatedByRole: editorRole,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return 'collection';
+      } catch (createErr) {
+        if (isPermissionDeniedError(createErr)) {
+          return await saveToProfileFallback();
+        }
+        throw createErr;
+      }
+    }
+    if (isPermissionDeniedError(err)) {
+      return await saveToProfileFallback();
+    }
+    throw err;
+  }
+}

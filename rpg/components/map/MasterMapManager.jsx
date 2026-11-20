@@ -31,7 +31,6 @@ import {
 } from '../../lib/rpg-service';
 import { MAP_PRESETS, MONSTER_TOKEN_PRESETS } from '../../lib/map-presets';
 import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { FormField, Input, Select } from '../ui/Input';
 import { Modal } from '../ui/Modal';
@@ -368,108 +367,66 @@ export function MasterMapManager({
 
   return (
     <div className="space-y-2.5 sm:space-y-3.5">
-      {/* Barra Superior do Mestre */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2.5 p-3 sm:p-3.5 rounded-2xl bg-[var(--surface-1)] border border-[var(--border-subtle)] backdrop-blur-xl">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="h-10 w-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-            <Compass className="h-5 w-5 text-slate-300" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white truncate">
-                {currentMap?.title || 'Mesa Tática de Mapas'}
-              </h2>
-              {currentMap?.is_active && (
-                <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[11px]">
-                  Mapa Principal Ativo
-                </Badge>
-              )}
-              {maps.length > 0 && currentMapIndex >= 0 && (
-                <span className="text-xs text-slate-400 font-mono">
-                  ({currentMapIndex + 1}/{maps.length})
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-slate-400">
-              {currentTokens.length} token(s) no campo • {players.length} heróis cadastrados • {maps.length} mapa(s)
-            </p>
-          </div>
-        </div>
-
-        {/* Botões de Ação para o Mestre */}
-        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-          {currentMap && !currentMap.is_active && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => handleSetActive(currentMap.id)}
-              className="text-xs gap-1.5"
-              title="Tornar este o mapa principal que todos os jogadores estão visualizando"
-            >
-              <Check className="h-3.5 w-3.5 text-emerald-400" />
-              Ativar p/ Jogadores
-            </Button>
-          )}
-
+      {/* Botões de Ação para o Mestre (sem cabeçalho redundante e sem botão Excluir duplicado) */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {currentMap && !currentMap.is_active && (
           <Button
             size="sm"
             variant="secondary"
-            onClick={handleSyncHeroes}
-            loading={syncingHeroes}
-            disabled={!currentMap}
+            onClick={() => handleSetActive(currentMap.id)}
             className="text-xs gap-1.5"
-            title="Adicionar automaticamente tokens de todos os heróis da mesa neste mapa"
+            title="Tornar este o mapa principal que todos os jogadores estão visualizando"
           >
-            <Users className="h-3.5 w-3.5 text-slate-300" />
-            Sincronizar Heróis
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+            Ativar p/ Jogadores
           </Button>
+        )}
 
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setSelectedMonsterPreset(MONSTER_TOKEN_PRESETS[0]);
-              setMonsterName(MONSTER_TOKEN_PRESETS[0].name);
-              setMonsterHp(MONSTER_TOKEN_PRESETS[0].hp);
-              setMonsterAc(MONSTER_TOKEN_PRESETS[0].ac);
-              setSpawnMonsterModalOpen(true);
-            }}
-            disabled={!currentMap}
-            className="text-xs gap-1.5"
-          >
-            <Skull className="h-3.5 w-3.5 text-rose-400" />
-            + Monstro / NPC
-          </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={handleSyncHeroes}
+          loading={syncingHeroes}
+          disabled={!currentMap}
+          className="text-xs gap-1.5"
+          title="Adicionar automaticamente tokens de todos os heróis da mesa neste mapa"
+        >
+          <Users className="h-3.5 w-3.5 text-slate-300" />
+          Sincronizar Heróis
+        </Button>
 
-          {currentMap && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => handleDeleteMap(currentMap.id)}
-              className="text-xs gap-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
-              title="Excluir o mapa atual"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Excluir
-            </Button>
-          )}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            setSelectedMonsterPreset(MONSTER_TOKEN_PRESETS[0]);
+            setMonsterName(MONSTER_TOKEN_PRESETS[0].name);
+            setMonsterHp(MONSTER_TOKEN_PRESETS[0].hp);
+            setMonsterAc(MONSTER_TOKEN_PRESETS[0].ac);
+            setSpawnMonsterModalOpen(true);
+          }}
+          disabled={!currentMap}
+          className="text-xs gap-1.5"
+        >
+          <Skull className="h-3.5 w-3.5 text-rose-400" />
+          + Monstro / NPC
+        </Button>
 
-          <Button
-            size="sm"
-            onClick={() => {
-              setMapTitle('');
-              setCustomUrl('');
-              setUploadedPreview(null);
-              setUploadedFileName('');
-              setMapSourceTab('upload');
-              setCreateModalOpen(true);
-            }}
-            className="text-xs gap-1.5"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Inserir Mapa
-          </Button>
-        </div>
+        <Button
+          size="sm"
+          onClick={() => {
+            setMapTitle('');
+            setCustomUrl('');
+            setUploadedPreview(null);
+            setUploadedFileName('');
+            setMapSourceTab('upload');
+            setCreateModalOpen(true);
+          }}
+          className="text-xs gap-1.5"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Inserir Mapa
+        </Button>
       </div>
 
       {/* SELETOR E NAVEGADOR DE MAPAS (TRANSIÇÃO ENTRE IMAGENS) */}
