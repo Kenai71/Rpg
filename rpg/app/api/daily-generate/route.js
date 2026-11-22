@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '../../../lib/firebase-admin';
 import {
   DND_ENCOUNTERS_BY_TIER,
+  DND_EXPANDED_WEAPONS,
   enforceBatchItemUniqueness,
   enforceBatchMissionUniqueness,
   rollMissionRank,
@@ -77,11 +78,44 @@ function parseModelJson(rawText) {
   return JSON.parse(cleaned);
 }
 
-function buildShopPrompt({ count, rolledRarities, existingDescriptions }) {
-  const staffTargetCount = Math.max(1, Math.round(count * 0.25));
-  const raritySlotsList = rolledRarities
-    .map((r, i) => `Item ${i + 1}: <${r}>`)
-    .join(', ');
+const NON_WEAPON_SHOP_TYPES = [
+  { type: 'shield', label: 'Escudo' },
+  { type: 'body', label: 'Armadura / Manto' },
+  { type: 'head', label: 'Elmo / Capuz / Coroa' },
+  { type: 'hands', label: 'Luvas / Manoplas' },
+  { type: 'feet', label: 'Botas / Grevas' },
+  { type: 'waist', label: 'Cinto / Faixa' },
+  { type: 'neck', label: 'Amuleto / Colar' },
+  { type: 'ring', label: 'Anel' },
+  { type: 'face', label: 'Máscara / Visor' },
+  { type: 'consumable', label: 'Poção / Consumível' },
+];
+
+/**
+ * Sorteia aleatoriamente a categoria/base de cada slot da loja:
+ * ~55% armas (sorteadas de forma totalmente aleatória entre TODAS as armas oficiais do catálogo,
+ * onde Cajado participa em igualdade com espadas, machados, arcos, adagas, lanças, martelos, etc.)
+ * e ~45% demais equipamentos e consumíveis.
+ */
+function rollRandomShopSlotCategory() {
+  if (Math.random() < 0.55) {
+    const weapon = DND_EXPANDED_WEAPONS[Math.floor(Math.random() * DND_EXPANDED_WEAPONS.length)];
+    return {
+      type: 'weapon',
+      hint: `Arma (${weapon?.name || 'Espada Longa'})`,
+    };
+  }
+  const other = NON_WEAPON_SHOP_TYPES[Math.floor(Math.random() * NON_WEAPON_SHOP_TYPES.length)];
+  return {
+    type: other.type,
+    hint: other.label,
+  };
+}
+
+function buildShopPrompt({ count, rolledRarities, rolledCategories, existingDescriptions }) {
+  const slotsList = rolledRarities
+    .map((r, i) => `Item ${i + 1}: <${r}> — ${rolledCategories[i]?.hint || 'Equipamento variado'} (type: "${rolledCategories[i]?.type || 'weapon'}")`)
+    .join('\n');
 
   const recentContext =
     existingDescriptions.length > 0
@@ -92,18 +126,15 @@ function buildShopPrompt({ count, rolledRarities, existingDescriptions }) {
       : '';
 
   return `Seed: ${Date.now()}-${Math.random()}. Você é Mestre especialista nos manuais oficiais D&D 5.5e (Revisão 2024) e D&D 5e em Português do Brasil.
-Gere exatamente ${count} Itens variados para a loja do Vallen RPG (incluindo armas marciais, CAJADOS ARCANOS, escudos, armaduras, anéis, acessórios e consumíveis).
+Gere exatamente ${count} Itens variados e aleatórios para a loja do Vallen RPG.
 ${recentContext}
-RARIDADES OBRIGATÓRIAS SORTEADAS PARA OS ${count} ITENS DA LOJA (RESPEITE EXATAMENTE ESTA ORDEM):
-${raritySlotsList}
+SLOTS SORTEADOS ALEATORIAMENTE PARA OS ${count} ITENS DA LOJA (RESPEITE EXATAMENTE A RARIDADE E A CATEGORIA DE CADA ITEM):
+${slotsList}
 
-DISTRIBUIÇÃO DE CATEGORIAS (IMPORTANTE):
-- Inclua obrigatoriamente pelo menos ${staffTargetCount} CAJADO(S) / BÁCULO(S) / BORDÃO(ÕES) / CETRO(S) mágico(s) ou arcano(s) (com "type": "weapon", ex: "Cajado de ...", "Báculo de ...", "Bordão Rúnico de ...", "Cetro de ...").
-- Misture também espadas, katanas, adagas, machados, arcos, lanças, escudos, armaduras, anéis, amuletos e poções/consumíveis.
-- Para CAJADOS/BÁCULOS/CETROS: NUNCA use palavras como "lâmina", "aço", "espada" ou "desembainhada". Escreva com lore de madeira nobre/ancestral, cristais, runas, foco arcano, bônus em ataques mágicos e CD de magias, e cargas arcanas diárias nas raridades altas.
-
-DIRETRIZES DE ESCRITA NATURAL, MAESTRIAS E EFEITOS DE STATUS:
-1. ESCRITA FLUIDA E NATURAL:
+DIRETRIZES DE DIVERSIDADE, ESCRITA NATURAL, MAESTRIAS E EFEITOS DE STATUS:
+1. DIVERSIDADE REAL E ESCRITA FLUIDA:
+- Siga exatamente o tipo e a arma/categoria sorteada em cada slot acima (não transforme armas físicas em cetros mágicos nem repita sempre o mesmo tipo de item).
+- Se o slot sorteado for um Cajado, escreva com lore de madeira nobre/ancestral, cristal/runas e foco arcano (bônus em ataques mágicos/CD nas raridades maiores, sem usar termos como "lâmina" ou "aço").
 - Escreva descrições claras, naturais e bem redigidas em português, sem colchetes artificiais "[...]", sem traços robóticos e sem termos em inglês como "(Vex)" ou "(Topple)".
 - Toda descrição DEVE começar apenas com a tag da raridade sorteada: <COMUM>, <INCOMUM>, <RARO>, <ÉPICO>, <LENDÁRIO> ou <MÍTICO>.
 
@@ -122,16 +153,16 @@ DIRETRIZES DE ESCRITA NATURAL, MAESTRIAS E EFEITOS DE STATUS:
 
 4. ESCALONAMENTO DE DANO, PODER E PREÇO (ARMAS ÉPICAS, LENDÁRIAS E MÍTICAS DEVEM SER MUITO PODEROSAS E ÚNICAS):
 - <COMUM>: Armas 1d4/1d6/1d10 (Cajado 1d6 versátil 1d8, foco arcano básico). Sem bônus mágico. Preço: 30 a 100 G.
-- <INCOMUM>: Armas 1d6/1d8/2d6 (+1 acerto). Cajado 1d8 (+1 ataque mágico e +1 CD de magias). Preço: 150 a 500 G.
-- <RARO>: Armas 1d8/1d10/2d8 (+1 ataque, +1d6 elemental). Cajado 1d10 (+1 ataque mágico, +1 CD, +1d6 elemental). Preço: 800 a 3.000 G.
-- <ÉPICO>: Armas 1d12+2 / 2d6+2 / 2d10+2 (+2 ataque, +1d6 ou +1d8 elemental) + Habilidade Épica exclusiva (ex: crítico 19-20 contra feridos, onda de energia em 6m, +10 PV temporários em crítico, ou 6 cargas arcanas diárias em cajados com +2 ataque mágico e +2 CD). Preço: 4.000 a 15.000 G.
-- <LENDÁRIO>: Armas 2d8+3 / 2d10+3 / 3d8+3 (+3 ataque, +2d6 ou +2d8 elemental) + Poder Lendário de elite (ex: margem de crítico 19-20, ignora resistências, teleporte 9m, contra-ataque reativo, drenar 25% do dano, ou 10 cargas arcanas diárias + vantagem contra magias em cajados com +3 ataque mágico e +2 CD). Preço: 20.000 a 60.000 G.
-- <MÍTICO>: Artefatos supremos! Armas 3d8+5 / 3d10+5 / 4d10+6 (+4 ataque, +3d6 ou +3d8 primordial) + Passiva Mítica transformadora (margem de crítico 18-20, ignora resistências, roubo de vida 50%, Fúria Imortal 1 PV + 35 PV temp 1x/dia, explosão 4d8 em 6m, ou Cajados Míticos com +4 ataque mágico, +3 CD, 15 cargas primordiais, imune a Contra-Mágica e magia até 5º círculo grátis por combate). Preço: 75.000 a 200.000 G.
+- <INCOMUM>: Armas 1d6/1d8/2d6 (+1 acerto). Se for cajado: 1d8 (+1 ataque mágico e +1 CD de magias). Preço: 150 a 500 G.
+- <RARO>: Armas 1d8/1d10/2d8 (+1 ataque, +1d6 elemental). Se for cajado: 1d10 (+1 ataque mágico, +1 CD, +1d6 elemental). Preço: 800 a 3.000 G.
+- <ÉPICO>: Armas 1d12+2 / 2d6+2 / 2d10+2 (+2 ataque, +1d6 ou +1d8 elemental) + Habilidade Épica exclusiva (ex: crítico 19-20 contra feridos, onda de energia em 6m, +10 PV temporários em crítico; ou 6 cargas arcanas diárias se for cajado). Preço: 4.000 a 15.000 G.
+- <LENDÁRIO>: Armas 2d8+3 / 2d10+3 / 3d8+3 (+3 ataque, +2d6 ou +2d8 elemental) + Poder Lendário de elite (ex: margem de crítico 19-20, ignora resistências, teleporte 9m, contra-ataque reativo, drenar 25% do dano; ou 10 cargas arcanas + vantagem contra magias se for cajado). Preço: 20.000 a 60.000 G.
+- <MÍTICO>: Artefatos supremos! Armas 3d8+5 / 3d10+5 / 4d10+6 (+4 ataque, +3d6 ou +3d8 primordial) + Passiva Mítica transformadora (margem de crítico 18-20, ignora resistências, roubo de vida 50%, Fúria Imortal 1 PV + 35 PV temp 1x/dia, explosão 4d8 em 6m; ou 15 cargas primordiais + imune a Contra-Mágica se for cajado). Preço: 75.000 a 200.000 G.
 - Tipos permitidos: weapon, shield, head, face, neck, body, hands, waist, feet, ring, consumable.
 
 NUNCA use ícones de estrela ou símbolos de estrela.
 Responda APENAS JSON válido no formato:
-{"shop_items":[{"item_name":"","description":"<COMUM> Esculpido em madeira de carvalho maciço. Causa 1d6 de dano contundente (versátil 1d8) e atua como foco arcano básico.","price":55,"quantity":1,"type":"weapon"}]}`;
+{"shop_items":[{"item_name":"","description":"<COMUM> Forjada em aço temperado com empunhadura firme de couro. Causa 1d6 de dano cortante.","price":65,"quantity":1,"type":"weapon"}]}`;
 }
 
 function buildMissionsPrompt({ count, rolledRanks, existingMissionTitles }) {
@@ -210,10 +241,12 @@ async function callGeminiWithFallback(apiKey, prompt) {
 async function generateShopItemsWithGemini(apiKey, count, existingDescriptions = []) {
   const safeCount = Math.max(1, Math.min(MAX_ITEMS_PER_CALL, Math.floor(Number(count) || 10)));
   const rolledRarities = Array.from({ length: safeCount }, () => rollShopItemRarity());
+  const rolledCategories = Array.from({ length: safeCount }, () => rollRandomShopSlotCategory());
 
   const prompt = buildShopPrompt({
     count: safeCount,
     rolledRarities,
+    rolledCategories,
     existingDescriptions,
   });
 
@@ -226,11 +259,13 @@ async function generateShopItemsWithGemini(apiKey, count, existingDescriptions =
 
   const preparedItems = rawList.slice(0, safeCount).map((item, idx) => {
     const targetRarity = rolledRarities[idx] || rollShopItemRarity();
+    const targetType = rolledCategories[idx]?.type || item.type || 'weapon';
     const cleanBody = String(item.description || '')
       .replace(/^<(COMUM|INCOMUM|RARO|ÉPICO|LENDÁRIO|MÍTICO)>\s*/i, '')
       .trim();
     return {
       ...item,
+      type: item.type || targetType,
       rarity: targetRarity,
       description: `<${targetRarity}> ${cleanBody}`,
     };

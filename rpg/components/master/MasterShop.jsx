@@ -610,7 +610,7 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
           if (!generatingAI) setAiModalOpen(open);
         }}
         title="Gerar Itens Aleatórios para a Loja (IA)"
-        description="Escolha quantos itens aleatórios (incluindo armas, cajados arcanos, armaduras, anéis e consumíveis) deseja criar apenas na loja."
+        description="Escolha quantos itens aleatórios (armas variadas incluindo cajados, armaduras, escudos, acessórios e consumíveis) deseja criar apenas na loja."
         maxWidth="max-w-md"
         footer={
           <>
@@ -676,7 +676,7 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
 
           <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-3 space-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
-              Probabilidade por Raridade (inclui Cajados Arcanos)
+              Probabilidade por Raridade
             </span>
             <div className="flex flex-wrap gap-1.5">
               {SHOP_RARITY_WEIGHTS.map((entry) => (
