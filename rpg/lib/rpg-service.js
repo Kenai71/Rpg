@@ -1324,10 +1324,11 @@ function isPermissionDeniedError(err) {
 
 /**
  * Inscreve-se em tempo real na ficha editável (Ficha.pdf) de um herói.
- * Usa a coleção dedicada `character_sheets/{uid}` e faz fallback automático
- * para `profiles/{uid}.sheet_fields` caso as regras da nova coleção ainda
- * não tenham sido publicadas em produção, garantindo 100% de sincronização
- * em tempo real entre Jogador e Mestre sem erro de permissão.
+ * Usa a coleção dedicada `character_sheets/{uid}` e mantém listener em tempo real
+ * no perfil (`profiles/{uid}.sheet_fields`) enquanto o documento em `character_sheets`
+ * ainda não existir ou caso as regras da nova coleção ainda não tenham sido publicadas,
+ * garantindo sincronização instantânea (estilo mapa tático) entre Jogador e Mestre
+ * sem precisar fechar e reabrir a ficha.
  */
 export function subscribeCharacterSheet(heroUid, onData, onError) {
   if (!heroUid) return () => {};
@@ -1336,16 +1337,23 @@ export function subscribeCharacterSheet(heroUid, onData, onError) {
   const profileRef = doc(firestore, 'profiles', heroUid);
 
   let active = true;
-  let unsubFallback = null;
-  let usingFallback = false;
+  let unsubProfile = null;
+  let primaryDenied = false;
+  let sheetDocExists = false;
 
-  const startProfileFallback = () => {
-    if (!active || usingFallback) return;
-    usingFallback = true;
-    unsubFallback = onSnapshot(
+  const stopProfileListener = () => {
+    if (typeof unsubProfile === 'function') {
+      unsubProfile();
+      unsubProfile = null;
+    }
+  };
+
+  const ensureProfileListener = (storageMode) => {
+    if (!active || unsubProfile) return;
+    unsubProfile = onSnapshot(
       profileRef,
       (snap) => {
-        if (!active) return;
+        if (!active || sheetDocExists) return;
         const data = snap.exists() ? snap.data() : {};
         onData({
           uid: heroUid,
@@ -1353,8 +1361,10 @@ export function subscribeCharacterSheet(heroUid, onData, onError) {
           updatedBy: data?.sheet_updated_by || null,
           updatedByName: data?.sheet_updated_by_name || null,
           updatedByRole: data?.sheet_updated_by_role || null,
+          updatedBySession: data?.sheet_updated_by_session || null,
           updatedAt: data?.sheet_updated_at || data?.updatedAt || null,
-          storageMode: 'profile-fallback',
+          storageMode: primaryDenied ? 'profile-fallback' : storageMode,
+          docExists: false,
         });
       },
       (err) => {
@@ -1365,9 +1375,11 @@ export function subscribeCharacterSheet(heroUid, onData, onError) {
 
   const unsubPrimary = onSnapshot(
     sheetRef,
-    async (snap) => {
-      if (!active || usingFallback) return;
+    (snap) => {
+      if (!active || primaryDenied) return;
       if (snap.exists()) {
+        sheetDocExists = true;
+        stopProfileListener();
         const data = snap.data();
         onData({
           uid: heroUid,
@@ -1375,46 +1387,24 @@ export function subscribeCharacterSheet(heroUid, onData, onError) {
           updatedBy: data?.updatedBy || null,
           updatedByName: data?.updatedByName || null,
           updatedByRole: data?.updatedByRole || null,
+          updatedBySession: data?.updatedBySession || null,
           updatedAt: data?.updatedAt || null,
           storageMode: 'collection',
+          docExists: true,
         });
       } else {
-        // Se ainda não existe documento em character_sheets, verifica se já há dados legados no perfil
-        try {
-          const profSnap = await getDoc(profileRef);
-          if (!active || usingFallback) return;
-          const profData = profSnap.exists() ? profSnap.data() : {};
-          const legacyFields =
-            profData?.sheet_fields && typeof profData.sheet_fields === 'object'
-              ? profData.sheet_fields
-              : {};
-          onData({
-            uid: heroUid,
-            fields: legacyFields,
-            updatedBy: profData?.sheet_updated_by || null,
-            updatedByName: profData?.sheet_updated_by_name || null,
-            updatedByRole: profData?.sheet_updated_by_role || null,
-            updatedAt: profData?.sheet_updated_at || null,
-            storageMode: 'collection',
-          });
-        } catch {
-          if (!active || usingFallback) return;
-          onData({
-            uid: heroUid,
-            fields: {},
-            updatedBy: null,
-            updatedByName: null,
-            updatedByRole: null,
-            updatedAt: null,
-            storageMode: 'collection',
-          });
-        }
+        // Documento em character_sheets ainda não foi criado: mantém listener em tempo real
+        // em profiles/{uid} para refletir instantaneamente qualquer edição legada ou em fallback
+        sheetDocExists = false;
+        ensureProfileListener('collection');
       }
     },
     (err) => {
       if (!active) return;
       if (isPermissionDeniedError(err)) {
-        startProfileFallback();
+        primaryDenied = true;
+        sheetDocExists = false;
+        ensureProfileListener('profile-fallback');
       } else if (onError) {
         onError(err);
       }
@@ -1424,23 +1414,34 @@ export function subscribeCharacterSheet(heroUid, onData, onError) {
   return () => {
     active = false;
     if (typeof unsubPrimary === 'function') unsubPrimary();
-    if (typeof unsubFallback === 'function') unsubFallback();
+    stopProfileListener();
   };
 }
 
 /**
  * Salva um ou mais campos editados da ficha (Ficha.pdf) de forma granular,
  * evitando conflito quando Jogador e Mestre editam campos diferentes simultaneamente.
+ * Verifica existência antes de chamar updateDoc para não disparar falso permission-denied
+ * na regra `resource.data.uid` quando o documento de `character_sheets/{uid}` ainda não existe.
  */
 export async function saveCharacterSheetFields(
   heroUid,
   fieldPatch,
   editorMeta = {},
-  preferredStorage = 'collection'
+  optionsOrStorage = 'collection'
 ) {
-  if (!heroUid || !fieldPatch || typeof fieldPatch !== 'object') return;
+  if (!heroUid || !fieldPatch || typeof fieldPatch !== 'object') return null;
   const entries = Object.entries(fieldPatch).filter(([k]) => /^[A-Za-z0-9_-]+$/.test(k));
-  if (entries.length === 0) return;
+  if (entries.length === 0) return null;
+
+  const opts =
+    typeof optionsOrStorage === 'string'
+      ? { preferredStorage: optionsOrStorage, docExists: false, sessionId: null }
+      : {
+          preferredStorage: optionsOrStorage?.preferredStorage || 'collection',
+          docExists: Boolean(optionsOrStorage?.docExists),
+          sessionId: optionsOrStorage?.sessionId || null,
+        };
 
   const firestore = requireDb();
   const cleanFieldsMap = {};
@@ -1451,6 +1452,7 @@ export async function saveCharacterSheetFields(
   const editorUid = editorMeta?.uid ? String(editorMeta.uid).slice(0, 128) : null;
   const editorName = editorMeta?.username ? String(editorMeta.username).slice(0, 60) : null;
   const editorRole = editorMeta?.role === 'master' ? 'master' : 'player';
+  const sessionId = opts.sessionId ? String(opts.sessionId).slice(0, 64) : null;
 
   const saveToProfileFallback = async () => {
     const profileRef = doc(firestore, 'profiles', heroUid);
@@ -1461,15 +1463,16 @@ export async function saveCharacterSheetFields(
         sheet_updated_by: editorUid,
         sheet_updated_by_name: editorName,
         sheet_updated_by_role: editorRole,
+        sheet_updated_by_session: sessionId,
         sheet_updated_at: serverTimestamp(),
         updatedAt: serverTimestamp(),
       },
       { merge: true }
     );
-    return 'profile-fallback';
+    return { storageMode: 'profile-fallback', docExists: false };
   };
 
-  if (preferredStorage === 'profile-fallback') {
+  if (opts.preferredStorage === 'profile-fallback') {
     return await saveToProfileFallback();
   }
 
@@ -1479,41 +1482,70 @@ export async function saveCharacterSheetFields(
     updatedBy: editorUid,
     updatedByName: editorName,
     updatedByRole: editorRole,
+    updatedBySession: sessionId,
     updatedAt: serverTimestamp(),
   };
   entries.forEach(([k]) => {
     dotPayload[`fields.${k}`] = cleanFieldsMap[k];
   });
 
+  const createSheetDocument = async () => {
+    let initialFields = { ...cleanFieldsMap };
+    try {
+      const profSnap = await getDoc(doc(firestore, 'profiles', heroUid));
+      const legacy = profSnap.exists() ? profSnap.data()?.sheet_fields : null;
+      if (legacy && typeof legacy === 'object') {
+        initialFields = { ...legacy, ...cleanFieldsMap };
+      }
+    } catch {}
+
+    await setDoc(sheetRef, {
+      uid: heroUid,
+      fields: initialFields,
+      updatedBy: editorUid,
+      updatedByName: editorName,
+      updatedByRole: editorRole,
+      updatedBySession: sessionId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return { storageMode: 'collection', docExists: true };
+  };
+
   try {
-    await updateDoc(sheetRef, dotPayload);
-    return 'collection';
+    if (opts.docExists) {
+      await updateDoc(sheetRef, dotPayload);
+      return { storageMode: 'collection', docExists: true };
+    }
+
+    // Antes do primeiro updateDoc, confirma existência do documento para chamar create limpo
+    // (evitando falso permission-denied em `resource.data.uid` quando o doc ainda não existe)
+    const existingSnap = await getDoc(sheetRef);
+    if (existingSnap.exists()) {
+      await updateDoc(sheetRef, dotPayload);
+      return { storageMode: 'collection', docExists: true };
+    }
+
+    try {
+      return await createSheetDocument();
+    } catch (createErr) {
+      // Se outro usuário criou o documento no mesmo milissegundo, faz updateDoc sem createdAt
+      if (isPermissionDeniedError(createErr)) {
+        try {
+          const retrySnap = await getDoc(sheetRef);
+          if (retrySnap.exists()) {
+            await updateDoc(sheetRef, dotPayload);
+            return { storageMode: 'collection', docExists: true };
+          }
+        } catch {}
+        return await saveToProfileFallback();
+      }
+      throw createErr;
+    }
   } catch (err) {
     if (err?.code === 'not-found') {
       try {
-        let initialFields = { ...cleanFieldsMap };
-        try {
-          const profSnap = await getDoc(doc(firestore, 'profiles', heroUid));
-          const legacy = profSnap.exists() ? profSnap.data()?.sheet_fields : null;
-          if (legacy && typeof legacy === 'object') {
-            initialFields = { ...legacy, ...cleanFieldsMap };
-          }
-        } catch {}
-
-        await setDoc(
-          sheetRef,
-          {
-            uid: heroUid,
-            fields: initialFields,
-            updatedBy: editorUid,
-            updatedByName: editorName,
-            updatedByRole: editorRole,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        return 'collection';
+        return await createSheetDocument();
       } catch (createErr) {
         if (isPermissionDeniedError(createErr)) {
           return await saveToProfileFallback();

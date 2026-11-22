@@ -299,11 +299,17 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
   });
   const [remoteFlashMap, setRemoteFlashMap] = useState({});
 
+  const sessionIdRef = useRef(
+    `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  );
   const pendingPatchRef = useRef({});
+  const inFlightPatchRef = useRef({});
   const debounceTimerRef = useRef(null);
+  const maxWaitTimerRef = useRef(null);
   const focusedFieldRef = useRef(null);
   const lastRemoteFieldsRef = useRef({});
   const storageModeRef = useRef('collection');
+  const docExistsRef = useRef(false);
   const initializedRef = useRef(false);
   const editorProfileRef = useRef(editorProfile);
   editorProfileRef.current = editorProfile;
@@ -313,28 +319,47 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
+    if (maxWaitTimerRef.current) {
+      clearTimeout(maxWaitTimerRef.current);
+      maxWaitTimerRef.current = null;
+    }
     const patch = { ...pendingPatchRef.current };
     const keys = Object.keys(patch);
     if (!heroUid || keys.length === 0) return;
 
     pendingPatchRef.current = {};
+    inFlightPatchRef.current = { ...inFlightPatchRef.current, ...patch };
     setSaving(true);
     try {
-      const usedStorage = await saveCharacterSheetFields(
+      const result = await saveCharacterSheetFields(
         heroUid,
         patch,
         editorProfileRef.current,
-        storageModeRef.current
+        {
+          preferredStorage: storageModeRef.current,
+          docExists: docExistsRef.current,
+          sessionId: sessionIdRef.current,
+        }
       );
-      if (usedStorage) {
-        storageModeRef.current = usedStorage;
+      if (result?.storageMode) {
+        storageModeRef.current = result.storageMode;
+      }
+      if (typeof result?.docExists === 'boolean') {
+        docExistsRef.current = result.docExists;
       }
     } catch (err) {
       // Restaura campos não salvos para nova tentativa
       pendingPatchRef.current = { ...patch, ...pendingPatchRef.current };
       toast.error(err?.message || 'Erro ao sincronizar alterações da ficha.');
     } finally {
-      setSaving(false);
+      keys.forEach((k) => {
+        if (inFlightPatchRef.current[k] === patch[k]) {
+          delete inFlightPatchRef.current[k];
+        }
+      });
+      if (Object.keys(inFlightPatchRef.current).length === 0) {
+        setSaving(false);
+      }
     }
   }, [heroUid]);
 
@@ -347,7 +372,9 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
     setLoading(true);
     initializedRef.current = false;
     pendingPatchRef.current = {};
+    inFlightPatchRef.current = {};
     lastRemoteFieldsRef.current = {};
+    docExistsRef.current = false;
 
     const unsub = subscribeCharacterSheet(
       heroUid,
@@ -356,18 +383,25 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
         if (sheetData?.storageMode) {
           storageModeRef.current = sheetData.storageMode;
         }
+        if (typeof sheetData?.docExists === 'boolean') {
+          docExistsRef.current = sheetData.docExists;
+        }
 
         const prevRemote = lastRemoteFieldsRef.current;
-        const changedByOther =
-          initializedRef.current &&
-          sheetData?.updatedBy &&
-          sheetData.updatedBy !== editorProfileRef.current?.uid;
+        const isFromOtherSession = sheetData?.updatedBySession
+          ? sheetData.updatedBySession !== sessionIdRef.current
+          : Boolean(sheetData?.updatedBy && sheetData.updatedBy !== editorProfileRef.current?.uid);
+        const changedByOther = initializedRef.current && isFromOtherSession;
 
         const flashed = {};
         if (changedByOther) {
           const allKeys = new Set([...Object.keys(prevRemote), ...Object.keys(incoming)]);
           allKeys.forEach((k) => {
-            if (prevRemote[k] !== incoming[k] && !(k in pendingPatchRef.current)) {
+            if (
+              prevRemote[k] !== incoming[k] &&
+              !(k in pendingPatchRef.current) &&
+              !(k in inFlightPatchRef.current)
+            ) {
               flashed[k] = true;
             }
           });
@@ -378,11 +412,14 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
 
         setFields((prevLocal) => {
           const next = { ...incoming };
-          // Preserva digitação em andamento nos campos pendentes locais
+          // Preserva digitação em voo e pendente local para evitar retrocesso de cursor
+          Object.entries(inFlightPatchRef.current).forEach(([k, v]) => {
+            next[k] = v;
+          });
           Object.entries(pendingPatchRef.current).forEach(([k, v]) => {
             next[k] = v;
           });
-          // Evita deslocar o cursor do campo atualmente focado caso não tenha sido alterado por outro usuário
+          // Se o campo estiver focado mas não foi editado por outra sessão, mantém estado local
           const focusedKey = focusedFieldRef.current;
           if (focusedKey && !(focusedKey in flashed) && focusedKey in prevLocal) {
             next[focusedKey] = prevLocal[focusedKey];
@@ -431,12 +468,20 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
         return;
       }
 
+      // Envio ultra-rápido (120ms debounce + flush contínuo a cada 250ms durante digitação)
+      // para Mestre e Jogador verem as alterações ao vivo enquanto escrevem!
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
       debounceTimerRef.current = setTimeout(() => {
         flushPending();
-      }, 320);
+      }, 120);
+
+      if (!maxWaitTimerRef.current) {
+        maxWaitTimerRef.current = setTimeout(() => {
+          flushPending();
+        }, 250);
+      }
     },
     [flushPending]
   );
