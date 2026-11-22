@@ -174,6 +174,14 @@ export function getItemType(item) {
     name.includes('adaga') ||
     name.includes('machado') ||
     name.includes('cajado') ||
+    name.includes('bordão') ||
+    name.includes('bordao') ||
+    name.includes('báculo') ||
+    name.includes('baculo') ||
+    name.includes('cetro') ||
+    name.includes('bastão') ||
+    name.includes('bastao') ||
+    name.includes('varinha') ||
     name.includes('lança') ||
     name.includes('arco') ||
     name.includes('besta') ||

@@ -37,7 +37,6 @@ export default function MasterPage() {
   const [tokens, setTokens] = useState([]);
   const [pings, setPings] = useState([]);
   const [diceRolls, setDiceRolls] = useState([]);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   const [contractConfirm, setContractConfirm] = useState(null); // { mission, status }
   const [resolvingContract, setResolvingContract] = useState(false);
@@ -136,14 +135,41 @@ export default function MasterPage() {
     return [...modules, ...heroEntries, ...missionEntries, ...shopEntries];
   }, [allProfiles, missions, shopItems]);
 
-  const handleGenerateDaily = async () => {
-    if (!auth?.currentUser) return;
-    setIsGenerating(true);
-    try {
-      const idToken = await auth.currentUser.getIdToken();
-      const existingDescriptions = shopItems
-        .filter((s) => s.type === 'weapon' && s.description)
-        .map((s) => `${s.item_name || ''}: ${s.description}`);
+  const runChunkedAIGeneration = async ({ mode, totalCount, onProgress }) => {
+    if (!auth?.currentUser) {
+      throw new Error('Autenticação necessária.');
+    }
+
+    const safeTotal = Math.max(1, Math.min(50, Math.floor(Number(totalCount) || 1)));
+    const CHUNK_SIZE = 10;
+    const chunks = [];
+    let remaining = safeTotal;
+    while (remaining > 0) {
+      const size = Math.min(CHUNK_SIZE, remaining);
+      chunks.push(size);
+      remaining -= size;
+    }
+
+    const idToken = await auth.currentUser.getIdToken();
+    const runningDescriptions = shopItems
+      .filter((s) => s.description)
+      .slice(0, 20)
+      .map((s) => `${s.item_name || ''}: ${s.description}`);
+    const runningMissions = missions
+      .filter((m) => m.title)
+      .slice(0, 20)
+      .map((m) => `${m.title}: ${m.description || ''}`);
+
+    let createdCount = 0;
+
+    for (let i = 0; i < chunks.length; i += 1) {
+      const chunkSize = chunks[i];
+      onProgress?.({
+        createdCount,
+        totalCount: safeTotal,
+        chunkIndex: i + 1,
+        totalChunks: chunks.length,
+      });
 
       const res = await fetch('/api/daily-generate', {
         method: 'POST',
@@ -151,8 +177,14 @@ export default function MasterPage() {
           Authorization: `Bearer ${idToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ existingDescriptions }),
+        body: JSON.stringify({
+          mode,
+          count: chunkSize,
+          existingDescriptions: mode === 'shop' ? runningDescriptions.slice(-24) : [],
+          existingMissionTitles: mode === 'missions' ? runningMissions.slice(-24) : [],
+        }),
       });
+
       const rawText = await res.text();
       let data = null;
       try {
@@ -167,24 +199,70 @@ export default function MasterPage() {
       }
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'Erro ao gerar conteúdo diário.');
+        if (createdCount > 0) {
+          throw new Error(
+            `${createdCount} de ${safeTotal} criado(s) antes do erro: ${
+              data?.error || 'Erro ao gerar lote.'
+            }`
+          );
+        }
+        throw new Error(data?.error || 'Erro ao gerar conteúdo com a IA.');
       }
 
       if (!data.persisted) {
         await persistGeneratedDailyContent({
-          missions: data.missions || [],
-          shop_items: data.shop_items || [],
+          missions: mode === 'missions' ? data.missions || [] : [],
+          shop_items: mode === 'shop' ? data.shop_items || [] : [],
         });
       }
 
-      toast.success(
-        `Conteúdo diário gerado: ${data.countMissions} missões e ${data.countItems} itens adicionados!`
-      );
-    } catch (err) {
-      toast.error(err?.message || 'Erro ao conectar com o gerador de IA.');
-    } finally {
-      setIsGenerating(false);
+      if (mode === 'shop') {
+        const addedItems = Array.isArray(data.shop_items) ? data.shop_items : [];
+        addedItems.forEach((s) => {
+          if (s?.description) {
+            runningDescriptions.push(`${s.item_name || ''}: ${s.description}`);
+          }
+        });
+        createdCount += Number(data.countItems ?? addedItems.length) || 0;
+      } else {
+        const addedMissions = Array.isArray(data.missions) ? data.missions : [];
+        addedMissions.forEach((m) => {
+          if (m?.title) {
+            runningMissions.push(`${m.title}: ${m.description || ''}`);
+          }
+        });
+        createdCount += Number(data.countMissions ?? addedMissions.length) || 0;
+      }
+
+      onProgress?.({
+        createdCount,
+        totalCount: safeTotal,
+        chunkIndex: i + 1,
+        totalChunks: chunks.length,
+      });
     }
+
+    return { createdCount, totalCount: safeTotal };
+  };
+
+  const handleGenerateShopItems = async (totalCount, onProgress) => {
+    const result = await runChunkedAIGeneration({
+      mode: 'shop',
+      totalCount,
+      onProgress,
+    });
+    toast.success(`${result.createdCount} item(ns) aleatório(s) adicionado(s) à loja!`);
+    return result;
+  };
+
+  const handleGenerateMissions = async (totalCount, onProgress) => {
+    const result = await runChunkedAIGeneration({
+      mode: 'missions',
+      totalCount,
+      onProgress,
+    });
+    toast.success(`${result.createdCount} missão(ões) aleatória(s) publicada(s) no mural!`);
+    return result;
   };
 
   const handleConfirmContract = async () => {
@@ -246,8 +324,6 @@ export default function MasterPage() {
       pendingRequestsCount={pendingRequestsCount}
       activeContractsCount={activeContractsCount}
       commandItems={commandItems}
-      isGenerating={isGenerating}
-      onGenerateDaily={handleGenerateDaily}
       onLogout={logout}
     >
       {activeSection === 'overview' && (
@@ -279,10 +355,16 @@ export default function MasterPage() {
           missions={missions}
           players={allProfiles}
           onResolveContract={(mission, status) => setContractConfirm({ mission, status })}
+          onGenerateMissions={handleGenerateMissions}
         />
       )}
 
-      {activeSection === 'shop' && <MasterShop shopItems={shopItems} />}
+      {activeSection === 'shop' && (
+        <MasterShop
+          shopItems={shopItems}
+          onGenerateShopItems={handleGenerateShopItems}
+        />
+      )}
 
       {activeSection === 'players' && (
         <MasterPlayers

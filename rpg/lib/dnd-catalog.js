@@ -71,7 +71,11 @@ export const DND_EXPANDED_WEAPONS = [
   // Armas Simples Corpo a Corpo
   { name: 'Adaga', category: 'Simples', type: 'weapon', baseDice: '1d4', damageType: 'Perfurante', mastery: 'Ágil (Nick)', costPO: 2, weightKg: 0.5, properties: ['Acuidade', 'Arremesso (6/18m)', 'Leve'] },
   { name: 'Azagaia', category: 'Simples', type: 'weapon', baseDice: '1d6', damageType: 'Perfurante', mastery: 'Lentidão (Slow)', costPO: 0.5, weightKg: 1, properties: ['Arremesso (9/36m)'] },
-  { name: 'Cajado', category: 'Simples', type: 'weapon', baseDice: '1d6', damageType: 'Contundente', mastery: 'Derrubar (Topple)', costPO: 0.2, weightKg: 2, properties: ['Versátil (1d8)'] },
+  { name: 'Cajado', category: 'Simples', type: 'weapon', baseDice: '1d6', damageType: 'Contundente', mastery: 'Derrubar (Topple)', costPO: 0.2, weightKg: 2, properties: ['Versátil (1d8)', 'Foco Arcano'] },
+  { name: 'Cajado Arcano', category: 'Arcano', type: 'weapon', baseDice: '1d6', damageType: 'Arcano', mastery: 'Empurrar (Push)', costPO: 5, weightKg: 2, properties: ['Versátil (1d8)', 'Foco Arcano'] },
+  { name: 'Bordão Rúnico', category: 'Arcano', type: 'weapon', baseDice: '1d6', damageType: 'Arcano', mastery: 'Drenar (Sap)', costPO: 10, weightKg: 2, properties: ['Versátil (1d8)', 'Foco Arcano'] },
+  { name: 'Báculo Elemental', category: 'Arcano', type: 'weapon', baseDice: '1d8', damageType: 'Arcano', mastery: 'Lentidão (Slow)', costPO: 20, weightKg: 2.5, properties: ['Duas Mãos', 'Foco Arcano'] },
+  { name: 'Cetro de Conjuração', category: 'Arcano', type: 'weapon', baseDice: '1d6', damageType: 'Arcano', mastery: 'Afligir (Vex)', costPO: 15, weightKg: 1.5, properties: ['Foco Arcano'] },
   { name: 'Clava', category: 'Simples', type: 'weapon', baseDice: '1d4', damageType: 'Contundente', mastery: 'Lentidão (Slow)', costPO: 0.1, weightKg: 1, properties: ['Leve'] },
   { name: 'Clava Grande', category: 'Simples', type: 'weapon', baseDice: '1d8', damageType: 'Contundente', mastery: 'Empurrar (Push)', costPO: 0.2, weightKg: 5, properties: ['Duas Mãos'] },
   { name: 'Foice', category: 'Simples', type: 'weapon', baseDice: '1d4', damageType: 'Cortante', mastery: 'Ágil (Nick)', costPO: 1, weightKg: 1, properties: ['Leve'] },
@@ -121,10 +125,12 @@ export const DND_MAGIC_ITEMS_CATALOG = [
   { name: 'Poção de Cura Comum', rarity: 'COMUM', type: 'consumable', price: 50, desc: 'Recupera 2d4+2 pontos de vida instantaneamente quando ingerida.' },
   { name: 'Corda da Escalada', rarity: 'COMUM', type: 'consumable', price: 75, desc: 'Corda de 18 metros que sobe e se ancora sozinha ao comando vocal do usuário.' },
   { name: 'Vela da Revelação', rarity: 'COMUM', type: 'consumable', price: 60, desc: 'Emite luz suave que revela pegadas mágicas recentes num raio de 4,5 metros.' },
+  { name: 'Cajado de Carvalho Entalhado', rarity: 'COMUM', type: 'weapon', price: 45, desc: 'Esculpido em madeira de carvalho resistente para viajantes e aprendizes. Causa 1d6 de dano contundente (versátil 1d8) e atua como foco arcano básico.' },
 
   // INCOMUNS
   { name: 'Espada Longa de Prata Alquímica', rarity: 'INCOMUM', type: 'weapon', price: 350, desc: 'Dano: 1d8 (versátil 1d10) cortante (+1 no acerto). Maestria Drenar. Efetiva contra licantropos e espectros.' },
   { name: 'Arco Curto dos Bosques Élficos', rarity: 'INCOMUM', type: 'weapon', price: 420, desc: 'Dano: 1d6 perfurante (+1 no acerto). Maestria Afligir. Disparos ignoram folhagem e camuflagem leve.' },
+  { name: 'Cajado do Aprendiz Arcano', rarity: 'INCOMUM', type: 'weapon', price: 380, desc: 'Talhado em freixo envernizado com um cristal de quartzo no topo. Causa 1d8 de dano contundente ou arcano (+1 em ataques mágicos e +1 na CD de magias).' },
   { name: 'Armadura de Mithral', rarity: 'INCOMUM', type: 'body', price: 450, desc: 'Cota de placas flexível que não impõe Desvantagem em testes de Furtividade nem exige Força mínima.' },
   { name: 'Botas Élficas', rarity: 'INCOMUM', type: 'feet', price: 400, desc: 'Seus passos não produzem som algum e você tem Vantagem em testes de Furtividade.' },
   { name: 'Broche de Escudo Arcano', rarity: 'INCOMUM', type: 'neck', price: 380, desc: 'Concede resistência a dano de energia (força) e imunidade ao feitiço Mísseis Mágicos.' },
@@ -133,25 +139,28 @@ export const DND_MAGIC_ITEMS_CATALOG = [
   { name: 'Lâmina das Chamas (Flame Tongue)', rarity: 'RARO', type: 'weapon', price: 2200, desc: 'Dano: 1d10 cortante (+1 ataque, +1d6 dano de Fogo). Maestria Drenar. A lâmina irradia luz plena e inflige queimadura leve.' },
   { name: 'Espadão Glacial da Fenda', rarity: 'RARO', type: 'weapon', price: 2600, desc: 'Dano: 2d8 cortante (+1 ataque, +1d6 dano de Frio). Maestria Garantido. Golpes congelam superfícies e reduzem velocidade.' },
   { name: 'Arco Longo da Tempestade', rarity: 'RARO', type: 'weapon', price: 2400, desc: 'Dano: 1d10 perfurante (+1 ataque, +1d6 dano Elétrico). Maestria Lentidão. Flechas crepitam como relâmpagos.' },
+  { name: 'Cajado das Chamas Elementais', rarity: 'RARO', type: 'weapon', price: 2500, desc: 'Madeira de ébano incrustada com rubi ígneo que pulsa calor arcano. Causa 1d10 de dano arcano (+1 em ataques mágicos, +1 na CD de magias e +1d6 de dano de fogo) e pode aplicar Queimando.' },
   { name: 'Armadura de Adamante da Fortaleza', rarity: 'RARO', type: 'body', price: 2800, desc: 'Forjada em metal estelar impermeável. Qualquer acerto crítico sofrido pelo usuário torna-se um acerto normal.' },
   { name: 'Amuleto da Saúde Titânica', rarity: 'RARO', type: 'neck', price: 2500, desc: 'O valor de Constituição do portador torna-se 19 enquanto estiver equipado.' },
   { name: 'Anel de Proteção Rúnica', rarity: 'RARO', type: 'ring', price: 1800, desc: 'Concede bônus de +1 na Classe de Armadura (CA) e +1 em todas as salvaguardas.' },
 
   // ÉPICOS (MUITO RAROS)
-  { name: 'Katana do Eclipse Sanguinário', rarity: 'ÉPICO', type: 'weapon', price: 8500, desc: 'Dano: 1d12 cortante (+2 ataque, Sangramento contínuo 1d6/turno). Maestria Afligir. Fere o fluxo vital com golpes lacerantes.' },
-  { name: 'Malho do Trovão Sísmico', rarity: 'ÉPICO', type: 'weapon', price: 9200, desc: 'Dano: 2d10 contundente (+2 ataque, Atordoado por 1 rodada em crítico). Maestria Derrubar. Cada golpe ecoa ondas de choque.' },
-  { name: 'Arco do Juramento Caçador (Oathbow)', rarity: 'ÉPICO', type: 'weapon', price: 11000, desc: 'Dano: 1d12 perfurante (+2 ataque, +2d6 contra o inimigo jurado). Maestria Lentidão. O alvo marcado não tem como se esconder.' },
+  { name: 'Katana do Eclipse Sanguinário', rarity: 'ÉPICO', type: 'weapon', price: 8500, desc: 'Dano: 2d6+2 cortante (+2 no ataque e +1d6 necrótico). Aplica Sangramento contínuo, possui margem de crítico 19-20 contra inimigos feridos e concede a maestria Afligir.' },
+  { name: 'Malho do Trovão Sísmico', rarity: 'ÉPICO', type: 'weapon', price: 9200, desc: 'Dano: 2d10+2 contundente (+2 no ataque e +1d8 trovejante). Em acertos críticos deixa o alvo Atordoado por 1 rodada e libera onda sísmica em 3m.' },
+  { name: 'Arco do Juramento Caçador (Oathbow)', rarity: 'ÉPICO', type: 'weapon', price: 11000, desc: 'Dano: 1d12+2 perfurante (+2 no ataque e +2d6 contra o inimigo jurado). Ignora cobertura leve e aplica Lentidão (-3m).' },
+  { name: 'Cajado do Arquimago da Tempestade', rarity: 'ÉPICO', type: 'weapon', price: 10500, desc: 'Esculpido em madeira prateada com núcleo de safira tempestuosa. Causa 2d8+2 de dano arcano (+2 em ataques mágicos, +2 na CD de magias e +1d8 elétrico), acumula 6 cargas diárias para potencializar magias e pode aplicar Atordoado em acertos críticos.' },
   { name: 'Manto do Deslocamento Planar', rarity: 'ÉPICO', type: 'body', price: 7800, desc: 'Projeta uma ilusão deslocada do corpo do portador; ataques contra ele sofrem Desvantagem contínua.' },
   { name: 'Elmo da Presciência Arcana', rarity: 'ÉPICO', type: 'head', price: 6500, desc: 'Concede visão no escuro 36m, visão da verdade 9m e imunidade a ser surpreendido em combate.' },
 
   // LENDÁRIOS
-  { name: 'Espada Vorpal da Destruição', rarity: 'LENDÁRIO', type: 'weapon', price: 38000, desc: 'Dano: 2d8 cortante (+3 ataque, Corte Dimensional: ignora resistências). Maestria Drenar. Em um 20 natural, decapita ou atordoa fatalmente.' },
-  { name: 'Lâmina Solar Sagrada (Holy Avenger)', rarity: 'LENDÁRIO', type: 'weapon', price: 45000, desc: 'Dano: 2d8 radiante (+3 ataque, +2d10 contra ínferos/mortos-vivos). Maestria Drenar. Aura sagrada concede vantagem em salvaguardas a aliados a 3m.' },
-  { name: 'Defensora Primordial', rarity: 'LENDÁRIO', type: 'weapon', price: 34000, desc: 'Dano: 2d8 cortante (+3 ataque). Maestria Drenar. Permite transferir parte do bônus de ataque diretamente para sua Classe de Armadura (CA).' },
+  { name: 'Espada Vorpal da Destruição', rarity: 'LENDÁRIO', type: 'weapon', price: 38000, desc: 'Dano: 2d10+3 cortante (+3 no ataque e +2d6 de energia). Margem de crítico 19-20, ignora resistências físicas e em um 20 natural desfere golpe devastador que atordoa ou abate alvos enfraquecidos.' },
+  { name: 'Lâmina Solar Sagrada (Holy Avenger)', rarity: 'LENDÁRIO', type: 'weapon', price: 45000, desc: 'Dano: 2d10+3 radiante (+3 no ataque e +2d10 contra ínferos/mortos-vivos). Aura sagrada concede vantagem em salvaguardas a aliados a 3m e mantém o portador Abençoado.' },
+  { name: 'Cajado do Poder Supremo', rarity: 'LENDÁRIO', type: 'weapon', price: 46000, desc: 'Báculo ancestral encimado por um cristal planar de brilho contínuo. Causa 2d10+3 de dano arcano (+3 em ataques mágicos, +2 na CD de magias e +2d6 elemental), possui 10 cargas diárias, concede +2 na CA e vantagem em salvaguardas contra magias.' },
   { name: 'Armadura da Fúria do Dragão Ancião', rarity: 'LENDÁRIO', type: 'body', price: 42000, desc: 'Armadura completa de escamas de dragão vermelho. Imunidade absoluta a dano de fogo e resistência a magias.' },
 
   // MÍTICOS / ARTEFATOS
-  { name: 'Apocalipse dos Mundos — Machado de Moradin', rarity: 'MÍTICO', type: 'weapon', price: 120000, desc: 'Dano: 3d8+4 cortante (+4 ataque, Quebra-Mundos em área). Passiva Mítica: Roubo de vida de 50% e Fúria Imortal que previne a morte com 1 PV uma vez ao dia.' },
+  { name: 'Apocalipse dos Mundos — Machado de Moradin', rarity: 'MÍTICO', type: 'weapon', price: 120000, desc: 'Dano: 4d10+6 cortante (+4 no ataque e +3d8 primordial). Margem de crítico 18-20, ignora resistências, drena 50% do dano como vida e ativa Fúria Imortal que impede a morte com 1 PV e 35 PV temporários uma vez ao dia.' },
+  { name: 'Báculo da Trama Primordial', rarity: 'MÍTICO', type: 'weapon', price: 135000, desc: 'Relíquia arcana tecida com fios da própria Trama. Causa 3d10+5 de dano arcano supremo (+4 em ataques mágicos, +3 na CD de magias e +3d8 primordial), possui 15 cargas diárias, torna magias imunes a Contra-Mágica e permite lançar uma magia de até 5º círculo sem gastar espaço por combate.' },
   { name: 'Olho Celestial de Selûne', rarity: 'MÍTICO', type: 'ring', price: 95000, desc: 'Artefato lunar ancestral. Regenera 10 PV por turno, concede imunidade a condições nocivas e conjura Luz Restauradora total.' },
 ];
 

@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Coins, Minus, Pencil, Plus, ShoppingBag, Trash2, Zap } from 'lucide-react';
+import { Bot, Coins, Minus, Pencil, Plus, ShoppingBag, Trash2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ITEM_TYPES,
@@ -16,7 +16,7 @@ import {
   getRarityFromItem,
 } from '../../lib/constants';
 import {
-  DND_EXPANDED_WEAPONS,
+  SHOP_RARITY_WEIGHTS,
   classifyWeaponScaleType,
   computeCosineSimilarity,
   synthesizeUniqueWeaponDescription,
@@ -51,7 +51,9 @@ const shopItemSchema = z.object({
   description: z.string().trim().max(900).optional().default(''),
 });
 
-export function MasterShop({ shopItems }) {
+const SHOP_AI_PRESETS = [5, 10, 15, 20, 30, 50];
+
+export function MasterShop({ shopItems, onGenerateShopItems }) {
   const [rarityFilter, setRarityFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [modalOpen, setModalOpen] = useState(false);
@@ -59,6 +61,12 @@ export function MasterShop({ shopItems }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [diversifying, setDiversifying] = useState(false);
+
+  // Modal de geração de itens aleatórios via IA apenas para a loja
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiCount, setAiCount] = useState(10);
+  const [generatingAI, setGeneratingAI] = useState(false);
+  const [aiProgress, setAiProgress] = useState(null);
 
   const {
     register,
@@ -126,6 +134,7 @@ export function MasterShop({ shopItems }) {
 
       for (const w of weapons) {
         const rarity = getRarityFromItem(w);
+        const scaleType = classifyWeaponScaleType(w.item_name);
         const currentClean = cleanDescription(w.description);
         const isGeneric =
           currentClean.length < 50 ||
@@ -133,7 +142,11 @@ export function MasterShop({ shopItems }) {
           /\(Vex\)|\(Nick\)|\(Topple\)|\(Sap\)|\(Push\)|\(Graze\)|\(Slow\)|\(Cleave\)/i.test(currentClean) ||
           /Corte Dimensional:\s*ignora armadura/i.test(currentClean) ||
           /Forjada nas chamas da forja an/i.test(currentClean) ||
-          (rarity === 'COMUM' && /maestria/i.test(currentClean));
+          (rarity === 'COMUM' && /maestria/i.test(currentClean)) ||
+          (scaleType === 'staff' && /\b(lâmina|lamina|espada|desembainhada|aço|aco|cortante)\b/i.test(currentClean)) ||
+          (rarity === 'ÉPICO' && currentClean.length < 110) ||
+          (rarity === 'LENDÁRIO' && currentClean.length < 145) ||
+          (rarity === 'MÍTICO' && currentClean.length < 175);
 
         const isTooSimilar = acceptedCorpus.some(
           (prev) => computeCosineSimilarity(currentClean, prev) > 0.3
@@ -161,6 +174,23 @@ export function MasterShop({ shopItems }) {
       toast.error(err?.message || 'Erro ao diversificar descrições das armas.');
     } finally {
       setDiversifying(false);
+    }
+  };
+
+  const handleRunShopAI = async (e) => {
+    e.preventDefault();
+    if (!onGenerateShopItems) return;
+    const qty = Math.max(1, Math.min(50, Math.floor(Number(aiCount) || 1)));
+    setGeneratingAI(true);
+    setAiProgress({ createdCount: 0, totalCount: qty, chunkIndex: 1, totalChunks: Math.ceil(qty / 10) });
+    try {
+      await onGenerateShopItems(qty, (prog) => setAiProgress(prog));
+      setAiModalOpen(false);
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao gerar itens aleatórios via IA.');
+    } finally {
+      setGeneratingAI(false);
+      setAiProgress(null);
     }
   };
 
@@ -377,16 +407,29 @@ export function MasterShop({ shopItems }) {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {onGenerateShopItems && (
+            <Button
+              variant="primary"
+              onClick={() => {
+                setAiCount(10);
+                setAiModalOpen(true);
+              }}
+              title="Gerar uma quantidade personalizada de itens e armas aleatórias apenas para a loja"
+            >
+              <Bot className="h-4 w-4 text-slate-300" />
+              Gerar Itens (IA)
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={handleDiversifyAllWeaponsML}
             loading={diversifying}
-            title="Reescreve automaticamente armas parecidas usando Similaridade de Cosseno (ML)"
+            title="Reescreve automaticamente armas e cajados parecidos ou fracos usando ML"
           >
             <Zap className="h-4 w-4 text-slate-300" />
             Diversificar Armas (ML)
           </Button>
-          <Button onClick={openCreateModal}>
+          <Button variant="secondary" onClick={openCreateModal}>
             <Plus className="h-4 w-4" />
             Adicionar Item
           </Button>
@@ -399,7 +442,7 @@ export function MasterShop({ shopItems }) {
         searchPlaceholder="Buscar item por nome ou efeito..."
         emptyIcon={ShoppingBag}
         emptyTitle="Nenhum item na loja"
-        emptyDescription="Adicione itens manualmente ou use 'Gerar Diária (IA)'."
+        emptyDescription="Adicione itens manualmente ou use 'Gerar Itens (IA)'."
         filterSlot={
           <>
             <Select
@@ -557,6 +600,120 @@ export function MasterShop({ shopItems }) {
               />
             </FormField>
           </div>
+        </form>
+      </Modal>
+
+      {/* Modal de Geração Aleatória de Itens da Loja (IA) */}
+      <Modal
+        open={aiModalOpen}
+        onOpenChange={(open) => {
+          if (!generatingAI) setAiModalOpen(open);
+        }}
+        title="Gerar Itens Aleatórios para a Loja (IA)"
+        description="Escolha quantos itens aleatórios (incluindo armas, cajados arcanos, armaduras, anéis e consumíveis) deseja criar apenas na loja."
+        maxWidth="max-w-md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setAiModalOpen(false)}
+              disabled={generatingAI}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              form="shop-ai-generate-form"
+              loading={generatingAI}
+            >
+              {!generatingAI && <Bot className="h-4 w-4 text-slate-300" />}
+              {generatingAI
+                ? `Gerando (${aiProgress?.createdCount || 0}/${aiProgress?.totalCount || aiCount})...`
+                : `Gerar ${Math.max(1, Math.min(50, Math.floor(Number(aiCount) || 1)))} Item(ns)`}
+            </Button>
+          </>
+        }
+      >
+        <form id="shop-ai-generate-form" onSubmit={handleRunShopAI} className="space-y-4">
+          <FormField
+            label="Quantidade de Itens Aleatórios (1 a 50)"
+            htmlFor="shop-ai-count"
+            hint="Lotes maiores (ex: 30 itens) são gerados automaticamente em etapas para evitar repetições e falhas."
+          >
+            <Input
+              id="shop-ai-count"
+              type="number"
+              min="1"
+              max="50"
+              disabled={generatingAI}
+              value={aiCount}
+              onChange={(e) => setAiCount(e.target.value)}
+            />
+          </FormField>
+
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
+              Atalhos de Quantidade
+            </span>
+            <div className="grid grid-cols-6 gap-1.5">
+              {SHOP_AI_PRESETS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={generatingAI}
+                  onClick={() => setAiCount(n)}
+                  className={`py-1.5 rounded-lg text-xs font-mono font-bold border transition-all ${
+                    Number(aiCount) === n
+                      ? 'bg-white/15 text-white border-white/30'
+                      : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-3 space-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
+              Probabilidade por Raridade (inclui Cajados Arcanos)
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {SHOP_RARITY_WEIGHTS.map((entry) => (
+                <div
+                  key={entry.rarity}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 text-[11px]"
+                >
+                  <RarityBadge rarity={entry.rarity} className="text-[10px] px-1.5 py-0" />
+                  <span className="font-mono text-slate-300">{entry.weight}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {generatingAI && aiProgress && (
+            <div className="rounded-xl bg-white/5 border border-white/15 p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-200 font-semibold">
+                  Lote {aiProgress.chunkIndex} de {aiProgress.totalChunks}
+                </span>
+                <span className="font-mono text-slate-300">
+                  {aiProgress.createdCount}/{aiProgress.totalCount} itens
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-black/60 border border-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-slate-200 transition-all duration-300"
+                  style={{
+                    width: `${Math.max(
+                      8,
+                      Math.round((aiProgress.createdCount / Math.max(1, aiProgress.totalCount)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </form>
       </Modal>
 

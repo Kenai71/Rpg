@@ -4,9 +4,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Check, Coins, Pencil, Plus, Scroll, Trash2, X, Zap } from 'lucide-react';
+import { Bot, Check, Coins, Pencil, Plus, Scroll, Trash2, X, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { RANKS } from '../../lib/constants';
+import { MISSION_RANK_WEIGHTS } from '../../lib/dnd-rules';
 import { createMission, deleteMission, updateMission } from '../../lib/rpg-service';
 import { formatNumber } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -24,13 +25,38 @@ const missionSchema = z.object({
   gold_reward: z.coerce.number().min(0, 'Ouro deve ser 0 ou maior.'),
 });
 
-export function MasterMissions({ missions, players, onResolveContract }) {
+const MISSION_AI_PRESETS = [3, 5, 10, 15, 20, 30];
+
+export function MasterMissions({ missions, players, onResolveContract, onGenerateMissions }) {
   const [statusFilter, setStatusFilter] = useState('active'); // 'active' | 'open' | 'in_progress' | 'history' | 'all'
   const [rankFilter, setRankFilter] = useState('ALL');
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [editingMission, setEditingMission] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Modal de geração de missões aleatórias via IA (com raridade ponderada por Rank)
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiCount, setAiCount] = useState(5);
+  const [generatingAI, setGeneratingAI] = useState(false);
+  const [aiProgress, setAiProgress] = useState(null);
+
+  const handleRunMissionsAI = async (e) => {
+    e.preventDefault();
+    if (!onGenerateMissions) return;
+    const qty = Math.max(1, Math.min(50, Math.floor(Number(aiCount) || 1)));
+    setGeneratingAI(true);
+    setAiProgress({ createdCount: 0, totalCount: qty, chunkIndex: 1, totalChunks: Math.ceil(qty / 10) });
+    try {
+      await onGenerateMissions(qty, (prog) => setAiProgress(prog));
+      setAiModalOpen(false);
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao gerar missões aleatórias via IA.');
+    } finally {
+      setGeneratingAI(false);
+      setAiProgress(null);
+    }
+  };
 
   const {
     register,
@@ -217,10 +243,25 @@ export function MasterMissions({ missions, players, onResolveContract }) {
             Publique contratos no mural, acompanhe heróis em andamento e valide conclusões.
           </p>
         </div>
-        <Button onClick={openCreateModal} className="shrink-0">
-          <Plus className="h-4 w-4" />
-          Nova Missão
-        </Button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {onGenerateMissions && (
+            <Button
+              variant="primary"
+              onClick={() => {
+                setAiCount(5);
+                setAiModalOpen(true);
+              }}
+              title="Gerar uma quantidade personalizada de missões aleatórias com raridade por Rank"
+            >
+              <Bot className="h-4 w-4 text-slate-300" />
+              Gerar Missões (IA)
+            </Button>
+          )}
+          <Button variant="secondary" onClick={openCreateModal}>
+            <Plus className="h-4 w-4" />
+            Nova Missão
+          </Button>
+        </div>
       </div>
 
       {activeContracts.length > 0 && (
@@ -445,6 +486,120 @@ export function MasterMissions({ missions, players, onResolveContract }) {
               <Input id="m-gold" type="number" min="0" {...register('gold_reward')} />
             </FormField>
           </div>
+        </form>
+      </Modal>
+
+      {/* Modal de Geração Aleatória de Missões (IA com Probabilidade por Rank) */}
+      <Modal
+        open={aiModalOpen}
+        onOpenChange={(open) => {
+          if (!generatingAI) setAiModalOpen(open);
+        }}
+        title="Gerar Missões Aleatórias (IA)"
+        description="Escolha quantas missões aleatórias deseja publicar no mural. Quanto maior o Rank da missão, mais rara ela é de surgir."
+        maxWidth="max-w-md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setAiModalOpen(false)}
+              disabled={generatingAI}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              form="missions-ai-generate-form"
+              loading={generatingAI}
+            >
+              {!generatingAI && <Bot className="h-4 w-4 text-slate-300" />}
+              {generatingAI
+                ? `Gerando (${aiProgress?.createdCount || 0}/${aiProgress?.totalCount || aiCount})...`
+                : `Gerar ${Math.max(1, Math.min(50, Math.floor(Number(aiCount) || 1)))} Missão(ões)`}
+            </Button>
+          </>
+        }
+      >
+        <form id="missions-ai-generate-form" onSubmit={handleRunMissionsAI} className="space-y-4">
+          <FormField
+            label="Quantidade de Missões Aleatórias (1 a 50)"
+            htmlFor="missions-ai-count"
+            hint="Lotes maiores (ex: 30 missões) são criados em etapas automáticas com anti-repetição."
+          >
+            <Input
+              id="missions-ai-count"
+              type="number"
+              min="1"
+              max="50"
+              disabled={generatingAI}
+              value={aiCount}
+              onChange={(e) => setAiCount(e.target.value)}
+            />
+          </FormField>
+
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
+              Atalhos de Quantidade
+            </span>
+            <div className="grid grid-cols-6 gap-1.5">
+              {MISSION_AI_PRESETS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={generatingAI}
+                  onClick={() => setAiCount(n)}
+                  className={`py-1.5 rounded-lg text-xs font-mono font-bold border transition-all ${
+                    Number(aiCount) === n
+                      ? 'bg-white/15 text-white border-white/30'
+                      : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-3 space-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
+              Probabilidade por Rank (quanto maior, mais difícil de acontecer)
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {MISSION_RANK_WEIGHTS.map((entry) => (
+                <div
+                  key={entry.rank}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 text-[11px]"
+                >
+                  <RankBadge rank={entry.rank} className="text-[10px] px-1.5 py-0" />
+                  <span className="font-mono text-slate-300">{entry.weight}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {generatingAI && aiProgress && (
+            <div className="rounded-xl bg-white/5 border border-white/15 p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-200 font-semibold">
+                  Lote {aiProgress.chunkIndex} de {aiProgress.totalChunks}
+                </span>
+                <span className="font-mono text-slate-300">
+                  {aiProgress.createdCount}/{aiProgress.totalCount} missões
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-black/60 border border-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-slate-200 transition-all duration-300"
+                  style={{
+                    width: `${Math.max(
+                      8,
+                      Math.round((aiProgress.createdCount / Math.max(1, aiProgress.totalCount)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </form>
       </Modal>
 

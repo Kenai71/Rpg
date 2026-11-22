@@ -4,7 +4,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
-  Bot,
   Compass,
   Inbox,
   LayoutDashboard,
@@ -39,8 +38,6 @@ export function MasterShell({
   pendingRequestsCount = 0,
   activeContractsCount = 0,
   commandItems = [],
-  isGenerating = false,
-  onGenerateDaily,
   onLogout,
   children,
 }) {
@@ -187,19 +184,6 @@ export function MasterShell({
 
             <div className="flex items-center gap-2 shrink-0">
               <ThemeSwitcher className="hidden sm:inline-flex" />
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={onGenerateDaily}
-                loading={isGenerating}
-                className="whitespace-nowrap"
-              >
-                {!isGenerating && <Bot className="h-4 w-4" aria-hidden="true" />}
-                <span className="hidden sm:inline">
-                  {isGenerating ? 'Gerando...' : 'Gerar Diária (IA)'}
-                </span>
-                <span className="sm:hidden">{isGenerating ? '...' : 'IA'}</span>
-              </Button>
             </div>
           </div>
         </header>
