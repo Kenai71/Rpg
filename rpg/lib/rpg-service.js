@@ -32,11 +32,15 @@ function requireDb() {
 
 export function normalizeProfile(raw, id) {
   if (!raw) return null;
+  const resolvedPhoto =
+    typeof raw.avatar_data === 'string' && raw.avatar_data.trim()
+      ? raw.avatar_data.trim()
+      : raw.photoURL || null;
   return {
     id: id || raw.uid,
     uid: raw.uid || id,
     username: raw.username || 'Aventureiro',
-    photoURL: raw.photoURL || null,
+    photoURL: resolvedPhoto,
     role: raw.role === 'master' ? 'master' : 'player',
     rank: raw.rank || 'F',
     level: Number(raw.level || 1),
@@ -154,14 +158,76 @@ export function subscribeCollection(collectionName, constraints = [], onData, on
   );
 }
 
-export async function updateHeroUsername(uid, newUsername) {
+export async function updateHeroProfile(uid, { username, photoURL } = {}) {
   const firestore = requireDb();
-  const clean = newUsername.trim().slice(0, 40);
-  if (!clean) throw new Error('O nome do personagem não pode ficar vazio.');
-  await updateDoc(doc(firestore, 'profiles', uid), {
-    username: clean,
-    updatedAt: serverTimestamp(),
-  });
+  const profileRef = doc(firestore, 'profiles', uid);
+  const updates = { updatedAt: serverTimestamp() };
+
+  let cleanName;
+  if (username !== undefined) {
+    cleanName = String(username || '').trim().slice(0, 40);
+    if (!cleanName) throw new Error('O nome do personagem não pode ficar vazio.');
+    updates.username = cleanName;
+  }
+
+  let cleanPhoto;
+  const hasPhotoChange = photoURL !== undefined;
+  if (hasPhotoChange) {
+    if (!photoURL || !String(photoURL).trim()) {
+      cleanPhoto = null;
+    } else {
+      cleanPhoto = String(photoURL).trim();
+      if (cleanPhoto.length > 95000) {
+        throw new Error('A imagem escolhida é muito grande. Tente uma imagem menor.');
+      }
+    }
+    updates.photoURL = cleanPhoto;
+    updates.avatar_data = null;
+  }
+
+  try {
+    await updateDoc(profileRef, updates);
+  } catch (err) {
+    const isPermErr =
+      err?.code === 'permission-denied' ||
+      String(err?.message || '').toLowerCase().includes('permission');
+    if (isPermErr && hasPhotoChange && cleanPhoto && cleanPhoto.length > 2000) {
+      // Fallback caso firestore.rules em produção ainda limite photoURL a 2048 chars
+      const fallbackUpdates = {
+        avatar_data: cleanPhoto,
+        updatedAt: serverTimestamp(),
+      };
+      if (cleanName) fallbackUpdates.username = cleanName;
+      await updateDoc(profileRef, fallbackUpdates);
+    } else {
+      throw err;
+    }
+  }
+
+  // Sincronização em tempo real (melhor esforço) dos tokens deste herói nos mapas táticos
+  if (cleanName !== undefined || hasPhotoChange) {
+    try {
+      const heroTokensSnap = await getDocs(
+        query(collection(firestore, 'map_tokens'), where('character_id', '==', uid))
+      );
+      if (!heroTokensSnap.empty) {
+        const batch = writeBatch(firestore);
+        heroTokensSnap.forEach((tDoc) => {
+          const tPatch = { updatedAt: serverTimestamp() };
+          if (cleanName !== undefined) tPatch.name = cleanName;
+          if (hasPhotoChange) tPatch.avatar = cleanPhoto;
+          batch.update(tDoc.ref, tPatch);
+        });
+        await batch.commit();
+      }
+    } catch {
+      // Não bloqueia atualização de perfil caso não existam tokens
+    }
+  }
+}
+
+export async function updateHeroUsername(uid, newUsername) {
+  return updateHeroProfile(uid, { username: newUsername });
 }
 
 // --- PLAYER ACTIONS ---
@@ -1077,6 +1143,9 @@ export async function createMapToken(data) {
   const finalX = Number.isFinite(xVal) ? Math.max(0, Math.min(100, Math.round(xVal * 10000) / 10000)) : 50;
   const finalY = Number.isFinite(yVal) ? Math.max(0, Math.min(100, Math.round(yVal * 10000) / 10000)) : 50;
 
+  const isAllyDefault = type === 'player';
+  const nameHiddenDefault = type === 'monster';
+
   const docRef = await addDoc(tokensRef, {
     map_id: String(data.map_id),
     name: cleanName,
@@ -1096,6 +1165,9 @@ export async function createMapToken(data) {
     conditions: Array.isArray(data.conditions) ? data.conditions.slice(0, 20) : [],
     initiative: Math.floor(Number(data.initiative || 0)),
     hidden: Boolean(data.hidden),
+    is_ally: data.is_ally !== undefined ? Boolean(data.is_ally) : isAllyDefault,
+    name_hidden: data.name_hidden !== undefined ? Boolean(data.name_hidden) : nameHiddenDefault,
+    monster_id: data.monster_id ? String(data.monster_id).slice(0, 128) : null,
     updatedAt: serverTimestamp(),
   });
 
@@ -1136,7 +1208,11 @@ export async function updateMapTokenStats(tokenId, statsData) {
   if (statsData.max_mana !== undefined) payload.max_mana = Math.max(0, Math.floor(Number(statsData.max_mana)));
   if (statsData.conditions !== undefined) payload.conditions = Array.isArray(statsData.conditions) ? statsData.conditions : [];
   if (statsData.color !== undefined) payload.color = statsData.color;
+  if (statsData.avatar !== undefined) payload.avatar = statsData.avatar || null;
   if (statsData.hidden !== undefined) payload.hidden = Boolean(statsData.hidden);
+  if (statsData.is_ally !== undefined) payload.is_ally = Boolean(statsData.is_ally);
+  if (statsData.name_hidden !== undefined) payload.name_hidden = Boolean(statsData.name_hidden);
+  if (statsData.monster_id !== undefined) payload.monster_id = statsData.monster_id ? String(statsData.monster_id).slice(0, 128) : null;
   if (statsData.initiative !== undefined) payload.initiative = Number(statsData.initiative);
 
   await updateDoc(tokenRef, payload);
@@ -1187,6 +1263,9 @@ export async function syncHeroTokensToMap(mapId, playerProfiles, existingTokens 
       conditions: [],
       initiative: 0,
       hidden: false,
+      is_ally: true,
+      name_hidden: false,
+      monster_id: null,
       updatedAt: serverTimestamp(),
     });
     addedCount++;

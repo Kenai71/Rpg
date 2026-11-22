@@ -41,6 +41,7 @@ import { DataTable } from '../ui/DataTable';
 import { FormField, Input, Select, Textarea } from '../ui/Input';
 import { Badge, RankBadge, RoleBadge } from '../ui/Badge';
 import { EmptyState } from '../ui/EmptyState';
+import { UserAvatar } from '../ui/UserAvatar';
 import { CharacterSheetModal } from '../sheet/EditablePdfSheet';
 
 export function MasterPlayers({ players, parties, currentUserProfile }) {
@@ -243,19 +244,26 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
           const currentParty = parties.find((g) => g.id === p.party_id);
           const isLeader = currentParty?.leader_id === p.uid;
           return (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-white">{p.username}</span>
-                {p.role === 'master' && <RoleBadge role="master" className="text-[10px] px-2 py-0" />}
-                {isLeader && (
-                  <span title="Líder do Grupo" className="text-amber-400">
-                    <Crown className="h-3.5 w-3.5 inline" />
-                  </span>
-                )}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <UserAvatar
+                src={p.photoURL}
+                name={p.username}
+                className="h-9 w-9 text-xs shrink-0"
+              />
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-white truncate">{p.username}</span>
+                  {p.role === 'master' && <RoleBadge role="master" className="text-[10px] px-2 py-0" />}
+                  {isLeader && (
+                    <span title="Líder do Grupo" className="text-amber-400">
+                      <Crown className="h-3.5 w-3.5 inline" />
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-slate-400">
+                  Nível {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
+                </span>
               </div>
-              <span className="text-xs text-slate-400">
-                Nível {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
-              </span>
             </div>
           );
         },
@@ -450,15 +458,22 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
             return (
               <Card className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-white">{p.username}</span>
-                      {p.role === 'master' && <RoleBadge role="master" className="text-[10px] px-2 py-0" />}
-                      {isLeader && <Crown className="h-4 w-4 text-amber-400" />}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <UserAvatar
+                      src={p.photoURL}
+                      name={p.username}
+                      className="h-10 w-10 text-xs shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-white truncate">{p.username}</span>
+                        {p.role === 'master' && <RoleBadge role="master" className="text-[10px] px-2 py-0" />}
+                        {isLeader && <Crown className="h-4 w-4 text-amber-400" />}
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        LVL {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
+                      </p>
                     </div>
-                    <p className="text-xs text-slate-400">
-                      LVL {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
-                    </p>
                   </div>
                   <RankBadge rank={p.rank} />
                 </div>

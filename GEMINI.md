@@ -8,6 +8,7 @@
   3. `LIVRO DO MESTRE (DM) D&D 5.5e - 2024.pdf`
   4. `dd-5e-guia-do-mestre-biblioteca-elfica.pdf`
   5. `dd-5e-livro-do-jogador-fundo-branco-biblioteca-c3a9lfica.pdf`
+  6. `LIVRO DOS MONSTROS D&D 5_unlocked.pdf` (Mantido estritamente local via `.gitignore`, não sobe para o GitHub devido ao tamanho ~146MB e uso interno).
 - Autenticação e persistência usam **Firebase** (`mundo-rpg-b05b4`: Auth com Google + E-mail/Senha e Cloud Firestore).
 - Nunca commitar `node_modules/`, `.next/`, `.vercel/` ou arquivos `.env*` (exceto `.env.example`).
 - Em rotas serverless (`rpg/app/api/daily-generate/route.js`), definir `maxDuration`, evitar chamadas de ping redundantes e manter `firebase-admin` em `serverComponentsExternalPackages`.

@@ -12,7 +12,8 @@ service cloud.firestore {
     // Fields:
     //   - uid: string (matches document ID)
     //   - username: string (1..60 chars)
-    //   - photoURL: string | null (optional)
+    //   - photoURL: string | null (optional, 0..120000 chars - external URL or compressed circular avatar Data URL)
+    //   - avatar_data: string | null (optional, 0..120000 chars - compressed circular avatar Data URL)
     //   - role: string ('player' | 'master')
     //   - rank: string ('F'..'S')
     //   - level: int (1..100)
@@ -128,6 +129,9 @@ service cloud.firestore {
     //   - conditions: list (optional, size <= 20)
     //   - initiative: number (optional)
     //   - hidden: bool (optional)
+    //   - is_ally: bool (optional - marks monster/NPC as ally so players can see its HP bar)
+    //   - name_hidden: bool (optional - hides monster/NPC name from players until revealed)
+    //   - monster_id: string | null (optional, 0..128 chars - Monster Manual bestiary reference)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
     //
@@ -248,7 +252,8 @@ service cloud.firestore {
         isSafeInt(data.slots, 1, 200) &&
         data.inventory is list && data.inventory.size() <= 200 &&
         data.equipment is map &&
-        isSafeOptionalString(data, 'photoURL', 0, 2048) &&
+        isSafeOptionalString(data, 'photoURL', 0, 120000) &&
+        isSafeOptionalString(data, 'avatar_data', 0, 120000) &&
         isSafeOptionalString(data, 'party_id', 0, 128) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
@@ -349,6 +354,9 @@ service cloud.firestore {
         isSafeOptionalList(data, 'conditions', 20) &&
         (!('initiative' in data) || data.initiative == null || data.initiative is int || data.initiative is float) &&
         isSafeOptionalBool(data, 'hidden') &&
+        isSafeOptionalBool(data, 'is_ally') &&
+        isSafeOptionalBool(data, 'name_hidden') &&
+        isSafeOptionalString(data, 'monster_id', 0, 128) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }

@@ -34,3 +34,10 @@ pnpm-debug.log*
 Thumbs.db
 *.tsbuildinfo
 next-env.d.ts
+
+# Livros e manuais pesados mantidos apenas localmente
+rpg/livros/*[Mm][Oo][Nn][Ss][Tt][Rr][Oo]*
+rpg/livros/LIVRO DOS MONSTROS*
+**/livros/*[Mm][Oo][Nn][Ss][Tt][Rr][Oo]*
+**/livros/LIVRO DOS MONSTROS*
+

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
+  BookOpen,
   ChevronRight,
   Compass,
   Crosshair,
@@ -27,10 +28,12 @@ import {
   Ruler,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Skull,
   Trash2,
   Unlock,
   User,
+  Users,
   X,
   Zap,
 } from 'lucide-react';
@@ -72,6 +75,7 @@ export function TacticalMapCanvas({
   pings = [],
   diceRolls = [],
   onDiceRoll,
+  onInspectMonsterId,
 }) {
   const containerRef = useRef(null);
   const mapImageRef = useRef(null);
@@ -705,6 +709,36 @@ export function TacticalMapCanvas({
     setActive3DRoll(localRoll);
   };
 
+  // Regras de visibilidade em tempo real (Vida oculta p/ monstros não-aliados; Nome oculto até Mestre revelar)
+  const canViewTokenHp = useCallback(
+    (token) => {
+      if (!token) return false;
+      if (isMaster) return true;
+      if (token.type === 'player') return true;
+      return Boolean(token.is_ally);
+    },
+    [isMaster]
+  );
+
+  const isTokenNameHiddenForViewer = useCallback(
+    (token) => {
+      if (!token || isMaster) return false;
+      return Boolean(token.name_hidden);
+    },
+    [isMaster]
+  );
+
+  const getVisibleTokenName = useCallback(
+    (token, longFallback = false) => {
+      if (!token) return '';
+      if (isTokenNameHiddenForViewer(token)) {
+        return longFallback ? 'Criatura Desconhecida' : '???';
+      }
+      return token.name;
+    },
+    [isTokenNameHiddenForViewer]
+  );
+
   // Tokens visíveis (Mestre vê todos; jogadores não veem tokens com hidden === true)
   const visibleTokens = tokens.filter((t) => (isMaster ? true : !t.hidden));
 
@@ -1280,6 +1314,9 @@ export function TacticalMapCanvas({
                   ) : (
                     initiativeOrder.map((tok, index) => {
                       const isCurrentTurn = map?.current_turn_token_id === tok.id;
+                      const showHp = canViewTokenHp(tok);
+                      const displayName = getVisibleTokenName(tok, true);
+                      const isAlliedNonPlayer = tok.type !== 'player' && Boolean(tok.is_ally);
                       const tokHpPct = Math.max(
                         0,
                         Math.min(100, Math.round(((tok.hp || 0) / (tok.max_hp || 1)) * 100))
@@ -1306,29 +1343,52 @@ export function TacticalMapCanvas({
                               </span>
                               <span
                                 className="h-2.5 w-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: tok.color || '#60a5fa' }}
+                                style={{
+                                  backgroundColor: isAlliedNonPlayer
+                                    ? '#10b981'
+                                    : tok.color || '#60a5fa',
+                                }}
                               />
                               <span className="text-xs font-bold text-white truncate">
-                                {tok.name}
+                                {displayName}
                               </span>
-                            </div>
-                            <span className="font-mono text-[10px] text-slate-300 shrink-0">
-                              {tok.hp}/{tok.max_hp} PV
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 rounded-full bg-black/60 overflow-hidden border border-white/10">
-                            <div
-                              className={cn(
-                                'h-full transition-all duration-200',
-                                tokHpPct > 50
-                                  ? 'bg-emerald-400'
-                                  : tokHpPct > 25
-                                  ? 'bg-amber-400'
-                                  : 'bg-rose-500'
+                              {isAlliedNonPlayer && (
+                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300 shrink-0">
+                                  Aliado
+                                </span>
                               )}
-                              style={{ width: `${tokHpPct}%` }}
-                            />
+                              {isMaster && tok.name_hidden && (
+                                <EyeOff
+                                  className="h-3 w-3 text-amber-300 shrink-0"
+                                  title="Nome oculto para jogadores"
+                                />
+                              )}
+                            </div>
+                            {showHp ? (
+                              <span className="font-mono text-[10px] text-slate-300 shrink-0">
+                                {tok.hp}/{tok.max_hp} PV
+                              </span>
+                            ) : (
+                              <span className="font-mono text-[10px] text-slate-500 shrink-0">
+                                Vida oculta
+                              </span>
+                            )}
                           </div>
+                          {showHp && (
+                            <div className="w-full h-1.5 rounded-full bg-black/60 overflow-hidden border border-white/10">
+                              <div
+                                className={cn(
+                                  'h-full transition-all duration-200',
+                                  tokHpPct > 50
+                                    ? 'bg-emerald-400'
+                                    : tokHpPct > 25
+                                    ? 'bg-amber-400'
+                                    : 'bg-rose-500'
+                                )}
+                                style={{ width: `${tokHpPct}%` }}
+                              />
+                            </div>
+                          )}
                         </button>
                       );
                     })
@@ -1607,6 +1667,11 @@ export function TacticalMapCanvas({
             const isCurrentTurn = map?.current_turn_token_id === token.id;
             const sizeCfg = TOKEN_SIZES[token.size] || TOKEN_SIZES.M;
             const tokenPx = sizeCfg.px;
+            const showHp = canViewTokenHp(token);
+            const nameHidden = isTokenNameHiddenForViewer(token);
+            const displayName = getVisibleTokenName(token, false);
+            const isAlliedNonPlayer = token.type !== 'player' && Boolean(token.is_ally);
+            const ringColor = isAlliedNonPlayer ? '#10b981' : token.color || '#60a5fa';
 
             const hpPct = Math.max(
               0,
@@ -1676,9 +1741,9 @@ export function TacticalMapCanvas({
                   style={{
                     background: token.avatar
                       ? '#0c101b'
-                      : `radial-gradient(circle at 32% 28%, ${token.color || '#3b82f6'}ff 0%, ${token.color || '#3b82f6'}cc 55%, #090d16 100%)`,
-                    border: `2.5px solid ${token.color || '#60a5fa'}`,
-                    boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), inset 0 -3px 6px rgba(0, 0, 0, 0.75), 0 6px 16px rgba(0, 0, 0, 0.8), 0 0 16px ${token.color || '#60a5fa'}66`,
+                      : `radial-gradient(circle at 32% 28%, ${ringColor}ff 0%, ${ringColor}cc 55%, #090d16 100%)`,
+                    border: `2.5px solid ${ringColor}`,
+                    boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), inset 0 -3px 6px rgba(0, 0, 0, 0.75), 0 6px 16px rgba(0, 0, 0, 0.8), 0 0 16px ${ringColor}66`,
                   }}
                 >
                   {/* Aro interno sutil de acabamento de peça de tabuleiro */}
@@ -1687,7 +1752,7 @@ export function TacticalMapCanvas({
                   {token.avatar ? (
                     <img
                       src={token.avatar}
-                      alt={token.name}
+                      alt={displayName}
                       className="w-full h-full rounded-full object-cover pointer-events-none"
                     />
                   ) : (
@@ -1695,7 +1760,7 @@ export function TacticalMapCanvas({
                       className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate px-1 tracking-tight"
                       style={{ fontSize: `${Math.max(11, Math.round(tokenPx * 0.34))}px` }}
                     >
-                      {token.name?.slice(0, 2).toUpperCase()}
+                      {nameHidden ? '?' : token.name?.slice(0, 2).toUpperCase()}
                     </span>
                   )}
 
@@ -1705,28 +1770,45 @@ export function TacticalMapCanvas({
                       <EyeOff className="h-3.5 w-3.5" />
                     </div>
                   )}
+
+                  {/* Selo de Aliado para monstros/NPCs aliados */}
+                  {isAlliedNonPlayer && (
+                    <div
+                      title="Aliado dos jogadores"
+                      className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-emerald-950/95 border border-emerald-400/70 text-emerald-300 shadow-lg"
+                    >
+                      <ShieldCheck className="h-3 w-3" />
+                    </div>
+                  )}
                 </div>
 
-                {/* Rótulo de Vida, Mana e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
+                {/* Rótulo de Vida e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
                 <div className="absolute top-full left-1/2 -translate-x-1/2 pt-1.5 flex flex-col items-center pointer-events-none z-10 w-40">
-                  {/* Barra de Vida Aprimorada sob o Token */}
-                  <div className="w-12 h-1.5 bg-black/90 rounded-full overflow-hidden border border-white/25 shadow-md">
-                    <div
-                      className={cn(
-                        'h-full transition-all duration-200',
-                        hpPct > 50 ? 'bg-emerald-400' : hpPct > 25 ? 'bg-amber-400' : 'bg-rose-500'
-                      )}
-                      style={{ width: `${hpPct}%` }}
-                    />
-                  </div>
+                  {/* Barra de Vida sob o Token (Oculta para jogadores em monstros não-aliados) */}
+                  {showHp && (
+                    <div className="w-12 h-1.5 bg-black/90 rounded-full overflow-hidden border border-white/25 shadow-md">
+                      <div
+                        className={cn(
+                          'h-full transition-all duration-200',
+                          hpPct > 50 ? 'bg-emerald-400' : hpPct > 25 ? 'bg-amber-400' : 'bg-rose-500'
+                        )}
+                        style={{ width: `${hpPct}%` }}
+                      />
+                    </div>
+                  )}
 
-                  {/* Placa de Nome e CA sob a Barra de Vida */}
-                  <div className="text-center mt-1 flex items-center justify-center gap-1 max-w-[148px]">
+                  {/* Placa de Nome (e HP apenas se permitido) */}
+                  <div className={cn('text-center flex items-center justify-center gap-1 max-w-[156px]', showHp ? 'mt-1' : 'mt-0.5')}>
                     <span className="px-2 py-0.5 rounded-md bg-[#0c101b]/95 backdrop-blur-md text-[10px] font-bold text-white border border-white/15 whitespace-nowrap shadow-[0_4px_12px_rgba(0,0,0,0.85)] flex items-center gap-1 truncate">
-                      <span className="truncate">{token.name}</span>
-                      <span className="text-[9px] font-mono text-slate-300 pl-1 border-l border-white/15 shrink-0">
-                        {token.hp}/{token.max_hp}
-                      </span>
+                      {isMaster && token.name_hidden && (
+                        <EyeOff className="h-2.5 w-2.5 text-amber-300 shrink-0" />
+                      )}
+                      <span className="truncate">{displayName}</span>
+                      {showHp && (
+                        <span className="text-[9px] font-mono text-slate-300 pl-1 border-l border-white/15 shrink-0">
+                          {token.hp}/{token.max_hp}
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -1745,10 +1827,24 @@ export function TacticalMapCanvas({
             setSelectedTokenId(null);
           }
         }}
-        title={isMaster ? `Mestrar: ${activeSelectedToken?.name}` : `Ficha de ${activeSelectedToken?.name}`}
+        title={
+          isMaster
+            ? `Mestrar: ${activeSelectedToken?.name || ''}`
+            : `Ficha de ${getVisibleTokenName(activeSelectedToken, true)}`
+        }
         maxWidth="max-w-md"
       >
-        {activeSelectedToken && (
+        {activeSelectedToken && (() => {
+          const selectedShowHp = canViewTokenHp(activeSelectedToken);
+          const selectedNameHidden = isTokenNameHiddenForViewer(activeSelectedToken);
+          const selectedDisplayName = getVisibleTokenName(activeSelectedToken, true);
+          const selectedIsAlliedNonPlayer =
+            activeSelectedToken.type !== 'player' && Boolean(activeSelectedToken.is_ally);
+          const selectedRingColor = selectedIsAlliedNonPlayer
+            ? '#10b981'
+            : activeSelectedToken.color || '#60a5fa';
+
+          return (
           <div className="space-y-4 py-1">
             {/* Cabeçalho Aprimorado do Token */}
             <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-[#0c101b] border border-white/15 shadow-inner">
@@ -1757,27 +1853,27 @@ export function TacticalMapCanvas({
                 style={{
                   background: activeSelectedToken.avatar
                     ? '#0c101b'
-                    : `radial-gradient(circle at 32% 28%, ${activeSelectedToken.color || '#3b82f6'}ff 0%, ${activeSelectedToken.color || '#3b82f6'}cc 55%, #090d16 100%)`,
-                  border: `2.5px solid ${activeSelectedToken.color || '#60a5fa'}`,
-                  boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), 0 0 18px ${activeSelectedToken.color || '#60a5fa'}55`,
+                    : `radial-gradient(circle at 32% 28%, ${selectedRingColor}ff 0%, ${selectedRingColor}cc 55%, #090d16 100%)`,
+                  border: `2.5px solid ${selectedRingColor}`,
+                  boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), 0 0 18px ${selectedRingColor}55`,
                 }}
               >
                 <div className="absolute inset-0.5 rounded-full border border-white/25 pointer-events-none" />
                 {activeSelectedToken.avatar ? (
                   <img
                     src={activeSelectedToken.avatar}
-                    alt={activeSelectedToken.name}
+                    alt={selectedDisplayName}
                     className="w-full h-full rounded-full object-cover"
                   />
                 ) : (
-                  activeSelectedToken.name?.slice(0, 2).toUpperCase()
+                  selectedNameHidden ? '?' : activeSelectedToken.name?.slice(0, 2).toUpperCase()
                 )}
               </div>
 
               <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <h3 className="text-lg font-extrabold text-white truncate">
-                    {activeSelectedToken.name}
+                    {selectedDisplayName}
                   </h3>
                   <Badge className="bg-white/10 text-slate-300 border-white/15 text-[10px]">
                     {activeSelectedToken.type === 'monster'
@@ -1786,6 +1882,16 @@ export function TacticalMapCanvas({
                       ? 'NPC'
                       : 'Herói'}
                   </Badge>
+                  {selectedIsAlliedNonPlayer && (
+                    <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-400/35 text-[10px]">
+                      <ShieldCheck className="h-3 w-3" /> Aliado
+                    </Badge>
+                  )}
+                  {isMaster && activeSelectedToken.name_hidden && (
+                    <Badge className="bg-amber-500/15 text-amber-300 border-amber-400/35 text-[10px]">
+                      <EyeOff className="h-3 w-3" /> Nome Oculto
+                    </Badge>
+                  )}
                 </div>
                 {isMaster && (
                   <p className="text-xs text-slate-400">
@@ -1795,7 +1901,8 @@ export function TacticalMapCanvas({
               </div>
             </div>
 
-            {/* Status Principais: Vida (HP), Armadura (AC), Mana */}
+            {/* Status Principais: Vida (HP), Armadura (AC), Mana (Ocultos p/ jogadores em monstros inimigos) */}
+            {selectedShowHp ? (
             <div className="grid grid-cols-3 gap-2">
               {/* VIDA (HP) */}
               <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 space-y-1.5">
@@ -2016,6 +2123,19 @@ export function TacticalMapCanvas({
                 )}
               </div>
             </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-white/[0.04] border border-white/10 flex items-center gap-3 text-xs text-slate-300">
+                <div className="h-9 w-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0 text-slate-400">
+                  <EyeOff className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-white">Vitalidade Oculta</div>
+                  <p className="text-[11px] text-slate-400">
+                    Os pontos de vida de criaturas inimigas ficam ocultos até que o Mestre as marque como aliadas.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* SE FOR JOGADOR: VISUALIZAÇÃO DOS EFEITOS DE STATUS ATIVOS (DOBRO DO TAMANHO: 64x64px / h-16 w-16 com ícone 32x32px / h-8 w-8) */}
             {!isMaster && (
@@ -2074,9 +2194,126 @@ export function TacticalMapCanvas({
               </div>
             )}
 
-            {/* CONTROLES EXCLUSIVOS DO MESTRE: ALTERAR MÁXIMOS E TAMANHO */}
+            {/* CONTROLES EXCLUSIVOS DO MESTRE: ALIADO / VISIBILIDADE DO NOME / LIVRO / MÁXIMOS / TAMANHO */}
             {isMaster && (
               <div className="space-y-3 pt-2 border-t border-white/10">
+                {/* Controles em Tempo Real de Visibilidade p/ Jogadores (Aliado & Nome Oculto) */}
+                {activeSelectedToken.type !== 'player' && (
+                  <div className="p-3 rounded-xl bg-white/[0.04] border border-white/12 space-y-2.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block">
+                      Visibilidade para Jogadores
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const nextAlly = !activeSelectedToken.is_ally;
+                          if (onUpdateTokenStats) {
+                            await onUpdateTokenStats(activeSelectedToken.id, { is_ally: nextAlly });
+                            toast.success(
+                              nextAlly
+                                ? `${activeSelectedToken.name} agora é Aliado (vida visível p/ jogadores).`
+                                : `${activeSelectedToken.name} voltou a ser inimigo (vida oculta p/ jogadores).`
+                            );
+                          }
+                        }}
+                        className={cn(
+                          'p-2.5 rounded-xl border text-left transition-all flex items-center gap-2.5',
+                          activeSelectedToken.is_ally
+                            ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-100'
+                            : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'h-8 w-8 rounded-lg flex items-center justify-center shrink-0 border',
+                            activeSelectedToken.is_ally
+                              ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                              : 'bg-white/5 border-white/10 text-slate-300'
+                          )}
+                        >
+                          {activeSelectedToken.is_ally ? (
+                            <ShieldCheck className="h-4 w-4" />
+                          ) : (
+                            <Users className="h-4 w-4" />
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold leading-tight truncate">
+                            {activeSelectedToken.is_ally ? 'Remover Aliado' : 'Tornar Aliado'}
+                          </div>
+                          <div className="text-[10px] text-slate-400 leading-tight mt-0.5 truncate">
+                            {activeSelectedToken.is_ally
+                              ? 'Vida visível p/ jogadores'
+                              : 'Vida oculta p/ jogadores'}
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const nextNameHidden = !activeSelectedToken.name_hidden;
+                          if (onUpdateTokenStats) {
+                            await onUpdateTokenStats(activeSelectedToken.id, {
+                              name_hidden: nextNameHidden,
+                            });
+                            toast.success(
+                              nextNameHidden
+                                ? `Nome de "${activeSelectedToken.name}" ocultado dos jogadores.`
+                                : `Nome "${activeSelectedToken.name}" revelado para os jogadores!`
+                            );
+                          }
+                        }}
+                        className={cn(
+                          'p-2.5 rounded-xl border text-left transition-all flex items-center gap-2.5',
+                          !activeSelectedToken.name_hidden
+                            ? 'bg-white/15 border-white/30 text-white'
+                            : 'bg-amber-500/10 border-amber-400/35 text-amber-100 hover:bg-amber-500/15'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'h-8 w-8 rounded-lg flex items-center justify-center shrink-0 border',
+                            !activeSelectedToken.name_hidden
+                              ? 'bg-white/10 border-white/20 text-slate-200'
+                              : 'bg-amber-500/15 border-amber-400/35 text-amber-300'
+                          )}
+                        >
+                          {activeSelectedToken.name_hidden ? (
+                            <Eye className="h-4 w-4" />
+                          ) : (
+                            <EyeOff className="h-4 w-4" />
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold leading-tight truncate">
+                            {activeSelectedToken.name_hidden ? 'Mostrar Nome' : 'Ocultar Nome'}
+                          </div>
+                          <div className="text-[10px] text-slate-400 leading-tight mt-0.5 truncate">
+                            {activeSelectedToken.name_hidden
+                              ? 'Jogadores veem "???"'
+                              : 'Nome visível p/ jogadores'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {activeSelectedToken.monster_id && onInspectMonsterId && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onInspectMonsterId(activeSelectedToken.monster_id)}
+                        className="w-full text-xs gap-1.5"
+                      >
+                        <BookOpen className="h-3.5 w-3.5 text-slate-300" />
+                        Ver Estatísticas do Livro dos Monstros
+                      </Button>
+                    )}
+                  </div>
+                )}
+
                 {/* Edição Direta de Vida Máxima e Mana Máxima (Exigência do Usuário) */}
                 <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-2.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
@@ -2263,7 +2500,8 @@ export function TacticalMapCanvas({
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
       </Modal>
       </div>
     </div>

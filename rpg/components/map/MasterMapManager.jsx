@@ -29,11 +29,16 @@ import {
   updateMapTokenPosition,
   updateMapTokenStats,
 } from '../../lib/rpg-service';
-import { MAP_PRESETS, MONSTER_TOKEN_PRESETS } from '../../lib/map-presets';
+import { MAP_PRESETS } from '../../lib/map-presets';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { FormField, Input, Select } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import {
+  MonsterBestiaryModal,
+  MonsterStatDetailModal,
+  loadMonstersCatalog,
+} from './MonsterBestiaryModal';
 import { TacticalMapCanvas } from './TacticalMapCanvas';
 import { cn } from '../../lib/utils';
 
@@ -65,12 +70,8 @@ export function MasterMapManager({
   const [creating, setCreating] = useState(false);
   const [syncingHeroes, setSyncingHeroes] = useState(false);
 
-  // Monstro rápido form
-  const [selectedMonsterPreset, setSelectedMonsterPreset] = useState(MONSTER_TOKEN_PRESETS[0]);
-  const [monsterName, setMonsterName] = useState(MONSTER_TOKEN_PRESETS[0].name);
-  const [monsterHp, setMonsterHp] = useState(MONSTER_TOKEN_PRESETS[0].hp);
-  const [monsterAc, setMonsterAc] = useState(MONSTER_TOKEN_PRESETS[0].ac);
-  const [spawningMonster, setSpawningMonster] = useState(false);
+  // Inspeção rápida da ficha do Livro dos Monstros a partir de um token já no campo
+  const [inspectedBookMonster, setInspectedBookMonster] = useState(null);
 
   // Mapa ativo atualmente entre todos os mapas (visível aos jogadores)
   const activeMap = useMemo(() => maps.find((m) => m.is_active) || null, [maps]);
@@ -314,37 +315,28 @@ export function MasterMapManager({
     } catch {}
   };
 
-  // Invocação rápida de monstro / NPC
-  const handleSpawnMonster = async (e) => {
-    e.preventDefault();
+  // Invocação de monstro do Livro dos Monstros ou NPC personalizado no mapa ativo
+  const handleSpawnBestiaryToken = async (tokenPayload) => {
     if (!currentMap) return;
+    await createMapToken({
+      map_id: currentMap.id,
+      ...tokenPayload,
+    });
+  };
 
-    setSpawningMonster(true);
+  // Abrir estatísticas completas do Livro dos Monstros ao clicar no botão do token em campo
+  const handleInspectMonsterById = async (monsterId) => {
+    if (!monsterId) return;
     try {
-      await createMapToken({
-        map_id: currentMap.id,
-        name: monsterName || selectedMonsterPreset.name,
-        type: selectedMonsterPreset.type || 'monster',
-        color: selectedMonsterPreset.color || '#ef4444',
-        size: selectedMonsterPreset.size || 'M',
-        hp: Number(monsterHp) || selectedMonsterPreset.hp,
-        max_hp: Number(monsterHp) || selectedMonsterPreset.hp,
-        ac: Number(monsterAc) || selectedMonsterPreset.ac,
-        mana: selectedMonsterPreset.mana || 0,
-        max_mana: selectedMonsterPreset.max_mana || 0,
-        conditions: [],
-        initiative: 0,
-        hidden: false,
-        x: 45 + (Math.random() * 10 - 5),
-        y: 40 + (Math.random() * 10 - 5),
-      });
-
-      setSpawnMonsterModalOpen(false);
-      toast.success(`Inimigo "${monsterName}" posicionado no mapa!`);
-    } catch (err) {
-      toast.error('Erro ao posicionar monstro.');
-    } finally {
-      setSpawningMonster(false);
+      const list = await loadMonstersCatalog();
+      const found = list.find((m) => m.id === monsterId);
+      if (found) {
+        setInspectedBookMonster(found);
+      } else {
+        toast.info('Criatura não localizada no catálogo do livro.');
+      }
+    } catch {
+      toast.error('Erro ao carregar estatísticas do Livro dos Monstros.');
     }
   };
 
@@ -398,13 +390,7 @@ export function MasterMapManager({
         <Button
           size="sm"
           variant="secondary"
-          onClick={() => {
-            setSelectedMonsterPreset(MONSTER_TOKEN_PRESETS[0]);
-            setMonsterName(MONSTER_TOKEN_PRESETS[0].name);
-            setMonsterHp(MONSTER_TOKEN_PRESETS[0].hp);
-            setMonsterAc(MONSTER_TOKEN_PRESETS[0].ac);
-            setSpawnMonsterModalOpen(true);
-          }}
+          onClick={() => setSpawnMonsterModalOpen(true)}
           disabled={!currentMap}
           className="text-xs gap-1.5"
         >
@@ -527,6 +513,7 @@ export function MasterMapManager({
           onUpdateMap={updateMap}
           onPing={handlePing}
           onDiceRoll={handleDiceRoll}
+          onInspectMonsterId={handleInspectMonsterById}
         />
       ) : (
         <Card className="p-12 text-center space-y-4">
@@ -787,98 +774,23 @@ export function MasterMapManager({
         </form>
       </Modal>
 
-      {/* MODAL PARA INVOCAR MONSTRO / NPC */}
-      <Modal
+      {/* MODAL DO LIVRO DOS MONSTROS (ORDEM ALFABÉTICA, FOTOS CIRCULARES E ESTATÍSTICAS) + NPC PERSONALIZADO */}
+      <MonsterBestiaryModal
         open={spawnMonsterModalOpen}
         onOpenChange={setSpawnMonsterModalOpen}
-        title="Posicionar Monstro ou NPC no Mapa"
-        maxWidth="max-w-md"
-      >
-        <form onSubmit={handleSpawnMonster} className="space-y-4">
-          <div>
-            <label className="text-xs font-bold text-slate-300 mb-1.5 block">
-              Escolha um Modelo de Monstro / NPC:
-            </label>
-            <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto p-1 scrollbar-thin">
-              {MONSTER_TOKEN_PRESETS.map((m) => {
-                const selected = selectedMonsterPreset.name === m.name;
-                return (
-                  <button
-                    key={m.name}
-                    type="button"
-                    onClick={() => {
-                      setSelectedMonsterPreset(m);
-                      setMonsterName(m.name);
-                      setMonsterHp(m.hp);
-                      setMonsterAc(m.ac);
-                    }}
-                    className={cn(
-                      'p-2 rounded-xl border text-left flex items-center gap-2 transition-all',
-                      selected
-                        ? 'bg-white/15 border-white/30 text-white shadow-sm'
-                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                    )}
-                  >
-                    <span
-                      className="h-3 w-3 rounded-full shrink-0"
-                      style={{ backgroundColor: m.color }}
-                    />
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold truncate">{m.name}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
-                        HP {m.hp} • CA {m.ac}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        onSpawnToken={handleSpawnBestiaryToken}
+        hasActiveMap={Boolean(currentMap)}
+      />
 
-          <div className="space-y-3 pt-2 border-t border-white/10">
-            <FormField label="Nome do Monstro / Marcador:">
-              <Input
-                value={monsterName}
-                onChange={(e) => setMonsterName(e.target.value)}
-                placeholder="Ex: Orc Guerreiro"
-              />
-            </FormField>
-
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Pontos de Vida (HP):">
-                <Input
-                  type="number"
-                  min="1"
-                  value={monsterHp}
-                  onChange={(e) => setMonsterHp(e.target.value)}
-                />
-              </FormField>
-
-              <FormField label="Classe de Armadura (CA):">
-                <Input
-                  type="number"
-                  min="1"
-                  value={monsterAc}
-                  onChange={(e) => setMonsterAc(e.target.value)}
-                />
-              </FormField>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setSpawnMonsterModalOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" loading={spawningMonster}>
-              Posicionar no Mapa
-            </Button>
-          </div>
-        </form>
-      </Modal>
+      {/* MODAL DE INSPEÇÃO DA FICHA DO LIVRO DOS MONSTROS A PARTIR DE UM TOKEN JÁ NO CAMPO */}
+      <MonsterStatDetailModal
+        monster={inspectedBookMonster}
+        open={Boolean(inspectedBookMonster)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setInspectedBookMonster(null);
+        }}
+        canAddToMap={false}
+      />
     </div>
   );
 }
