@@ -1042,11 +1042,95 @@ export async function persistGeneratedDailyContent({ missions = [], shop_items =
 // SERVIÇOS DE MAPAS TÁTICOS E MESA VTT (D&D 5.5e / 5e)
 // =========================================================================
 
+const HD_MAP_CHUNK_SIZE = 720000;
+const HD_MAP_MAX_CHUNKS = 16;
+const SINGLE_DOC_IMAGE_LIMIT = 885000;
+const mapHdUrlCache = new Map();
+
+export function computeAutoGridSize(width, height) {
+  const w = Number(width) || 1400;
+  const h = Number(height) || 900;
+  const minSide = Math.max(100, Math.min(w, h));
+  return Math.max(24, Math.min(240, Math.round(minSide / 18)));
+}
+
+function parseDataUrlParts(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx === -1) return null;
+  const header = dataUrl.slice(5, commaIdx);
+  const body = dataUrl.slice(commaIdx + 1);
+  const isBase64 = header.includes(';base64');
+  const mime = header.split(';')[0] || 'image/webp';
+  return { mime, isBase64, body };
+}
+
+function base64ToBlobUrl(base64Str, mimeType = 'image/webp') {
+  if (typeof window === 'undefined' || typeof atob === 'undefined') {
+    return `data:${mimeType};base64,${base64Str}`;
+  }
+  const binary = atob(base64Str);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Carrega a imagem em resolução máxima (HD) de um mapa, reassemblando os chunks
+ * da subcoleção `maps/{mapId}/image_chunks` quando o mapa excede 1 MiB.
+ * Mantém cache em memória (Blob URL) para trocas instantâneas sem releitura.
+ */
+export async function loadMapHdImageUrl(map) {
+  if (!map) return null;
+  const fallback = map.imageUrl || null;
+  const chunkCount = Number(map.hd_chunk_count || 0);
+  if (!map.id || chunkCount <= 0) return fallback;
+
+  const cacheKey = `${map.id}_${chunkCount}`;
+  if (mapHdUrlCache.has(cacheKey)) {
+    return mapHdUrlCache.get(cacheKey);
+  }
+
+  try {
+    const firestore = requireDb();
+    const chunksSnap = await getDocs(collection(firestore, 'maps', map.id, 'image_chunks'));
+    if (chunksSnap.empty) return fallback;
+
+    const ordered = chunksSnap.docs
+      .map((d) => d.data())
+      .filter((d) => typeof d?.data === 'string' && d.data.length > 0)
+      .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+
+    if (ordered.length === 0) return fallback;
+
+    const fullBody = ordered.map((c) => c.data).join('');
+    const mime = map.hd_mime_type || 'image/webp';
+    const resolvedUrl = fullBody.startsWith('data:')
+      ? fullBody
+      : base64ToBlobUrl(fullBody, mime);
+
+    mapHdUrlCache.set(cacheKey, resolvedUrl);
+    return resolvedUrl;
+  } catch (err) {
+    console.warn('Usando imagem base do mapa (chunks HD indisponíveis):', err?.message || err);
+    return fallback;
+  }
+}
+
 export async function createMap({
   title,
   imageUrl,
+  hdDataUrl = null,
+  fallbackImageUrl = null,
+  naturalWidth = null,
+  naturalHeight = null,
   gridType = 'square',
-  gridSize = 48,
+  gridSize = null,
+  autoGrid = true,
   gridOpacity = 0.25,
   scale = 1.0,
   is_active = false,
@@ -1054,14 +1138,94 @@ export async function createMap({
 }) {
   const firestore = requireDb();
   const mapsRef = collection(firestore, 'maps');
+  const mapRef = doc(mapsRef);
   const cleanTitle = String(title || 'Mapa Sem Nome').trim().slice(0, 150);
-  const cleanUrl = String(imageUrl || '').trim().slice(0, 900000);
 
-  const docRef = await addDoc(mapsRef, {
+  const safeNaturalW =
+    Number.isFinite(Number(naturalWidth)) && Number(naturalWidth) >= 1
+      ? Math.min(32768, Math.round(Number(naturalWidth)))
+      : null;
+  const safeNaturalH =
+    Number.isFinite(Number(naturalHeight)) && Number(naturalHeight) >= 1
+      ? Math.min(32768, Math.round(Number(naturalHeight)))
+      : null;
+
+  const resolvedGridSize =
+    Number.isFinite(Number(gridSize)) && Number(gridSize) >= 10
+      ? Math.max(10, Math.min(300, Math.round(Number(gridSize))))
+      : computeAutoGridSize(safeNaturalW || 1400, safeNaturalH || 900);
+
+  let finalImageUrl = String(imageUrl || '').trim();
+  let hdChunkCount = 0;
+  let hdMimeType = null;
+
+  // Se houver versão HD maior que 1 documento Firestore, grava chunks na subcoleção dedicada
+  // com fallback transparente e sem erro para single-doc de alta qualidade caso as regras ainda não tenham sido publicadas.
+  if (typeof hdDataUrl === 'string' && hdDataUrl.length > SINGLE_DOC_IMAGE_LIMIT) {
+    const parsed = parseDataUrlParts(hdDataUrl);
+    if (parsed && parsed.isBase64 && parsed.body.length > 0) {
+      const totalChunks = Math.ceil(parsed.body.length / HD_MAP_CHUNK_SIZE);
+      if (totalChunks >= 1 && totalChunks <= HD_MAP_MAX_CHUNKS) {
+        const chunks = [];
+        for (let i = 0; i < totalChunks; i += 1) {
+          chunks.push({
+            index: i,
+            data: parsed.body.slice(i * HD_MAP_CHUNK_SIZE, (i + 1) * HD_MAP_CHUNK_SIZE),
+          });
+        }
+
+        try {
+          // Grava em pequenos lotes paralelos de 3 chunks (respeita limite de 10 MiB por requisição)
+          for (let i = 0; i < chunks.length; i += 3) {
+            const slice = chunks.slice(i, i + 3);
+            await Promise.all(
+              slice.map((chunk) =>
+                setDoc(doc(firestore, 'maps', mapRef.id, 'image_chunks', String(chunk.index)), {
+                  map_id: mapRef.id,
+                  index: chunk.index,
+                  data: chunk.data,
+                  createdAt: serverTimestamp(),
+                })
+              )
+            );
+          }
+          hdChunkCount = chunks.length;
+          hdMimeType = parsed.mime;
+
+          // Já popula o cache local para exibição instantânea sem esperar releitura
+          try {
+            const localBlobUrl = base64ToBlobUrl(parsed.body, parsed.mime);
+            mapHdUrlCache.set(`${mapRef.id}_${hdChunkCount}`, localBlobUrl);
+          } catch {}
+        } catch (chunkErr) {
+          console.warn(
+            'Subcoleção HD indisponível; salvando mapa em alta qualidade otimizada no documento principal:',
+            chunkErr?.message || chunkErr
+          );
+          hdChunkCount = 0;
+          hdMimeType = null;
+          if (fallbackImageUrl && fallbackImageUrl.length <= SINGLE_DOC_IMAGE_LIMIT) {
+            finalImageUrl = fallbackImageUrl;
+          }
+        }
+      }
+    }
+  }
+
+  if (finalImageUrl.length > 940000) {
+    if (fallbackImageUrl && fallbackImageUrl.length <= 940000) {
+      finalImageUrl = fallbackImageUrl;
+    } else {
+      throw new Error('A imagem do mapa excede o limite suportado. Tente outro formato (WebP/JPG/PNG).');
+    }
+  }
+
+  const mapDocPayload = {
     title: cleanTitle,
-    imageUrl: cleanUrl,
+    imageUrl: finalImageUrl,
     gridType: ['square', 'hex', 'none'].includes(gridType) ? gridType : 'square',
-    gridSize: Math.max(10, Math.min(300, Number(gridSize) || 48)),
+    gridSize: resolvedGridSize,
+    autoGrid: Boolean(autoGrid),
     gridOpacity: Math.max(0, Math.min(1, Number(gridOpacity) || 0.25)),
     scale: Math.max(0.2, Math.min(5, Number(scale) || 1.0)),
     is_active: Boolean(is_active),
@@ -1071,9 +1235,17 @@ export async function createMap({
     current_turn_token_id: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
 
-  return docRef.id;
+  if (safeNaturalW) mapDocPayload.naturalWidth = safeNaturalW;
+  if (safeNaturalH) mapDocPayload.naturalHeight = safeNaturalH;
+  if (hdChunkCount > 0) {
+    mapDocPayload.hd_chunk_count = hdChunkCount;
+    mapDocPayload.hd_mime_type = hdMimeType;
+  }
+
+  await setDoc(mapRef, mapDocPayload);
+  return mapRef.id;
 }
 
 export async function updateMap(mapId, updates) {
@@ -1107,6 +1279,27 @@ export async function setActiveMapTx(activeMapId) {
 export async function deleteMapWithTokens(mapId) {
   if (!mapId) return;
   const firestore = requireDb();
+
+  // Remove chunks HD associados (se existirem) antes de apagar o mapa
+  try {
+    const chunksSnap = await getDocs(collection(firestore, 'maps', mapId, 'image_chunks'));
+    if (!chunksSnap.empty) {
+      await Promise.all(chunksSnap.docs.map((c) => deleteDoc(c.ref).catch(() => {})));
+    }
+  } catch {}
+
+  // Libera Blob URL em cache de memória se existir
+  for (const [key, url] of mapHdUrlCache.entries()) {
+    if (key.startsWith(`${mapId}_`)) {
+      if (typeof url === 'string' && url.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      }
+      mapHdUrlCache.delete(key);
+    }
+  }
+
   const batch = writeBatch(firestore);
 
   // Deleta tokens associados
@@ -1292,7 +1485,7 @@ export async function broadcastMapPing({ map_id, user_id, user_name, x, y, color
 }
 
 /**
- * Transmissão em tempo real de rolagem de dados 3D na mesa tática (VTT)
+ * Transmissão em tempo real de rolagem de dados 3D (unitário ou múltiplos dados, ex: 3d20, 4d4)
  */
 export async function broadcastMapDiceRoll({
   map_id,
@@ -1300,19 +1493,54 @@ export async function broadcastMapDiceRoll({
   user_name,
   user_role = 'player',
   sides,
+  count = 1,
+  results = null,
   roll,
   seed = Math.random(),
 }) {
   if (!map_id || !sides) return null;
   const firestore = requireDb();
   const validSides = [4, 6, 8, 10, 12, 20].includes(Number(sides)) ? Number(sides) : 20;
-  const numRoll =
-    Number.isFinite(Number(roll)) && Number(roll) >= 1 && Number(roll) <= validSides
-      ? Number(roll)
-      : Math.floor(Math.random() * validSides) + 1;
 
-  const isMax = numRoll === validSides;
-  const isFumble = validSides === 20 && numRoll === 1;
+  let safeResults = [];
+  if (Array.isArray(results) && results.length > 0) {
+    safeResults = results
+      .slice(0, 20)
+      .map((v) => {
+        const n = Math.floor(Number(v));
+        return Number.isFinite(n) && n >= 1 && n <= validSides
+          ? n
+          : Math.floor(Math.random() * validSides) + 1;
+      });
+  } else {
+    const safeCount = Math.max(1, Math.min(20, Math.floor(Number(count) || 1)));
+    if (
+      safeCount === 1 &&
+      Number.isFinite(Number(roll)) &&
+      Number(roll) >= 1 &&
+      Number(roll) <= validSides
+    ) {
+      safeResults = [Math.floor(Number(roll))];
+    } else {
+      for (let i = 0; i < safeCount; i += 1) {
+        safeResults.push(Math.floor(Math.random() * validSides) + 1);
+      }
+    }
+  }
+
+  const safeCount = safeResults.length;
+  const total = safeResults.reduce((acc, v) => acc + v, 0);
+  const maxHits = safeResults.filter((v) => v === validSides).length;
+  const fumbleHits = validSides === 20 ? safeResults.filter((v) => v === 1).length : 0;
+  const allMax = safeResults.every((v) => v === validSides);
+  const allFumble = validSides === 20 && safeResults.every((v) => v === 1);
+
+  const isMax =
+    safeCount === 1
+      ? safeResults[0] === validSides
+      : allMax || (validSides === 20 && maxHits > 0);
+  const isFumble = validSides === 20 && allFumble;
+  const formula = safeCount > 1 ? `${safeCount}d${validSides}` : `d${validSides}`;
 
   const nowMs = Date.now();
   const rollPayload = {
@@ -1322,7 +1550,14 @@ export async function broadcastMapDiceRoll({
     user_name: String(user_name || 'Aventureiro').slice(0, 60),
     user_role: String(user_role || 'player'),
     sides: validSides,
-    roll: numRoll,
+    count: safeCount,
+    results: safeResults,
+    roll: total,
+    total,
+    formula,
+    max_hits: maxHits,
+    fumble_hits: fumbleHits,
+    all_max: Boolean(allMax),
     seed: Number(seed),
     is_max: Boolean(isMax),
     is_fumble: Boolean(isFumble),

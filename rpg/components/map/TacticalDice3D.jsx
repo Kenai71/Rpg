@@ -12,15 +12,13 @@ import {
 /**
  * Componente de Rolagem Tática de Dados 3D (WebGL via Three.js)
  *
- * Arquitetura 3D Refatorada:
- * - Malhas poliedrais convexas sólidas e estanques para D4, D6, D8, D10, D12 e D20
- * - Mapeamento UV por face com CanvasTexture 512x512 de alta definição (zero Sprites flutuantes)
- * - D10 construído como Trapezoedro Pentagonal estritamente coplanar (10 faces pipa planas sem vincos diagonais)
- * - Cálculo do incentro geométrico exato de cada polígono (triângulo, quadrado, pipa, pentágono)
- * - Alinhamento matricial ortonormal (R = M_cam * M_face^T) garantindo que o número sorteado
- *   termine sempre voltado para a câmera e 100% em pé (nunca de cabeça para baixo)
- * - Trajetória física contínua com sombra de contato dinâmica na mesa e amortecimento suave por quaternions
- * - Efeitos sonoros procedurais Web Audio API (quiques, falha crítica 1 no d20 e sucesso máximo)
+ * Suporta rolagem unitária (1d20, 1d6, etc.) e rolagem simultânea de múltiplos dados
+ * (ex: 3d20, 4d4, 8d6 — até 20 dados simultâneos em cena):
+ * - Compartilhamento eficiente de geometria e texturas neutras entre dados do mesmo arremesso
+ * - Formação espacial sem colisões com enquadramento dinâmico de câmera (desktop, tablet e mobile)
+ * - Alinhamento matricial ortonormal individual voltado exatamente para a câmera (100% legível e em pé)
+ * - D10 construído como Trapezoedro Pentagonal estritamente coplanar
+ * - Física parabólica escalonada com sombras de contato individuais, anéis de impacto e áudio procedural
  *
  * Zero ícones de estrela em estrita conformidade com as diretrizes do projeto.
  */
@@ -47,7 +45,7 @@ export function TacticalDice3D({
 
   // Chave estável da rolagem para evitar reinicializações por re-render do pai ou eco do Firestore
   const rollKey = currentRoll
-    ? `${currentRoll.seed || currentRoll.id}_${currentRoll.sides}_${currentRoll.roll}`
+    ? `${currentRoll.seed || currentRoll.id}_${currentRoll.count || 1}d${currentRoll.sides}_${currentRoll.roll}`
     : null;
 
   useEffect(() => {
@@ -58,13 +56,9 @@ export function TacticalDice3D({
     setDisplayedRoll(rollSnapshot);
     setPhase('rolling');
 
-    const soundPlayed = {
-      bounce1: false,
-      bounce2: false,
-      bounce3: false,
-      settle: false,
-      fanfare: false,
-    };
+    let fanfarePlayed = false;
+    let settlePlayed = false;
+    let lastBounceSoundMs = 0;
 
     let disposed = false;
     let animId = null;
@@ -84,13 +78,62 @@ export function TacticalDice3D({
       const width = Math.max(mount.clientWidth || 640, 320);
       const height = Math.max(mount.clientHeight || 480, 280);
 
-      // 1. Cena e Câmera em ângulo tático de mesa (distância segura sem clipping)
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(34, width / height, 0.5, 60);
-      camera.position.set(0, -2.5, 11.4);
-      camera.lookAt(0, 0, 0);
+      const validSides = [4, 6, 8, 10, 12, 20].includes(Number(rollSnapshot.sides))
+        ? Number(rollSnapshot.sides)
+        : 20;
 
-      // 2. Renderizador WebGL com antialiasing e tone mapping cinematográfico
+      const rawResults =
+        Array.isArray(rollSnapshot.results) && rollSnapshot.results.length > 0
+          ? rollSnapshot.results.slice(0, 20)
+          : [Number(rollSnapshot.roll) || 1];
+
+      const rollValues = rawResults.map((v) =>
+        Math.max(1, Math.min(validSides, Math.floor(Number(v)) || 1))
+      );
+      const diceCount = rollValues.length;
+
+      // Gerador determinístico baseado no seed
+      const seed = Number(rollSnapshot.seed) || 0.5;
+      const rand = (n) => {
+        const x = Math.sin(seed * 9973 + n * 101.3) * 43758.5453;
+        return x - Math.floor(x);
+      };
+
+      // 1. Formação espacial balanceada (zero sobreposição entre os dados)
+      const { slots, dieScale, maxAbsX, maxAbsY } = computeDiceFormation(diceCount, rand);
+      const dieBoundingRadius = 1.92 * dieScale;
+
+      // 2. Cena e Câmera com auto-enquadramento dinâmico para qualquer quantidade de dados e viewport
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(34, width / height, 0.5, 140);
+      const camDir = new THREE.Vector3(0, -2.5, 11.4).normalize();
+
+      const updateCameraFraming = (w, h) => {
+        const aspect = Math.max(0.45, w / Math.max(1, h));
+        const tanHalfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        const tanHalfH = tanHalfV * aspect;
+
+        let camDist = 11.68;
+        if (diceCount === 1) {
+          const minHorizDist = 2.45 / tanHalfH;
+          camDist = Math.max(11.68, minHorizDist);
+        } else {
+          const padV = 1.44;
+          const padH = 1.36;
+          const distV = ((maxAbsY + dieBoundingRadius) * padV) / tanHalfV;
+          const distH = ((maxAbsX + dieBoundingRadius) * padH) / tanHalfH;
+          camDist = Math.max(12.2, distV, distH);
+        }
+
+        camera.aspect = aspect;
+        camera.position.copy(camDir).multiplyScalar(camDist);
+        camera.lookAt(0, 0, 0);
+        camera.updateProjectionMatrix();
+      };
+
+      updateCameraFraming(width, height);
+
+      // 3. Renderizador WebGL com antialiasing e tone mapping cinematográfico
       try {
         renderer = new THREE.WebGLRenderer({
           alpha: true,
@@ -108,287 +151,394 @@ export function TacticalDice3D({
 
       mount.replaceChildren(renderer.domElement);
 
-      // 3. Iluminação de estúdio tridimensional para destacar facetas e gravuras
-      const ambientLight = new THREE.AmbientLight(0x1e293b, 2.2);
+      // 4. Iluminação de estúdio tridimensional
+      const ambientLight = new THREE.AmbientLight(0x1e293b, 2.25);
       scene.add(ambientLight);
 
-      const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
-      keyLight.position.set(4.5, 6.5, 9.0);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 3.25);
+      keyLight.position.set(5.5, 7.5, 12.0);
       scene.add(keyLight);
 
-      const fillLight = new THREE.DirectionalLight(0x38bdf8, 1.6);
-      fillLight.position.set(-6.0, -3.0, 5.0);
+      const fillLight = new THREE.DirectionalLight(0x38bdf8, 1.65);
+      fillLight.position.set(-7.0, -3.5, 6.5);
       scene.add(fillLight);
 
-      // Começa com iluminação neutra durante a rolagem para não revelar crítico/falha antes de parar
       const rimLight = new THREE.DirectionalLight(0x94a3b8, 1.7);
-      rimLight.position.set(0, 5.5, -4.0);
+      rimLight.position.set(0, 6.0, -5.0);
       scene.add(rimLight);
 
-      const topPointLight = new THREE.PointLight(0xffffff, 1.1, 18);
-      topPointLight.position.set(0, -1.0, 6.5);
+      const topPointLight = new THREE.PointLight(0xffffff, 1.15, 32);
+      topPointLight.position.set(0, -1.0, 9.0);
       scene.add(topPointLight);
 
-      // 4. Construção do Poliedro Sólido com UVs por Face e Texturas 512x512
-      const validSides = [4, 6, 8, 10, 12, 20].includes(Number(rollSnapshot.sides))
-        ? Number(rollSnapshot.sides)
-        : 20;
-      const rollValue = Math.max(1, Math.min(validSides, Number(rollSnapshot.roll) || 1));
-
+      // 5. Blueprint compartilhado do poliedro (geometria + texturas neutras construídas 1 única vez)
       const maxAnisotropy = renderer.capabilities?.getMaxAnisotropy
         ? Math.min(8, renderer.capabilities.getMaxAnisotropy())
         : 1;
+      const textureSize = diceCount <= 3 ? 512 : 256;
 
-      const {
-        diceGroup,
-        faces,
-        faceMaterials,
-        winningMaterial,
-        settledWinningTexture,
-        edgesMat,
-        textures,
-        materials,
-        geometries,
-      } = buildPolyhedronDie(THREE, validSides, rollValue, rollSnapshot, maxAnisotropy);
+      const blueprint = buildPolyhedronBlueprint(THREE, validSides, textureSize, maxAnisotropy);
+      disposableGeometries.push(...blueprint.geometries);
+      disposableTextures.push(...blueprint.textures);
 
-      disposableTextures.push(...textures);
-      disposableMaterials.push(...materials);
-      disposableGeometries.push(...geometries);
-
-      scene.add(diceGroup);
-
-      // 5. Sombra de contato dinâmica projetada sobre o mapa (plano Z = -1.45)
+      // Recursos compartilhados de sombra e anel de impacto
       const shadowTexture = createSoftShadowTexture(THREE);
       if (shadowTexture) disposableTextures.push(shadowTexture);
 
-      const shadowGeo = new THREE.PlaneGeometry(4.4, 4.4);
-      const shadowMat = new THREE.MeshBasicMaterial({
-        map: shadowTexture,
-        transparent: true,
-        opacity: 0.65,
-        depthWrite: false,
-      });
-      disposableGeometries.push(shadowGeo);
-      disposableMaterials.push(shadowMat);
+      const shadowGeo = new THREE.PlaneGeometry(4.4 * dieScale, 4.4 * dieScale);
+      const ringGeo = new THREE.RingGeometry(1.52 * dieScale, 1.8 * dieScale, 48);
+      disposableGeometries.push(shadowGeo, ringGeo);
 
-      const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-      shadowMesh.position.set(0, 0, -1.48);
-      scene.add(shadowMesh);
-
-      // 6. Anel de choque arcano no repouso do dado
-      const ringGeo = new THREE.RingGeometry(1.55, 1.82, 48);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: rollSnapshot.is_max
-          ? 0xfbbf24
-          : rollSnapshot.is_fumble
-          ? 0xf43f5e
-          : 0x38bdf8,
-        transparent: true,
-        opacity: 0,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      disposableGeometries.push(ringGeo);
-      disposableMaterials.push(ringMat);
-
-      const groundRing = new THREE.Mesh(ringGeo, ringMat);
-      groundRing.position.set(0, 0, -1.42);
-      scene.add(groundRing);
-
-      // 7. Cálculo Matricial Exato da Rotação Final (Face Sorteada de Frente e Número em Pé)
-      const targetFace = faces.find((f) => f.faceNum === rollValue) || faces[0];
-
-      // Eixo Z da câmera (da origem em direção à lente da câmera)
-      const zCam = camera.position.clone().normalize();
-      // Eixo Y da tela projetado ortogonalmente ao eixo de visão da câmera
+      const settledTextureCache = new Map();
       const worldUp = new THREE.Vector3(0, 1, 0);
-      const yCam = worldUp
-        .clone()
-        .sub(zCam.clone().multiplyScalar(worldUp.dot(zCam)))
-        .normalize();
-      // Eixo X da tela (direita)
-      const xCam = new THREE.Vector3().crossVectors(yCam, zCam).normalize();
+      const floorZ = -1.48 * dieScale;
+      const ringZ = -1.42 * dieScale;
 
-      const matTarget = new THREE.Matrix4().makeBasis(xCam, yCam, zCam);
-      const matFace = new THREE.Matrix4().makeBasis(
-        targetFace.u,
-        targetFace.v,
-        targetFace.normal
+      // 6. Instanciação de cada dado com trajetória, rotação e destaque próprios
+      const diceActors = rollValues.map((dieValue, idx) => {
+        const slot = slots[idx];
+        const dieIsMax = dieValue === validSides;
+        const dieIsFumble = validSides === 20 && dieValue === 1;
+        const dieRollMeta = { is_max: dieIsMax, is_fumble: dieIsFumble };
+
+        const targetFace = blueprint.faces.find((f) => f.faceNum === dieValue) || blueprint.faces[0];
+
+        // Textura vencedora deduplicada por (valor + estado)
+        const settledKey = `${dieValue}_${dieIsMax ? 'max' : dieIsFumble ? 'fumble' : 'normal'}`;
+        let settledWinningTexture = settledTextureCache.get(settledKey) || null;
+        if (!settledWinningTexture && targetFace) {
+          settledWinningTexture = createFacePolygonTexture(
+            THREE,
+            dieValue,
+            validSides,
+            true,
+            dieRollMeta,
+            targetFace.poly2D,
+            targetFace.uvSpan,
+            targetFace.minEdgeDist,
+            maxAnisotropy,
+            textureSize
+          );
+          if (settledWinningTexture) {
+            settledTextureCache.set(settledKey, settledWinningTexture);
+            disposableTextures.push(settledWinningTexture);
+          }
+        }
+
+        let winningMaterial = null;
+        const faceMaterials = blueprint.faces.map((face, fIdx) => {
+          const mat = new THREE.MeshStandardMaterial({
+            map: blueprint.neutralTextures[fIdx] || null,
+            roughness: 0.26,
+            metalness: 0.62,
+            flatShading: true,
+            emissive: new THREE.Color(0x000000),
+            emissiveIntensity: 0,
+          });
+          disposableMaterials.push(mat);
+          if (face.faceNum === dieValue && !winningMaterial) {
+            winningMaterial = mat;
+          }
+          return mat;
+        });
+
+        const diceMesh = new THREE.Mesh(blueprint.diceGeometry, faceMaterials);
+        const diceGroup = new THREE.Group();
+        diceGroup.add(diceMesh);
+
+        const edgesMat = new THREE.LineBasicMaterial({
+          color: 0x94a3b8,
+          transparent: true,
+          opacity: 0.85,
+        });
+        disposableMaterials.push(edgesMat);
+
+        const edgeSegments = new THREE.LineSegments(blueprint.edgesGeo, edgesMat);
+        edgeSegments.scale.setScalar(1.003);
+        diceGroup.add(edgeSegments);
+
+        diceGroup.scale.setScalar(dieScale);
+        scene.add(diceGroup);
+
+        // Sombra individual na mesa
+        const shadowMat = new THREE.MeshBasicMaterial({
+          map: shadowTexture,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        });
+        disposableMaterials.push(shadowMat);
+        const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+        shadowMesh.position.set(slot.x, slot.y, floorZ);
+        scene.add(shadowMesh);
+
+        // Anel arcano individual ao pousar
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: dieIsMax ? 0xfbbf24 : dieIsFumble ? 0xf43f5e : 0x38bdf8,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        disposableMaterials.push(ringMat);
+        const groundRing = new THREE.Mesh(ringGeo, ringMat);
+        groundRing.position.set(slot.x, slot.y, ringZ);
+        scene.add(groundRing);
+
+        // Orientação final matricial exata voltada para a câmera a partir da posição do dado
+        const targetPosVec = new THREE.Vector3(slot.x, slot.y, 0);
+        const zCam = camera.position.clone().sub(targetPosVec).normalize();
+        const yCam = worldUp
+          .clone()
+          .sub(zCam.clone().multiplyScalar(worldUp.dot(zCam)))
+          .normalize();
+        const xCam = new THREE.Vector3().crossVectors(yCam, zCam).normalize();
+
+        const matTarget = new THREE.Matrix4().makeBasis(xCam, yCam, zCam);
+        const matFace = new THREE.Matrix4().makeBasis(
+          targetFace.u,
+          targetFace.v,
+          targetFace.normal
+        );
+        const matFaceInv = matFace.clone().transpose();
+        const matFinal = new THREE.Matrix4().multiplyMatrices(matTarget, matFaceInv);
+        const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(matFinal);
+
+        // Parâmetros de arremesso únicos por dado
+        const rBase = idx * 17 + 1;
+        const throwAngle =
+          diceCount === 1
+            ? rand(rBase) * Math.PI * 2
+            : Math.atan2(slot.y || (rand(rBase) - 0.5), slot.x || (rand(rBase + 1) - 0.5)) +
+              (rand(rBase + 2) - 0.5) * 0.9;
+        const throwDist = (2.8 + rand(rBase + 3) * 1.1) * Math.max(0.85, dieScale);
+        const startX = slot.x + Math.cos(throwAngle) * throwDist;
+        const startY = slot.y + Math.sin(throwAngle) * (throwDist * 0.78);
+        const startHeight = (2.5 + rand(rBase + 4) * 0.55) * Math.max(0.85, dieScale);
+
+        const signX = rand(rBase + 5) > 0.5 ? 1 : -1;
+        const signY = rand(rBase + 6) > 0.5 ? 1 : -1;
+        const signZ = rand(rBase + 7) > 0.5 ? 1 : -1;
+        const totalSpinX =
+          signX * (2 + Math.floor(rand(rBase + 8) * 2)) * Math.PI * 2 +
+          (rand(rBase + 9) - 0.5) * 1.8;
+        const totalSpinY =
+          signY * (2 + Math.floor(rand(rBase + 10) * 2)) * Math.PI * 2 +
+          (rand(rBase + 11) - 0.5) * 1.8;
+        const totalSpinZ =
+          signZ * (1 + Math.floor(rand(rBase + 12) * 2)) * Math.PI * 2 +
+          (rand(rBase + 13) - 0.5) * 1.4;
+
+        const maxStagger = diceCount === 1 ? 0 : Math.min(320, (diceCount - 1) * 45);
+        const delay =
+          diceCount === 1
+            ? 0
+            : Math.round((idx / Math.max(1, diceCount - 1)) * maxStagger);
+        const duration =
+          diceCount === 1
+            ? 1620
+            : Math.round(1460 + rand(rBase + 14) * 240);
+
+        return {
+          idx,
+          dieValue,
+          dieIsMax,
+          dieIsFumble,
+          targetX: slot.x,
+          targetY: slot.y,
+          startX,
+          startY,
+          startHeight,
+          totalSpinX,
+          totalSpinY,
+          totalSpinZ,
+          delay,
+          duration,
+          diceGroup,
+          faceMaterials,
+          winningMaterial,
+          settledWinningTexture,
+          edgesMat,
+          shadowMesh,
+          shadowMat,
+          groundRing,
+          ringMat,
+          targetQuaternion,
+          settled: false,
+          bounces: { b1: false, b2: false, b3: false },
+        };
+      });
+
+      const ALL_SETTLED_TIME = Math.max(
+        ...diceActors.map((a) => a.delay + a.duration),
+        1620
       );
-      const matFaceInv = matFace.clone().transpose();
-      const matFinal = new THREE.Matrix4().multiplyMatrices(matTarget, matFaceInv);
-      const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(matFinal);
-
-      // 8. Parâmetros Determinísticos de Arremesso e Rotação baseados no seed
-      const seed = Number(rollSnapshot.seed) || 0.5;
-      const rand = (n) => {
-        const x = Math.sin(seed * 9973 + n * 101.3) * 43758.5453;
-        return x - Math.floor(x);
-      };
-
-      // O dado entra vindo de uma borda da mesa em direção ao centro (0, 0)
-      const throwAngle = rand(1) * Math.PI * 2;
-      const throwRadius = 2.9 + rand(2) * 0.6;
-      const startX = Math.cos(throwAngle) * throwRadius;
-      const startY = Math.sin(throwAngle) * (throwRadius * 0.72);
-      const startHeight = 2.55; // Altura segura acima da mesa (câmera está em Z = 11.4)
-
-      // Múltiplas voltas completas que desaceleram suavemente até 0 em t = 1
-      const signX = rand(3) > 0.5 ? 1 : -1;
-      const signY = rand(4) > 0.5 ? 1 : -1;
-      const signZ = rand(5) > 0.5 ? 1 : -1;
-      const totalSpinX = signX * (2 + Math.floor(rand(6) * 2)) * Math.PI * 2 + (rand(7) - 0.5) * 1.8;
-      const totalSpinY = signY * (2 + Math.floor(rand(8) * 2)) * Math.PI * 2 + (rand(9) - 0.5) * 1.8;
-      const totalSpinZ = signZ * (1 + Math.floor(rand(10) * 2)) * Math.PI * 2 + (rand(11) - 0.5) * 1.4;
+      const TOTAL_DURATION = ALL_SETTLED_TIME + (diceCount > 1 ? 3900 : 3580);
 
       const tumbleEuler = new THREE.Euler(0, 0, 0, 'XYZ');
       const tumbleQuat = new THREE.Quaternion();
-
       const startTime = performance.now();
-      const ROLL_DURATION = 1620; // Tempo total de queda, quiques e assentamento
-      const TOTAL_DURATION = 5200; // Tempo total até fechar suavemente
+
+      const triggerThrottledBounce = (intensity, nowMs) => {
+        if (nowMs - lastBounceSoundMs >= 52) {
+          lastBounceSoundMs = nowMs;
+          playDiceBounceSound(intensity);
+        }
+      };
 
       function animate(now) {
         if (disposed) return;
         const elapsed = now - startTime;
 
-        if (elapsed < ROLL_DURATION) {
-          const t = Math.min(1, Math.max(0, elapsed / ROLL_DURATION));
+        for (let i = 0; i < diceActors.length; i += 1) {
+          const actor = diceActors[i];
+          const localElapsed = elapsed - actor.delay;
 
-          // Deslocamento horizontal X/Y com desaceleração suave
-          const horizEase = 1 - Math.pow(1 - t, 2.35);
-          const curX = THREE.MathUtils.lerp(startX, 0, horizEase);
-          const curY = THREE.MathUtils.lerp(startY, 0, horizEase);
-
-          // Altura Z acima da mesa com 3 arcos parabólicos de gravidade
-          let heightZ = 0;
-          if (t < 0.42) {
-            // Queda inicial até o primeiro impacto na mesa
-            const p1 = t / 0.42;
-            heightZ = startHeight * (1 - p1 * p1);
-            if (p1 > 0.94 && !soundPlayed.bounce1) {
-              soundPlayed.bounce1 = true;
-              playDiceBounceSound(0.92);
-            }
-          } else if (t < 0.73) {
-            // Primeiro quique parabólico
-            const p2 = (t - 0.42) / 0.31;
-            heightZ = 1.15 * 4 * p2 * (1 - p2);
-            if (p2 > 0.92 && !soundPlayed.bounce2) {
-              soundPlayed.bounce2 = true;
-              playDiceBounceSound(0.54);
-            }
-          } else if (t < 0.91) {
-            // Segundo quique menor
-            const p3 = (t - 0.73) / 0.18;
-            heightZ = 0.36 * 4 * p3 * (1 - p3);
-            if (p3 > 0.9 && !soundPlayed.bounce3) {
-              soundPlayed.bounce3 = true;
-              playDiceBounceSound(0.26);
-            }
-          } else {
-            // Micro-assentamento final na superfície
-            const p4 = (t - 0.91) / 0.09;
-            heightZ = 0.06 * 4 * p4 * (1 - p4);
+          if (localElapsed < 0) {
+            actor.diceGroup.visible = false;
+            actor.shadowMesh.visible = false;
+            actor.groundRing.visible = false;
+            continue;
           }
 
-          diceGroup.position.set(curX, curY, heightZ);
-          diceGroup.scale.setScalar(1.0);
+          actor.diceGroup.visible = true;
+          actor.shadowMesh.visible = true;
+          actor.groundRing.visible = true;
 
-          // Sombra de contato acompanha o dado e reage à altura Z
-          shadowMesh.position.set(
-            curX + heightZ * 0.16,
-            curY - heightZ * 0.16,
-            -1.48
-          );
-          const shadowScale = 0.88 + heightZ * 0.18;
-          shadowMesh.scale.setScalar(shadowScale);
-          shadowMat.opacity = Math.max(0.2, 0.72 - heightZ * 0.16);
+          if (localElapsed < actor.duration) {
+            const t = Math.min(1, Math.max(0, localElapsed / actor.duration));
+            const horizEase = 1 - Math.pow(1 - t, 2.35);
+            const curX = THREE.MathUtils.lerp(actor.startX, actor.targetX, horizEase);
+            const curY = THREE.MathUtils.lerp(actor.startY, actor.targetY, horizEase);
 
-          // Rotação contínua por quaternions que converge exatamente para targetQuaternion em t = 1
-          const rem = 1 - t;
-          const angleX = totalSpinX * Math.pow(rem, 2.65);
-          const angleY = totalSpinY * Math.pow(rem, 2.45);
-          const angleZ = totalSpinZ * Math.pow(rem, 2.25);
+            let heightZ = 0;
+            if (t < 0.42) {
+              const p1 = t / 0.42;
+              heightZ = actor.startHeight * (1 - p1 * p1);
+              if (p1 > 0.93 && !actor.bounces.b1) {
+                actor.bounces.b1 = true;
+                triggerThrottledBounce(0.9, now);
+              }
+            } else if (t < 0.73) {
+              const p2 = (t - 0.42) / 0.31;
+              heightZ = 1.12 * dieScale * 4 * p2 * (1 - p2);
+              if (p2 > 0.91 && !actor.bounces.b2) {
+                actor.bounces.b2 = true;
+                triggerThrottledBounce(0.52, now);
+              }
+            } else if (t < 0.91) {
+              const p3 = (t - 0.73) / 0.18;
+              heightZ = 0.34 * dieScale * 4 * p3 * (1 - p3);
+              if (p3 > 0.89 && !actor.bounces.b3) {
+                actor.bounces.b3 = true;
+                triggerThrottledBounce(0.25, now);
+              }
+            } else {
+              const p4 = (t - 0.91) / 0.09;
+              heightZ = 0.06 * dieScale * 4 * p4 * (1 - p4);
+            }
 
-          tumbleEuler.set(angleX, angleY, angleZ, 'XYZ');
-          tumbleQuat.setFromEuler(tumbleEuler);
-          diceGroup.quaternion.multiplyQuaternions(tumbleQuat, targetQuaternion);
-        } else {
-          // Dado assentado na face vencedora
-          diceGroup.position.set(0, 0, 0);
-          diceGroup.quaternion.copy(targetQuaternion);
+            actor.diceGroup.position.set(curX, curY, heightZ);
+            actor.diceGroup.scale.setScalar(dieScale);
 
-          if (!soundPlayed.settle) {
-            soundPlayed.settle = true;
+            actor.shadowMesh.position.set(
+              curX + heightZ * 0.16,
+              curY - heightZ * 0.16,
+              floorZ
+            );
+            const shadowScale = 0.88 + (heightZ / Math.max(0.4, dieScale)) * 0.18;
+            actor.shadowMesh.scale.setScalar(shadowScale);
+            actor.shadowMat.opacity = Math.max(0.2, 0.72 - heightZ * 0.15);
+
+            const rem = 1 - t;
+            const angleX = actor.totalSpinX * Math.pow(rem, 2.65);
+            const angleY = actor.totalSpinY * Math.pow(rem, 2.45);
+            const angleZ = actor.totalSpinZ * Math.pow(rem, 2.25);
+
+            tumbleEuler.set(angleX, angleY, angleZ, 'XYZ');
+            tumbleQuat.setFromEuler(tumbleEuler);
+            actor.diceGroup.quaternion.multiplyQuaternions(tumbleQuat, actor.targetQuaternion);
+          } else {
+            // Dado individual assentado na face vencedora
+            actor.diceGroup.position.set(actor.targetX, actor.targetY, 0);
+            actor.diceGroup.quaternion.copy(actor.targetQuaternion);
+
+            if (!actor.settled) {
+              actor.settled = true;
+
+              if (actor.winningMaterial && actor.settledWinningTexture) {
+                actor.winningMaterial.map = actor.settledWinningTexture;
+                actor.winningMaterial.needsUpdate = true;
+              }
+
+              if (actor.dieIsMax) {
+                actor.edgesMat.color.setHex(0xfbbf24);
+                actor.edgesMat.opacity = 1.0;
+                actor.faceMaterials.forEach((mat) => {
+                  mat.emissive.setHex(0xf59e0b);
+                  mat.emissiveIntensity = mat === actor.winningMaterial ? 0.34 : 0.14;
+                });
+              } else if (actor.dieIsFumble) {
+                actor.edgesMat.color.setHex(0xf43f5e);
+                actor.edgesMat.opacity = 1.0;
+                actor.faceMaterials.forEach((mat) => {
+                  mat.emissive.setHex(0xf43f5e);
+                  mat.emissiveIntensity = mat === actor.winningMaterial ? 0.36 : 0.16;
+                });
+              } else if (actor.winningMaterial) {
+                actor.winningMaterial.emissive.setHex(0x38bdf8);
+                actor.winningMaterial.emissiveIntensity = 0.18;
+              }
+            }
+
+            const postElapsed = localElapsed - actor.duration;
+            const presentProgress = Math.min(1, postElapsed / 320);
+            const presentEase = 1 - Math.pow(1 - presentProgress, 3);
+            actor.diceGroup.scale.setScalar(dieScale * (1.0 + presentEase * 0.08));
+
+            actor.shadowMesh.position.set(actor.targetX, actor.targetY, floorZ);
+            actor.shadowMesh.scale.setScalar(0.92);
+            actor.shadowMat.opacity = 0.75;
+
+            const pulse = 0.5 + 0.5 * Math.sin(postElapsed * 0.006);
+            if (actor.winningMaterial) {
+              const baseEmissive = actor.dieIsMax || actor.dieIsFumble ? 0.24 : 0.14;
+              actor.winningMaterial.emissiveIntensity = baseEmissive + pulse * 0.18;
+            }
+
+            actor.ringMat.opacity = Math.max(
+              0,
+              (0.55 - postElapsed * 0.00012) * (0.75 + pulse * 0.25)
+            );
+            actor.groundRing.scale.setScalar(1 + Math.min(0.35, postElapsed * 0.00018));
+          }
+        }
+
+        // Quando TODOS os dados terminarem de rolar, dispara consolidação + fanfarra + transmissão
+        if (elapsed >= ALL_SETTLED_TIME) {
+          if (!settlePlayed) {
+            settlePlayed = true;
             playDiceSettleSound();
           }
 
-          if (!soundPlayed.fanfare) {
-            soundPlayed.fanfare = true;
+          if (!fanfarePlayed) {
+            fanfarePlayed = true;
             setPhase('settled');
 
-            // Ativa o efeito visual e de cor NO DADO 3D somente agora que o resultado apareceu
-            if (winningMaterial && settledWinningTexture) {
-              winningMaterial.map = settledWinningTexture;
-              winningMaterial.needsUpdate = true;
-            }
-
             if (rollSnapshot.is_max) {
-              if (edgesMat) {
-                edgesMat.color.setHex(0xfbbf24);
-                edgesMat.opacity = 1.0;
-              }
               rimLight.color.setHex(0xf59e0b);
-              rimLight.intensity = 3.2;
-              faceMaterials.forEach((mat) => {
-                mat.emissive.setHex(0xf59e0b);
-                mat.emissiveIntensity = mat === winningMaterial ? 0.34 : 0.14;
-              });
+              rimLight.intensity = 3.0;
               playCriticalSuccessSound();
             } else if (rollSnapshot.is_fumble) {
-              if (edgesMat) {
-                edgesMat.color.setHex(0xf43f5e);
-                edgesMat.opacity = 1.0;
-              }
               rimLight.color.setHex(0xf43f5e);
-              rimLight.intensity = 3.2;
-              faceMaterials.forEach((mat) => {
-                mat.emissive.setHex(0xf43f5e);
-                mat.emissiveIntensity = mat === winningMaterial ? 0.36 : 0.16;
-              });
+              rimLight.intensity = 3.0;
               playCriticalFumbleSound();
-            } else if (winningMaterial) {
-              winningMaterial.emissive.setHex(0x38bdf8);
-              winningMaterial.emissiveIntensity = 0.18;
             }
 
             if (onSettledRef.current) {
               onSettledRef.current(rollSnapshot);
             }
           }
-
-          const postElapsed = elapsed - ROLL_DURATION;
-
-          // Leve destaque de escala para leitura cristalina do resultado
-          const presentProgress = Math.min(1, postElapsed / 320);
-          const presentEase = 1 - Math.pow(1 - presentProgress, 3);
-          const scaleVal = 1.0 + presentEase * 0.08;
-          diceGroup.scale.setScalar(scaleVal);
-
-          shadowMesh.position.set(0, 0, -1.48);
-          shadowMesh.scale.setScalar(0.92);
-          shadowMat.opacity = 0.75;
-
-          // Pulso luminoso no dado e no anel de impacto após o resultado aparecer
-          const pulse = 0.5 + 0.5 * Math.sin(postElapsed * 0.006);
-          if (winningMaterial) {
-            const baseEmissive = rollSnapshot.is_max || rollSnapshot.is_fumble ? 0.24 : 0.14;
-            winningMaterial.emissiveIntensity = baseEmissive + pulse * 0.18;
-          }
-
-          ringMat.opacity = Math.max(0, (0.55 - postElapsed * 0.00012) * (0.75 + pulse * 0.25));
-          groundRing.scale.setScalar(1 + Math.min(0.35, postElapsed * 0.00018));
 
           // Fade out suave nos últimos 600ms
           if (elapsed > TOTAL_DURATION - 600) {
@@ -416,8 +566,7 @@ export function TacticalDice3D({
         if (!mount || !renderer || disposed) return;
         const w = Math.max(mount.clientWidth || 640, 320);
         const h = Math.max(mount.clientHeight || 480, 280);
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
+        updateCameraFraming(w, h);
         renderer.setSize(w, h);
       };
 
@@ -437,8 +586,8 @@ export function TacticalDice3D({
 
     return () => {
       disposed = true;
-      if (!soundPlayed.fanfare && onSettledRef.current) {
-        soundPlayed.fanfare = true;
+      if (!fanfarePlayed && onSettledRef.current) {
+        fanfarePlayed = true;
         onSettledRef.current(rollSnapshot);
       }
       if (animId) cancelAnimationFrame(animId);
@@ -463,13 +612,17 @@ export function TacticalDice3D({
   const activeRoll = displayedRoll || currentRoll;
   if (!activeRoll) return null;
 
+  const activeCount = Number(activeRoll.count) || (Array.isArray(activeRoll.results) ? activeRoll.results.length : 1);
+  const activeFormula = activeRoll.formula || (activeCount > 1 ? `${activeCount}d${activeRoll.sides}` : `d${activeRoll.sides}`);
+  const activeResults = Array.isArray(activeRoll.results) && activeRoll.results.length > 0 ? activeRoll.results : [activeRoll.roll];
+
   return (
     <div
       className={`absolute inset-0 z-40 pointer-events-none flex flex-col items-center justify-center transition-opacity duration-300 ${
         phase === 'fading' ? 'opacity-0' : 'opacity-100'
       } ${className}`}
     >
-      {/* CANVAS WEBGL TRIDIMENSIONAL DO DADO */}
+      {/* CANVAS WEBGL TRIDIMENSIONAL DOS DADOS */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
       {/* BANNER REATIVO INTERNO (SE ATIVADO) */}
@@ -488,7 +641,7 @@ export function TacticalDice3D({
           }`}
         >
           <div
-            className={`h-11 w-11 rounded-xl flex items-center justify-center font-black font-mono text-xl shadow-inner ${
+            className={`min-w-[2.75rem] h-11 px-2 rounded-xl flex items-center justify-center font-black font-mono text-xl shadow-inner ${
               activeRoll.is_max
                 ? 'bg-amber-500/25 border border-amber-400/60 text-amber-300'
                 : activeRoll.is_fumble
@@ -506,7 +659,7 @@ export function TacticalDice3D({
                 {activeRoll.user_name || 'Aventureiro'}
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                (d{activeRoll.sides})
+                ({activeFormula})
               </span>
             </div>
 
@@ -514,18 +667,39 @@ export function TacticalDice3D({
               {activeRoll.is_max ? (
                 <span className="text-amber-300 flex items-center gap-1">
                   <Zap className="h-4 w-4" />
-                  SUCESSO MÁXIMO! ({activeRoll.roll})
+                  {activeCount > 1 && !activeRoll.all_max
+                    ? `CRÍTICO NO ${activeFormula}! (${activeRoll.roll})`
+                    : `SUCESSO MÁXIMO! (${activeRoll.roll})`}
                 </span>
               ) : activeRoll.is_fumble ? (
                 <span className="text-rose-400 font-bold">
-                  FALHA CRÍTICA! (1)
+                  FALHA CRÍTICA! ({activeRoll.roll})
                 </span>
               ) : (
                 <span className="text-slate-100">
-                  Rolou {activeRoll.roll} no d{activeRoll.sides}
+                  Rolou {activeRoll.roll} em {activeFormula}
                 </span>
               )}
             </div>
+
+            {activeResults.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                {activeResults.map((val, i) => (
+                  <span
+                    key={i}
+                    className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-bold border ${
+                      val === activeRoll.sides
+                        ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                        : activeRoll.sides === 20 && val === 1
+                        ? 'bg-rose-500/20 border-rose-400/50 text-rose-200'
+                        : 'bg-white/10 border-white/15 text-slate-200'
+                    }`}
+                  >
+                    {val}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <button
@@ -546,12 +720,100 @@ export function TacticalDice3D({
 }
 
 // ============================================================================
-// CONSTRUTOR GEOMÉTRICO DE POLIEDROS 3D COM MAPEAMENTO UV POR FACE
+// LAYOUT ESPACIAL SEM COLISÃO PARA 1 A 20 DADOS SIMULTÂNEOS
 // ============================================================================
 
-function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
+function computeDiceFormation(count, rand) {
+  if (count <= 1) {
+    return {
+      slots: [{ x: 0, y: 0 }],
+      dieScale: 1.0,
+      maxAbsX: 0,
+      maxAbsY: 0,
+    };
+  }
+
+  let cols = 2;
+  let dieScale = 0.88;
+  let stepX = 3.6;
+  let stepY = 3.4;
+
+  if (count === 2) {
+    cols = 2;
+    dieScale = 0.92;
+    stepX = 3.75;
+    stepY = 3.4;
+  } else if (count === 3) {
+    cols = 3;
+    dieScale = 0.84;
+    stepX = 3.4;
+    stepY = 3.2;
+  } else if (count === 4) {
+    cols = 2;
+    dieScale = 0.8;
+    stepX = 3.4;
+    stepY = 3.25;
+  } else if (count <= 6) {
+    cols = 3;
+    dieScale = 0.74;
+    stepX = 3.15;
+    stepY = 3.0;
+  } else if (count <= 9) {
+    cols = 3;
+    dieScale = 0.66;
+    stepX = 2.85;
+    stepY = 2.72;
+  } else if (count <= 12) {
+    cols = 4;
+    dieScale = 0.59;
+    stepX = 2.6;
+    stepY = 2.52;
+  } else if (count <= 16) {
+    cols = 4;
+    dieScale = 0.53;
+    stepX = 2.38;
+    stepY = 2.32;
+  } else {
+    cols = 5;
+    dieScale = 0.48;
+    stepX = 2.18;
+    stepY = 2.15;
+  }
+
+  const rows = Math.ceil(count / cols);
+  const slots = [];
+  let maxAbsX = 0;
+  let maxAbsY = 0;
+
+  for (let i = 0; i < count; i += 1) {
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    const itemsInRow = r === rows - 1 ? count - r * cols : cols;
+
+    const baseX = (c - (itemsInRow - 1) / 2) * stepX;
+    const baseY = ((rows - 1) / 2 - r) * stepY;
+
+    // Micro-variação orgânica mantendo distância segura entre peças
+    const jitterX = (rand(i * 5 + 31) - 0.5) * (stepX * 0.1);
+    const jitterY = (rand(i * 5 + 32) - 0.5) * (stepY * 0.1);
+
+    const x = baseX + jitterX;
+    const y = baseY + jitterY;
+    slots.push({ x, y });
+
+    if (Math.abs(x) > maxAbsX) maxAbsX = Math.abs(x);
+    if (Math.abs(y) > maxAbsY) maxAbsY = Math.abs(y);
+  }
+
+  return { slots, dieScale, maxAbsX, maxAbsY };
+}
+
+// ============================================================================
+// CONSTRUTOR GEOMÉTRICO COMPARTILHADO DE POLIEDROS 3D COM MAPEAMENTO UV POR FACE
+// ============================================================================
+
+function buildPolyhedronBlueprint(THREE, sides, textureSize, maxAnisotropy) {
   const textures = [];
-  const materials = [];
   const geometries = [];
 
   // 1. Geometria base de acordo com o tipo de dado
@@ -581,7 +843,7 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   const triCount = posAttr.count / 3;
   const rawTriangles = [];
 
-  for (let i = 0; i < triCount; i++) {
+  for (let i = 0; i < triCount; i += 1) {
     const a = new THREE.Vector3().fromBufferAttribute(posAttr, i * 3 + 0);
     const b = new THREE.Vector3().fromBufferAttribute(posAttr, i * 3 + 1);
     const c = new THREE.Vector3().fromBufferAttribute(posAttr, i * 3 + 2);
@@ -593,7 +855,6 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
     const normal = cross.clone().normalize();
     const centroid = new THREE.Vector3().add(a).add(b).add(c).divideScalar(3);
 
-    // Garante orientação estritamente voltada para fora do poliedro convexo
     if (normal.dot(centroid) < 0) {
       normal.negate();
       rawTriangles.push({ a, b: c, c: b, normal, centroid, area });
@@ -605,13 +866,13 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   const faceGroups = [];
   const used = new Set();
 
-  for (let i = 0; i < rawTriangles.length; i++) {
+  for (let i = 0; i < rawTriangles.length; i += 1) {
     if (used.has(i)) continue;
     used.add(i);
     const group = [rawTriangles[i]];
     const refNormal = rawTriangles[i].normal;
 
-    for (let j = i + 1; j < rawTriangles.length; j++) {
+    for (let j = i + 1; j < rawTriangles.length; j += 1) {
       if (used.has(j)) continue;
       if (refNormal.dot(rawTriangles[j].normal) > 0.992) {
         used.add(j);
@@ -621,21 +882,17 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
     faceGroups.push(group);
   }
 
-  // 3. Montagem da geometria final com UVs precisos por face e grupos de material
+  // 3. Montagem da geometria final com UVs precisos por face e texturas neutras compartilhadas
   const finalPositions = [];
   const finalNormals = [];
   const finalUVs = [];
   const faces = [];
-  const faceMaterials = [];
-  let winningMaterial = null;
-  let settledWinningTexture = null;
+  const neutralTextures = [];
   let vertexCursor = 0;
 
   faceGroups.forEach((group, idx) => {
     const faceNum = (idx % sides) + 1;
-    const isWinningFace = faceNum === rollValue;
 
-    // Normal média ponderada pela área e centroide ponderado pela área
     const normal = new THREE.Vector3();
     const areaCentroid = new THREE.Vector3();
     let totalArea = 0;
@@ -648,7 +905,6 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
     normal.normalize();
     areaCentroid.divideScalar(totalArea || 1);
 
-    // Coleta de vértices únicos do perímetro do polígono da face
     const uniqueVerts = [];
     group.forEach((tri) => {
       [tri.a, tri.b, tri.c].forEach((v) => {
@@ -658,7 +914,6 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       });
     });
 
-    // Base temporária no plano da face para ordenar os vértices em sentido anti-horário
     const tempRef =
       Math.abs(normal.y) < 0.9
         ? new THREE.Vector3(0, 1, 0)
@@ -678,12 +933,10 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       return a1 - a2;
     });
 
-    // Determinação do incentro óptico e do vetor "para cima" (v) da face
     let center = areaCentroid.clone();
     let vAxis = new THREE.Vector3();
 
     if (sides === 10 && uniqueVerts.length === 4) {
-      // No D10 (pipa), identifica o ápice polar (maior |y|) e a ponta equatorial oposta
       let apexIdx = 0;
       let maxAbsY = -1;
       uniqueVerts.forEach((v, k) => {
@@ -696,7 +949,6 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       const side1 = uniqueVerts[(apexIdx + 1) % 4];
       const tip = uniqueVerts[(apexIdx + 2) % 4];
 
-      // Incentro exato da pipa pelo Teorema da Bissetriz Interna
       const lenUp = apex.distanceTo(side1);
       const lenLow = tip.distanceTo(side1);
       center = new THREE.Vector3()
@@ -706,13 +958,11 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
 
       vAxis.subVectors(apex, center).normalize();
     } else if (sides === 6 && uniqueVerts.length === 4) {
-      // No D6 (quadrado), alinha o eixo vertical paralelamente às bordas do quadrado
       const edgeMid = new THREE.Vector3()
         .addVectors(uniqueVerts[0], uniqueVerts[1])
         .multiplyScalar(0.5);
       vAxis.subVectors(edgeMid, center).normalize();
     } else {
-      // Em triângulos (D4, D8, D20) e pentágonos (D12), aponta do centro para o vértice ápice
       let bestVert = uniqueVerts[0];
       let bestScore = -Infinity;
       uniqueVerts.forEach((v) => {
@@ -724,12 +974,10 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       vAxis.subVectors(bestVert, center).normalize();
     }
 
-    // Ortogonalização de Gram-Schmidt para formar base destra (u = direita, v = cima, normal = frente)
     vAxis.sub(normal.clone().multiplyScalar(vAxis.dot(normal))).normalize();
     const uAxis = new THREE.Vector3().crossVectors(vAxis, normal).normalize();
     vAxis.crossVectors(normal, uAxis).normalize();
 
-    // Projeção 2D dos vértices do perímetro da face
     let maxRadius = 0;
     const poly2D = uniqueVerts.map((v) => {
       const rel = v.clone().sub(center);
@@ -742,9 +990,8 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
 
     const uvSpan = Math.max(1e-4, maxRadius * 2.06);
 
-    // Cálculo do raio do círculo inscrito (distância mínima até as arestas do polígono)
     let minEdgeDist = maxRadius;
-    for (let i = 0; i < poly2D.length; i++) {
+    for (let i = 0; i < poly2D.length; i += 1) {
       const p1 = poly2D[i];
       const p2 = poly2D[(i + 1) % poly2D.length];
       const dx = p2.x - p1.x;
@@ -754,7 +1001,6 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       if (dist < minEdgeDist) minEdgeDist = dist;
     }
 
-    // Geração dos atributos de vértice e UV para todos os triângulos desta face
     const groupStart = vertexCursor;
     group.forEach((tri) => {
       [tri.a, tri.b, tri.c].forEach((vert) => {
@@ -771,50 +1017,20 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
 
     const groupCount = vertexCursor - groupStart;
 
-    // Durante a rolagem, TODAS as faces usam textura neutra (sem spoiler de cor de crítico/falha)
     const neutralTexture = createFacePolygonTexture(
       THREE,
       faceNum,
       sides,
       false,
-      rollData,
+      null,
       poly2D,
       uvSpan,
       minEdgeDist,
-      maxAnisotropy
+      maxAnisotropy,
+      textureSize
     );
     if (neutralTexture) textures.push(neutralTexture);
-
-    // Pré-gera a textura iluminada da face sorteada para aplicar somente quando o dado parar e o resultado aparecer
-    if (isWinningFace) {
-      settledWinningTexture = createFacePolygonTexture(
-        THREE,
-        faceNum,
-        sides,
-        true,
-        rollData,
-        poly2D,
-        uvSpan,
-        minEdgeDist,
-        maxAnisotropy
-      );
-      if (settledWinningTexture) textures.push(settledWinningTexture);
-    }
-
-    const mat = new THREE.MeshStandardMaterial({
-      map: neutralTexture,
-      roughness: 0.26,
-      metalness: 0.62,
-      flatShading: true,
-      emissive: new THREE.Color(0x000000),
-      emissiveIntensity: 0,
-    });
-    materials.push(mat);
-    faceMaterials.push(mat);
-
-    if (isWinningFace) {
-      winningMaterial = mat;
-    }
+    neutralTextures.push(neutralTexture);
 
     faces.push({
       faceNum,
@@ -822,6 +1038,9 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
       center,
       u: uAxis,
       v: vAxis,
+      poly2D,
+      uvSpan,
+      minEdgeDist,
       groupStart,
       groupCount,
       materialIndex: idx,
@@ -844,45 +1063,25 @@ function buildPolyhedronDie(THREE, sides, rollValue, rollData, maxAnisotropy) {
   });
   geometries.push(diceGeometry);
 
-  const diceMesh = new THREE.Mesh(diceGeometry, faceMaterials);
-  const diceGroup = new THREE.Group();
-  diceGroup.add(diceMesh);
-
-  // Arestas metálicas externas (iniciam em tom neutro durante o giro e mudam de cor apenas ao parar)
   const edgesGeo = new THREE.EdgesGeometry(rawGeo, 12);
-  const edgesMat = new THREE.LineBasicMaterial({
-    color: 0x94a3b8,
-    transparent: true,
-    opacity: 0.85,
-  });
   geometries.push(edgesGeo);
-  materials.push(edgesMat);
-
-  const edgeSegments = new THREE.LineSegments(edgesGeo, edgesMat);
-  edgeSegments.scale.setScalar(1.003);
-  diceGroup.add(edgeSegments);
 
   return {
-    diceGroup,
+    diceGeometry,
+    edgesGeo,
     faces,
-    faceMaterials,
-    winningMaterial,
-    settledWinningTexture,
-    edgesMat,
+    neutralTextures,
     textures,
-    materials,
     geometries,
   };
 }
 
 /**
  * Trapezoedro Pentagonal estritamente coplanar para o D10
- * Usa a relação exata d = H * (1 - cos(36°)) / (1 + cos(36°)) para que os 4 vértices
- * de cada uma das 10 faces pipa pertençam exatamente ao mesmo plano.
  */
 function createCoplanarD10Geometry(THREE, radius = 1.56, height = 1.5) {
   const geom = new THREE.BufferGeometry();
-  const alpha = Math.PI / 5; // 36 graus
+  const alpha = Math.PI / 5;
   const cosA = Math.cos(alpha);
   const d = height * ((1 - cosA) / (1 + cosA));
 
@@ -890,10 +1089,8 @@ function createCoplanarD10Geometry(THREE, radius = 1.56, height = 1.5) {
   const bottomApex = new THREE.Vector3(0, -height, 0);
   const ring = [];
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 10; i += 1) {
     const angle = i * alpha;
-    // Vértices pares formam as pontas inferiores das pipas de cima (-d)
-    // Vértices ímpares formam as pontas superiores das pipas de baixo (+d)
     const y = i % 2 === 0 ? -d : d;
     ring.push(
       new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
@@ -902,12 +1099,11 @@ function createCoplanarD10Geometry(THREE, radius = 1.56, height = 1.5) {
 
   const positions = [];
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 10; i += 1) {
     const next = (i + 1) % 10;
     const prev = (i + 9) % 10;
 
     if (i % 2 === 0) {
-      // Face pipa superior (Apex = topApex, laterais = prev/next em +d, ponta = ring[i] em -d)
       positions.push(
         topApex.x, topApex.y, topApex.z,
         ring[i].x, ring[i].y, ring[i].z,
@@ -919,7 +1115,6 @@ function createCoplanarD10Geometry(THREE, radius = 1.56, height = 1.5) {
         ring[i].x, ring[i].y, ring[i].z
       );
     } else {
-      // Face pipa inferior (Apex = bottomApex, laterais = prev/next em -d, ponta = ring[i] em +d)
       positions.push(
         bottomApex.x, bottomApex.y, bottomApex.z,
         ring[prev].x, ring[prev].y, ring[prev].z,
@@ -939,7 +1134,7 @@ function createCoplanarD10Geometry(THREE, radius = 1.56, height = 1.5) {
 }
 
 /**
- * Gera a textura 512x512 de alta definição mapeada diretamente sobre a face poligonal
+ * Gera a textura de alta definição mapeada diretamente sobre a face poligonal
  */
 function createFacePolygonTexture(
   THREE,
@@ -950,11 +1145,12 @@ function createFacePolygonTexture(
   poly2D,
   uvSpan,
   minEdgeDist,
-  maxAnisotropy
+  maxAnisotropy,
+  size = 512
 ) {
   if (typeof document === 'undefined') return null;
 
-  const size = 512;
+  const scale = size / 512;
   const centerPx = size / 2;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -962,14 +1158,13 @@ function createFacePolygonTexture(
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
-  const isMax = rollData?.is_max && isWinningFace;
-  const isFumble = rollData?.is_fumble && isWinningFace;
+  const isMax = Boolean(rollData?.is_max) && isWinningFace;
+  const isFumble = Boolean(rollData?.is_fumble) && isWinningFace;
 
-  // 1. Fundo sólido facetado (Obsidian / Vallen Silver-Slate)
   const bgGrad = ctx.createRadialGradient(
     centerPx,
     centerPx,
-    24,
+    24 * scale,
     centerPx,
     centerPx,
     centerPx
@@ -996,7 +1191,6 @@ function createFacePolygonTexture(
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, size, size);
 
-  // 2. Moldura poligonal interna acompanhando o formato exato da face (triângulo, quadrado, pipa, pentágono)
   const drawScaledPolygon = (scaleFactor) => {
     if (!poly2D || poly2D.length < 3) return;
     ctx.beginPath();
@@ -1009,9 +1203,8 @@ function createFacePolygonTexture(
     ctx.closePath();
   };
 
-  // Chanfro externo da face
   drawScaledPolygon(0.86);
-  ctx.lineWidth = 4;
+  ctx.lineWidth = Math.max(2, 4 * scale);
   ctx.strokeStyle = isMax
     ? 'rgba(251, 191, 36, 0.55)'
     : isFumble
@@ -1019,9 +1212,8 @@ function createFacePolygonTexture(
     : 'rgba(148, 163, 184, 0.28)';
   ctx.stroke();
 
-  // Filete rúnico interno
   drawScaledPolygon(0.76);
-  ctx.lineWidth = isWinningFace ? 3.5 : 2.2;
+  ctx.lineWidth = Math.max(1.5, (isWinningFace ? 3.5 : 2.2) * scale);
   ctx.strokeStyle = isMax
     ? 'rgba(254, 240, 138, 0.85)'
     : isFumble
@@ -1031,12 +1223,11 @@ function createFacePolygonTexture(
     : 'rgba(203, 213, 225, 0.35)';
   ctx.stroke();
 
-  // 3. Dimensionamento óptico do numeral baseado no raio do círculo inscrito da face
   const inradiusPx = (minEdgeDist / uvSpan) * size;
   const textStr = String(number);
   const isTwoDigits = textStr.length > 1;
   const fontSize = Math.round(
-    Math.max(54, Math.min(148, inradiusPx * (isTwoDigits ? 0.86 : 1.06)))
+    Math.max(28 * scale, Math.min(148 * scale, inradiusPx * (isTwoDigits ? 0.86 : 1.06)))
   );
 
   ctx.save();
@@ -1044,17 +1235,14 @@ function createFacePolygonTexture(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Ajuste fino vertical para triângulos (D4, D8, D20)
   const yOffset = sides === 4 || sides === 8 || sides === 20 ? fontSize * 0.06 : 0;
   const textY = centerPx + yOffset;
 
-  // Contorno profundo de entalhe na pedra/metal
   ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(8, Math.round(fontSize * 0.11));
+  ctx.lineWidth = Math.max(4, Math.round(fontSize * 0.11));
   ctx.strokeStyle = '#030712';
   ctx.strokeText(textStr, centerPx, textY);
 
-  // Preenchimento metálico/luminoso do numeral
   const textGrad = ctx.createLinearGradient(
     centerPx,
     textY - fontSize * 0.5,
@@ -1082,10 +1270,9 @@ function createFacePolygonTexture(
   ctx.fillStyle = textGrad;
   ctx.fillText(textStr, centerPx, textY);
 
-  // Traço inferior clássico para diferenciar 6 e 9 em dados de 10, 12 e 20 faces
   if ((number === 6 || number === 9) && sides >= 10) {
     const barW = fontSize * 0.34;
-    const barH = Math.max(4, fontSize * 0.065);
+    const barH = Math.max(2.5, fontSize * 0.065);
     const barY = textY + fontSize * 0.44;
 
     ctx.fillStyle = '#030712';

@@ -1,13 +1,14 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   Compass,
   Image as ImageIcon,
+  Link2,
   Plus,
   Skull,
   Trash2,
@@ -59,16 +60,48 @@ export function MasterMapManager({
   const [mapSourceTab, setMapSourceTab] = useState('upload');
   const fileInputRef = useRef(null);
   const [uploadedPreview, setUploadedPreview] = useState(null);
+  const [uploadedAsset, setUploadedAsset] = useState(null); // { imageUrl, hdDataUrl, fallbackImageUrl, width, height, qualityLabel }
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [compressingFile, setCompressingFile] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const [selectedPreset, setSelectedPreset] = useState(MAP_PRESETS[0]);
   const [customUrl, setCustomUrl] = useState('');
+  const [urlDimensions, setUrlDimensions] = useState(null); // { width, height }
   const [mapTitle, setMapTitle] = useState('');
-  const [gridSize, setGridSize] = useState(48);
   const [gridType, setGridType] = useState('square');
   const [creating, setCreating] = useState(false);
   const [syncingHeroes, setSyncingHeroes] = useState(false);
+
+  // Detecta automaticamente as dimensões exatas em pixels quando o Mestre cola uma URL da Web
+  useEffect(() => {
+    if (mapSourceTab !== 'url') {
+      setUrlDimensions(null);
+      return;
+    }
+    const clean = customUrl.trim();
+    if (!clean || (!clean.startsWith('http://') && !clean.startsWith('https://') && !clean.startsWith('data:'))) {
+      setUrlDimensions(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const probe = new Image();
+      probe.onload = () => {
+        if (!cancelled && probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+          setUrlDimensions({ width: probe.naturalWidth, height: probe.naturalHeight });
+        }
+      };
+      probe.onerror = () => {
+        if (!cancelled) setUrlDimensions(null);
+      };
+      probe.src = clean;
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [mapSourceTab, customUrl]);
 
   // Inspeção rápida da ficha do Livro dos Monstros a partir de um token já no campo
   const [inspectedBookMonster, setInspectedBookMonster] = useState(null);
@@ -109,86 +142,234 @@ export function MasterMapManager({
     return tokens.filter((t) => t.map_id === currentMap.id);
   }, [tokens, currentMap]);
 
-  // Compressor de arquivo de imagem no cliente (Canvas -> JPEG máx 1920px com alta qualidade e preservação de proporção)
-  const compressImageFile = (file) => {
+  // Processador de imagem em MÁXIMA QUALIDADE preservando dimensões exatas em pixels originais
+  const processMapImageFile = (file) => {
+    const SINGLE_DOC_BUDGET = 880000; // Seguro dentro do limite de 1 MiB do Firestore
+    const HD_CHUNK_MAX_DATA_LEN = 10800000; // Até ~8 MB binários em chunks HD (ex: mapas 4K/8K)
+    const PREVIEW_BUDGET = 175000; // Prévia leve instantânea para o carrossel enquanto o HD carrega
+
+    const detectWebPSupport = () => {
+      try {
+        const test = document.createElement('canvas');
+        test.width = 2;
+        test.height = 2;
+        return test.toDataURL('image/webp', 0.8).startsWith('data:image/webp');
+      } catch {
+        return false;
+      }
+    };
+
+    const drawToDataUrl = (img, targetW, targetH, mime, quality) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+      return canvas.toDataURL(mime, quality);
+    };
+
+    const binarySearchQuality = (img, targetW, targetH, mime, minQ, maxQ, budget) => {
+      // Testa primeiro qualidade máxima direto
+      const maxAttempt = drawToDataUrl(img, targetW, targetH, mime, maxQ);
+      if (maxAttempt.length <= budget) {
+        return { dataUrl: maxAttempt, quality: maxQ };
+      }
+      // Testa qualidade mínima para saber se cabe nesta resolução
+      const minAttempt = drawToDataUrl(img, targetW, targetH, mime, minQ);
+      if (minAttempt.length > budget) {
+        return null;
+      }
+
+      let lo = minQ;
+      let hi = maxQ;
+      let bestUrl = minAttempt;
+      let bestQ = minQ;
+
+      for (let step = 0; step < 6; step += 1) {
+        const mid = Math.round(((lo + hi) / 2) * 1000) / 1000;
+        const candidate = drawToDataUrl(img, targetW, targetH, mime, mid);
+        if (candidate.length <= budget) {
+          bestUrl = candidate;
+          bestQ = mid;
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+
+      return { dataUrl: bestUrl, quality: bestQ };
+    };
+
+    const buildBestSingleDocFallback = (img, origW, origH, bestMime) => {
+      // Tenta primeiro manter exatamente 100% dos pixels originais
+      const fullRes = binarySearchQuality(img, origW, origH, bestMime, 0.72, 0.98, SINGLE_DOC_BUDGET);
+      if (fullRes) {
+        return { dataUrl: fullRes.dataUrl, width: origW, height: origH, quality: fullRes.quality };
+      }
+
+      // Redução suave progressiva apenas se a imagem for gigantesca e precisar caber em 1 documento
+      const scales = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.32];
+      for (const scale of scales) {
+        const w = Math.max(320, Math.round(origW * scale));
+        const h = Math.max(320, Math.round(origH * scale));
+        const attempt = binarySearchQuality(img, w, h, bestMime, 0.68, 0.92, SINGLE_DOC_BUDGET);
+        if (attempt) {
+          return { dataUrl: attempt.dataUrl, width: w, height: h, quality: attempt.quality };
+        }
+      }
+
+      const safeW = Math.min(origW, 1600);
+      const safeH = Math.round((origH * safeW) / origW);
+      return {
+        dataUrl: drawToDataUrl(img, safeW, safeH, bestMime, 0.65),
+        width: safeW,
+        height: safeH,
+        quality: 0.65,
+      };
+    };
+
+    const buildFastPreview = (img, origW, origH, bestMime) => {
+      const maxPreviewDim = 1100;
+      let pW = origW;
+      let pH = origH;
+      if (pW > maxPreviewDim || pH > maxPreviewDim) {
+        const r = Math.min(maxPreviewDim / pW, maxPreviewDim / pH);
+        pW = Math.max(200, Math.round(pW * r));
+        pH = Math.max(200, Math.round(pH * r));
+      }
+      const attempt = binarySearchQuality(img, pW, pH, bestMime, 0.6, 0.84, PREVIEW_BUDGET);
+      return attempt ? attempt.dataUrl : drawToDataUrl(img, pW, pH, bestMime, 0.6);
+    };
+
     return new Promise((resolve, reject) => {
       if (!file || !file.type.startsWith('image/')) {
         reject(new Error('Selecione um arquivo de imagem válido (PNG, JPG, WebP).'));
         return;
       }
+
       const reader = new FileReader();
       reader.onload = (e) => {
+        const rawDataUrl = e.target.result;
         const img = new Image();
         img.onload = () => {
-          let maxDim = 1920;
-          let { width, height } = img;
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
+          const origW = img.naturalWidth || img.width || 1400;
+          const origH = img.naturalHeight || img.height || 900;
+          const baseName = file.name.replace(/\.[^/.]+$/, '');
+          const bestMime = detectWebPSupport() ? 'image/webp' : 'image/jpeg';
+
+          // CAMINHO 1: Arquivo original já cabe em 1 documento -> 100% ORIGINAL INTACTO (zero recompressão)
+          if (typeof rawDataUrl === 'string' && rawDataUrl.length <= SINGLE_DOC_BUDGET) {
+            resolve({
+              previewUrl: rawDataUrl,
+              imageUrl: rawDataUrl,
+              hdDataUrl: null,
+              fallbackImageUrl: rawDataUrl,
+              width: origW,
+              height: origH,
+              qualityLabel: 'Original sem perdas',
+              name: baseName,
+            });
+            return;
+          }
+
+          // Limite seguro de canvas do navegador (8192px) mantendo proporção exata caso exceda
+          const MAX_CANVAS_DIM = 8192;
+          let canvasW = origW;
+          let canvasH = origH;
+          if (canvasW > MAX_CANVAS_DIM || canvasH > MAX_CANVAS_DIM) {
+            const ratio = Math.min(MAX_CANVAS_DIM / canvasW, MAX_CANVAS_DIM / canvasH);
+            canvasW = Math.round(canvasW * ratio);
+            canvasH = Math.round(canvasH * ratio);
+          }
+
+          // CAMINHO 2: Tenta WebP de altíssima qualidade (84% a 98%) mantendo 100% dos pixels exatos em 1 documento
+          const exactSingleDoc = binarySearchQuality(
+            img,
+            canvasW,
+            canvasH,
+            bestMime,
+            0.84,
+            0.98,
+            SINGLE_DOC_BUDGET
+          );
+          if (exactSingleDoc) {
+            resolve({
+              previewUrl: exactSingleDoc.dataUrl,
+              imageUrl: exactSingleDoc.dataUrl,
+              hdDataUrl: null,
+              fallbackImageUrl: exactSingleDoc.dataUrl,
+              width: origW,
+              height: origH,
+              qualityLabel: `Máxima (${Math.round(exactSingleDoc.quality * 100)}% HD)`,
+              name: baseName,
+            });
+            return;
+          }
+
+          // CAMINHO 3: Mapa ultra-detalhado / 4K+ -> preserva 100% dos pixels originais em chunks HD
+          let hdDataUrl = null;
+          let qualityLabel = 'Original Ultra HD';
+
+          if (typeof rawDataUrl === 'string' && rawDataUrl.length <= HD_CHUNK_MAX_DATA_LEN) {
+            hdDataUrl = rawDataUrl;
+            qualityLabel = 'Original Ultra HD';
+          } else {
+            const hdEncoded = binarySearchQuality(
+              img,
+              canvasW,
+              canvasH,
+              bestMime,
+              0.86,
+              0.96,
+              HD_CHUNK_MAX_DATA_LEN
+            );
+            if (hdEncoded) {
+              hdDataUrl = hdEncoded.dataUrl;
+              qualityLabel = `Ultra HD (${Math.round(hdEncoded.quality * 100)}%)`;
             } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
+              hdDataUrl = drawToDataUrl(img, canvasW, canvasH, bestMime, 0.84);
+              qualityLabel = 'Ultra HD Otimizado';
             }
           }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
 
-          let quality = 0.85;
-          let dataUrl = canvas.toDataURL('image/jpeg', quality);
-
-          // Garante que o tamanho final fique seguro dentro do limite do Firestore (máx 820KB)
-          while (dataUrl.length > 820000 && quality > 0.45) {
-            quality -= 0.05;
-            dataUrl = canvas.toDataURL('image/jpeg', quality);
-          }
-
-          // Se ainda exceder, reduz dimensões levemente
-          if (dataUrl.length > 820000) {
-            const downscaled = document.createElement('canvas');
-            const scaleFactor = 0.8;
-            downscaled.width = Math.round(width * scaleFactor);
-            downscaled.height = Math.round(height * scaleFactor);
-            const dCtx = downscaled.getContext('2d');
-            dCtx.drawImage(canvas, 0, 0, downscaled.width, downscaled.height);
-            dataUrl = downscaled.toDataURL('image/jpeg', 0.8);
-            width = downscaled.width;
-            height = downscaled.height;
-          }
+          const previewUrl = buildFastPreview(img, origW, origH, bestMime);
+          const fallback = buildBestSingleDocFallback(img, canvasW, canvasH, bestMime);
 
           resolve({
-            dataUrl,
-            width,
-            height,
-            name: file.name.replace(/\.[^/.]+$/, ''),
+            previewUrl,
+            imageUrl: previewUrl,
+            hdDataUrl,
+            fallbackImageUrl: fallback.dataUrl,
+            width: origW,
+            height: origH,
+            qualityLabel,
+            name: baseName,
           });
         };
         img.onerror = () => reject(new Error('Falha ao processar arquivo de imagem.'));
-        img.src = e.target.result;
+        img.src = rawDataUrl;
       };
       reader.onerror = () => reject(new Error('Falha ao ler arquivo.'));
       reader.readAsDataURL(file);
     });
   };
 
-  // Upload de arquivo pelo Mestre
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
+  const processSelectedFile = async (file) => {
     if (!file) return;
-
     setCompressingFile(true);
     try {
-      const result = await compressImageFile(file);
-      setUploadedPreview(result.dataUrl);
+      const result = await processMapImageFile(file);
+      setUploadedPreview(result.previewUrl);
+      setUploadedAsset(result);
       setUploadedFileName(file.name);
-      setCustomUrl(result.dataUrl);
       if (!mapTitle.trim()) {
         setMapTitle(result.name);
       }
-      toast.success(`Imagem "${file.name}" processada com sucesso!`);
+      toast.success(
+        `Mapa "${file.name}" carregado em ${result.width}×${result.height} px (${result.qualityLabel})!`
+      );
     } catch (err) {
       toast.error(err.message || 'Erro ao carregar arquivo de imagem.');
     } finally {
@@ -196,30 +377,55 @@ export function MasterMapManager({
     }
   };
 
+  // Upload de arquivo pelo Mestre (clique ou arrastar e soltar)
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    await processSelectedFile(file);
+  };
+
   const handleClearUploadedFile = () => {
     setUploadedPreview(null);
+    setUploadedAsset(null);
     setUploadedFileName('');
-    setCustomUrl('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Criar / Inserir Mapa
+  // Criar / Inserir Mapa (dimensões exatas automáticas, máxima qualidade, sem input manual de px)
   const handleCreateMap = async (e) => {
     e.preventDefault();
     let finalUrl = '';
-    if (mapSourceTab === 'upload' && uploadedPreview) {
-      finalUrl = uploadedPreview;
+    let hdDataUrl = null;
+    let fallbackImageUrl = null;
+    let naturalWidth = null;
+    let naturalHeight = null;
+
+    if (mapSourceTab === 'upload' && uploadedAsset) {
+      finalUrl = uploadedAsset.imageUrl;
+      hdDataUrl = uploadedAsset.hdDataUrl;
+      fallbackImageUrl = uploadedAsset.fallbackImageUrl;
+      naturalWidth = uploadedAsset.width;
+      naturalHeight = uploadedAsset.height;
     } else if (mapSourceTab === 'url' && customUrl.trim()) {
       finalUrl = customUrl.trim();
+      naturalWidth = urlDimensions?.width || null;
+      naturalHeight = urlDimensions?.height || null;
     } else if (mapSourceTab === 'preset' && selectedPreset?.imageUrl) {
       finalUrl = selectedPreset.imageUrl;
+      naturalWidth = 1200;
+      naturalHeight = 800;
+    } else if (uploadedAsset) {
+      finalUrl = uploadedAsset.imageUrl;
+      hdDataUrl = uploadedAsset.hdDataUrl;
+      fallbackImageUrl = uploadedAsset.fallbackImageUrl;
+      naturalWidth = uploadedAsset.width;
+      naturalHeight = uploadedAsset.height;
     } else {
-      finalUrl = customUrl.trim() || uploadedPreview || selectedPreset?.imageUrl;
+      finalUrl = customUrl.trim() || selectedPreset?.imageUrl;
     }
 
     const finalTitle =
       mapTitle.trim() ||
-      (mapSourceTab === 'upload' ? uploadedFileName : null) ||
+      (mapSourceTab === 'upload' ? uploadedFileName.replace(/\.[^/.]+$/, '') : null) ||
       selectedPreset?.title ||
       'Novo Mapa Tático';
 
@@ -233,8 +439,12 @@ export function MasterMapManager({
       const newId = await createMap({
         title: finalTitle,
         imageUrl: finalUrl,
+        hdDataUrl,
+        fallbackImageUrl,
+        naturalWidth,
+        naturalHeight,
         gridType,
-        gridSize: Number(gridSize) || 48,
+        autoGrid: true,
         gridOpacity: 0.25,
         scale: 1.0,
         is_active: maps.length === 0, // Se for o primeiro, ativa automaticamente
@@ -244,11 +454,13 @@ export function MasterMapManager({
       setSelectedMapId(newId);
       setCreateModalOpen(false);
       setCustomUrl('');
+      setUrlDimensions(null);
       setMapTitle('');
       setUploadedPreview(null);
+      setUploadedAsset(null);
       setUploadedFileName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
-      toast.success('Mapa tático adicionado à mesa!');
+      toast.success('Mapa tático adicionado na qualidade máxima!');
     } catch (err) {
       toast.error(err?.message || 'Erro ao criar mapa.');
     } finally {
@@ -299,8 +511,8 @@ export function MasterMapManager({
     } catch {}
   };
 
-  // Rolagem de Dados 3D emitida pelo Mestre
-  const handleDiceRoll = async ({ sides, roll, seed }) => {
+  // Rolagem de Dados 3D emitida pelo Mestre (unitário ou múltiplos dados, ex: 3d20, 4d4)
+  const handleDiceRoll = async ({ sides, count = 1, results = null, roll, seed }) => {
     if (!currentMap) return;
     try {
       await broadcastMapDiceRoll({
@@ -309,6 +521,8 @@ export function MasterMapManager({
         user_name: currentUserName || 'Mestre',
         user_role: 'master',
         sides,
+        count,
+        results,
         roll,
         seed,
       });
@@ -403,7 +617,9 @@ export function MasterMapManager({
           onClick={() => {
             setMapTitle('');
             setCustomUrl('');
+            setUrlDimensions(null);
             setUploadedPreview(null);
+            setUploadedAsset(null);
             setUploadedFileName('');
             setMapSourceTab('upload');
             setCreateModalOpen(true);
@@ -530,7 +746,9 @@ export function MasterMapManager({
             onClick={() => {
               setMapTitle('');
               setCustomUrl('');
+              setUrlDimensions(null);
               setUploadedPreview(null);
+              setUploadedAsset(null);
               setUploadedFileName('');
               setMapSourceTab('upload');
               setCreateModalOpen(true);
@@ -589,12 +807,12 @@ export function MasterMapManager({
                   : 'text-slate-400 hover:text-white'
               )}
             >
-              <span>🔗</span>
+              <Link2 className="h-3.5 w-3.5" />
               URL da Web
             </button>
           </div>
 
-          {/* ABA 1: SUBIR ARQUIVO DO DISPOSITIVO */}
+          {/* ABA 1: SUBIR ARQUIVO DO DISPOSITIVO (MÁXIMA QUALIDADE + DIMENSÕES EXATAS) */}
           {mapSourceTab === 'upload' && (
             <div className="space-y-3">
               <input
@@ -608,17 +826,33 @@ export function MasterMapManager({
               {!uploadedPreview ? (
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="group rounded-2xl border-2 border-dashed border-white/20 hover:border-white/40 bg-white/5 hover:bg-white/10 p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsDragOver(false);
+                    const dropped = e.dataTransfer?.files?.[0];
+                    if (dropped) await processSelectedFile(dropped);
+                  }}
+                  className={cn(
+                    'group rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3',
+                    isDragOver
+                      ? 'border-white/50 bg-white/15 scale-[1.01]'
+                      : 'border-white/20 hover:border-white/40 bg-white/5 hover:bg-white/10'
+                  )}
                 >
                   <div className="h-12 w-12 rounded-xl bg-white/10 flex items-center justify-center text-slate-300 group-hover:scale-105 transition-transform">
                     <Upload className="h-6 w-6" />
                   </div>
                   <div>
                     <p className="text-sm font-bold text-white">
-                      Clique para escolher a imagem do seu mapa
+                      Clique ou arraste a imagem do seu mapa aqui
                     </p>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Suporta PNG, JPG, JPEG e WebP (otimização e compactação automática)
+                      PNG, JPG ou WebP — preserva a resolução exata em pixels e a maior qualidade possível
                     </p>
                   </div>
                   <Button
@@ -628,43 +862,59 @@ export function MasterMapManager({
                     loading={compressingFile}
                     className="pointer-events-none mt-1"
                   >
-                    Selecionar Arquivo
+                    {compressingFile ? 'Processando em Máxima Qualidade...' : 'Selecionar Arquivo'}
                   </Button>
                 </div>
               ) : (
-                <div className="relative rounded-2xl border border-white/20 bg-black/40 p-3 flex items-center gap-3">
-                  <div
-                    className="h-16 w-24 rounded-xl bg-cover bg-center shrink-0 border border-white/15"
-                    style={{ backgroundImage: `url(${uploadedPreview})` }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-white truncate">
-                      {uploadedFileName || 'Imagem carregada'}
-                    </div>
-                    <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                      <Check className="h-3 w-3" />
-                      Pronto para adicionar à mesa
-                    </div>
+                <div className="rounded-2xl border border-white/20 bg-[#0c101b] overflow-hidden">
+                  <div className="relative w-full max-h-56 bg-black/70 flex items-center justify-center overflow-hidden border-b border-white/10">
+                    <img
+                      src={uploadedPreview}
+                      alt={uploadedFileName || 'Prévia do mapa'}
+                      className="max-h-56 w-auto max-w-full object-contain"
+                    />
+                    {uploadedAsset?.width && uploadedAsset?.height && (
+                      <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/80 border border-white/15 text-[10px] font-mono font-bold text-slate-100 backdrop-blur-md">
+                        {uploadedAsset.width} × {uploadedAsset.height} px
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-xs"
-                    >
-                      Trocar
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleClearUploadedFile}
-                      className="text-slate-400 hover:text-rose-400 h-8 w-8 p-0"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                  <div className="p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-white truncate">
+                        {uploadedFileName || 'Imagem carregada'}
+                      </div>
+                      <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <Check className="h-3 w-3 shrink-0" />
+                        <span>{uploadedAsset?.qualityLabel || 'Qualidade Máxima'}</span>
+                        {uploadedAsset?.width && uploadedAsset?.height && (
+                          <span className="text-slate-400 font-mono">
+                            • Tamanho real automático ({uploadedAsset.width}×{uploadedAsset.height}px)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs"
+                      >
+                        Trocar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleClearUploadedFile}
+                        className="text-slate-400 hover:text-rose-400 h-8 w-8 p-0"
+                        title="Remover arquivo"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -687,9 +937,9 @@ export function MasterMapManager({
                         setSelectedPreset(p);
                         setCustomUrl('');
                         setUploadedPreview(null);
+                        setUploadedAsset(null);
                         setUploadedFileName('');
                         if (!mapTitle) setMapTitle(p.title);
-                        setGridSize(p.gridSize);
                       }}
                       className={cn(
                         'group relative rounded-xl border overflow-hidden cursor-pointer transition-all aspect-video',
@@ -717,25 +967,36 @@ export function MasterMapManager({
 
           {/* ABA 3: URL DA WEB */}
           {mapSourceTab === 'url' && (
-            <FormField label="URL da Imagem do Mapa:">
-              <Input
-                placeholder="https://exemplo.com/meu-mapa-dnd.jpg"
-                value={customUrl}
-                onChange={(e) => {
-                  setCustomUrl(e.target.value);
-                  setUploadedPreview(null);
-                }}
-              />
-            </FormField>
+            <div className="space-y-2">
+              <FormField label="URL da Imagem do Mapa:">
+                <Input
+                  placeholder="https://exemplo.com/meu-mapa-dnd.jpg"
+                  value={customUrl}
+                  onChange={(e) => {
+                    setCustomUrl(e.target.value);
+                    setUploadedPreview(null);
+                    setUploadedAsset(null);
+                  }}
+                />
+              </FormField>
+              {urlDimensions && (
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-mono px-1">
+                  <Check className="h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Dimensão real detectada automaticamente: {urlDimensions.width} × {urlDimensions.height} px
+                  </span>
+                </div>
+              )}
+            </div>
           )}
 
-          {/* DETALHES GERAIS DO MAPA */}
+          {/* DETALHES GERAIS DO MAPA (DIMENSÕES EM PX DETECTADAS AUTOMATICAMENTE) */}
           <div className="space-y-3 pt-2 border-t border-white/10">
             <FormField label="Título do Mapa:">
               <Input
                 placeholder={
                   mapSourceTab === 'upload' && uploadedFileName
-                    ? uploadedFileName
+                    ? uploadedFileName.replace(/\.[^/.]+$/, '')
                     : selectedPreset?.title || 'Nome da Masmorra ou Taverna'
                 }
                 value={mapTitle}
@@ -743,24 +1004,12 @@ export function MasterMapManager({
               />
             </FormField>
 
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Tipo de Grade:">
-                <Select value={gridType} onChange={(e) => setGridType(e.target.value)}>
-                  <option value="square">Quadrados Táticos (5ft / 1.5m)</option>
-                  <option value="none">Sem Grade</option>
-                </Select>
-              </FormField>
-
-              <FormField label="Tamanho da Célula (px):">
-                <Input
-                  type="number"
-                  min="20"
-                  max="120"
-                  value={gridSize}
-                  onChange={(e) => setGridSize(e.target.value)}
-                />
-              </FormField>
-            </div>
+            <FormField label="Tipo de Grade:">
+              <Select value={gridType} onChange={(e) => setGridType(e.target.value)}>
+                <option value="square">Quadrados Táticos (5ft / 1.5m)</option>
+                <option value="none">Sem Grade</option>
+              </Select>
+            </FormField>
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">

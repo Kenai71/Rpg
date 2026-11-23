@@ -41,7 +41,7 @@ export function PlayerMapView({
     } catch {}
   };
 
-  const handleDiceRoll = async ({ sides, roll, seed }) => {
+  const handleDiceRoll = async ({ sides, count = 1, results = null, roll, seed }) => {
     if (!activeMap || !profile) return;
     try {
       await broadcastMapDiceRoll({
@@ -50,6 +50,8 @@ export function PlayerMapView({
         user_name: profile.username || 'Aventureiro',
         user_role: profile.role || 'player',
         sides,
+        count,
+        results,
         roll,
         seed,
       });

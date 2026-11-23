@@ -95,9 +95,14 @@ service cloud.firestore {
     // Document ID: {mapId} (auto-generated)
     // Fields:
     //   - title: string (1..150 chars)
-    //   - imageUrl: string (<= 900000 chars)
+    //   - imageUrl: string (<= 950000 chars)
+    //   - naturalWidth: number (optional, 1..32768)
+    //   - naturalHeight: number (optional, 1..32768)
+    //   - hd_chunk_count: int (optional, 0..32 - number of HD image chunks in subcollection)
+    //   - hd_mime_type: string | null (optional, 0..64 chars - MIME type for HD chunk reassembly)
     //   - gridType: string ('square' | 'hex' | 'none')
     //   - gridSize: number (10..300)
+    //   - autoGrid: bool (optional)
     //   - gridOpacity: number (0..1)
     //   - scale: number (0.1..5.0)
     //   - is_active: bool
@@ -107,6 +112,14 @@ service cloud.firestore {
     //   - current_turn_token_id: string | null (optional, 0..128 chars)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
+    //
+    // Subcollection: maps/{mapId}/image_chunks
+    // Document ID: {chunkId} (chunk index string, e.g. '0', '1', ...)
+    // Fields:
+    //   - map_id: string (1..128 chars, matches parent {mapId})
+    //   - index: int (0..32)
+    //   - data: string (1..850000 chars - base64 HD image chunk payload)
+    //   - createdAt: timestamp (optional)
     //
     // Collection: map_tokens
     // Document ID: {tokenId} (auto-generated)
@@ -154,7 +167,14 @@ service cloud.firestore {
     //   - user_name: string | null (optional, 0..60 chars)
     //   - user_role: string | null (optional, 0..30 chars)
     //   - sides: int (2..1000)
-    //   - roll: int (1..1000)
+    //   - count: int (optional, 1..20 - number of dice rolled)
+    //   - results: list (optional, size <= 20 - individual die results)
+    //   - roll: int (1..20000)
+    //   - total: int (optional, 1..20000 - sum of multi-dice roll)
+    //   - formula: string | null (optional, 0..30 chars, e.g. 'd20', '3d6')
+    //   - max_hits: int (optional, 0..20)
+    //   - fumble_hits: int (optional, 0..20)
+    //   - all_max: bool (optional)
     //   - seed: number | string (optional)
     //   - is_max: bool (optional)
     //   - is_fumble: bool (optional)
@@ -321,18 +341,30 @@ service cloud.firestore {
 
     function isValidMap(data) {
       return data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
-        data.imageUrl is string && data.imageUrl.size() <= 900000 &&
+        data.imageUrl is string && data.imageUrl.size() <= 950000 &&
         data.is_active is bool &&
         data.is_locked is bool &&
         (!('gridType' in data) || data.gridType in ['square', 'hex', 'none']) &&
         (!('gridSize' in data) || data.gridSize is int || data.gridSize is float) &&
         (!('gridOpacity' in data) || data.gridOpacity is int || data.gridOpacity is float) &&
         (!('scale' in data) || data.scale is int || data.scale is float) &&
+        isSafeOptionalNumber(data, 'naturalWidth', 1, 32768) &&
+        isSafeOptionalNumber(data, 'naturalHeight', 1, 32768) &&
+        isSafeOptionalInt(data, 'hd_chunk_count', 0, 32) &&
+        isSafeOptionalString(data, 'hd_mime_type', 0, 64) &&
+        isSafeOptionalBool(data, 'autoGrid') &&
         isSafeOptionalBool(data, 'fog_enabled') &&
         isSafeOptionalBool(data, 'combat_active') &&
         isSafeOptionalString(data, 'current_turn_token_id', 0, 128) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidMapImageChunk(data) {
+      return 'map_id' in data && isSafeString(data.map_id, 1, 128) &&
+        'index' in data && isSafeInt(data.index, 0, 32) &&
+        'data' in data && isSafeString(data.data, 1, 850000) &&
+        isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     function isValidMapToken(data) {
@@ -378,6 +410,13 @@ service cloud.firestore {
         isSafeOptionalString(data, 'user_role', 0, 30) &&
         (!('sides' in data) || data.sides is int) &&
         (!('roll' in data) || data.roll is int) &&
+        isSafeOptionalInt(data, 'count', 1, 20) &&
+        isSafeOptionalList(data, 'results', 20) &&
+        isSafeOptionalInt(data, 'total', 1, 20000) &&
+        isSafeOptionalString(data, 'formula', 0, 30) &&
+        isSafeOptionalInt(data, 'max_hits', 0, 20) &&
+        isSafeOptionalInt(data, 'fumble_hits', 0, 20) &&
+        isSafeOptionalBool(data, 'all_max') &&
         (!('seed' in data) || data.seed == null || data.seed is int || data.seed is float || data.seed is string) &&
         isSafeOptionalBool(data, 'is_max') &&
         isSafeOptionalBool(data, 'is_fumble') &&
@@ -584,6 +623,17 @@ service cloud.firestore {
       allow create, update: if isAuthenticated() && isValidMap(request.resource.data);
 
       allow delete: if isAuthenticated();
+
+      // HD Map Image Chunks (> 1 MiB original-resolution maps stored in ~720KB chunks)
+      match /image_chunks/{chunkId} {
+        allow read: if isAuthenticated();
+
+        allow create, update: if isAuthenticated() &&
+          isValidMapImageChunk(request.resource.data) &&
+          request.resource.data.map_id == mapId;
+
+        allow delete: if isAuthenticated();
+      }
     }
 
     // Map Tokens (Heroes, Monsters, NPCs)

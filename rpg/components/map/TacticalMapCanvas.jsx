@@ -44,7 +44,100 @@ import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { TacticalDice3D } from './TacticalDice3D';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
+import { computeAutoGridSize, loadMapHdImageUrl } from '../../lib/rpg-service';
 import { cn } from '../../lib/utils';
+
+const DICE_QUICK_COUNTS = [1, 2, 3, 4, 6, 8];
+const DICE_SIDES_LIST = [4, 6, 8, 10, 12, 20];
+
+// Ícones geométricos minimalistas dos poliedros D&D (zero ícones de estrela)
+function PolyhedronGlyph({ sides, className = 'h-4 w-4' }) {
+  if (sides === 4) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+        <polygon points="12,3 21,19 3,19" />
+        <line x1="12" y1="3" x2="12" y2="19" strokeOpacity="0.45" />
+      </svg>
+    );
+  }
+  if (sides === 6) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+        <rect x="4" y="4" width="16" height="16" rx="2.5" />
+        <circle cx="9" cy="9" r="1" fill="currentColor" stroke="none" />
+        <circle cx="15" cy="15" r="1" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  if (sides === 8) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+        <polygon points="12,2.5 21,12 12,21.5 3,12" />
+        <line x1="3" y1="12" x2="21" y2="12" strokeOpacity="0.45" />
+      </svg>
+    );
+  }
+  if (sides === 10) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+        <polygon points="12,2.5 20.5,10.5 12,21.5 3.5,10.5" />
+        <polyline points="3.5,10.5 12,14 20.5,10.5" strokeOpacity="0.45" />
+      </svg>
+    );
+  }
+  if (sides === 12) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+        <polygon points="12,2.5 20.8,8.8 17.5,19.5 6.5,19.5 3.2,8.8" />
+        <polygon points="12,6.8 16.5,10.1 14.8,15.5 9.2,15.5 7.5,10.1" strokeOpacity="0.4" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" className={className}>
+      <polygon points="12,2.5 20.2,7.2 20.2,16.8 12,21.5 3.8,16.8 3.8,7.2" />
+      <polygon points="12,6.2 17.2,15.4 6.8,15.4" strokeOpacity="0.45" />
+    </svg>
+  );
+}
+
+// Normaliza metadados de qualquer rolagem (legada unitária ou múltipla, ex: 3d20)
+function normalizeRollMeta(rollObj) {
+  if (!rollObj) return null;
+  const sides = Number(rollObj.sides) || 20;
+  const results =
+    Array.isArray(rollObj.results) && rollObj.results.length > 0
+      ? rollObj.results.map((v) => Number(v))
+      : [Number(rollObj.roll) || 0];
+  const count = Number(rollObj.count) || results.length || 1;
+  const total =
+    Number.isFinite(Number(rollObj.total))
+      ? Number(rollObj.total)
+      : Number.isFinite(Number(rollObj.roll))
+      ? Number(rollObj.roll)
+      : results.reduce((acc, v) => acc + v, 0);
+  const formula = rollObj.formula || (count > 1 ? `${count}d${sides}` : `d${sides}`);
+  const allMax =
+    rollObj.all_max !== undefined
+      ? Boolean(rollObj.all_max)
+      : results.every((v) => v === sides);
+  const isMax = Boolean(rollObj.is_max || rollObj.isMax || rollObj.isCrit || rollObj.is_crit);
+  const isFumble = Boolean(rollObj.is_fumble || rollObj.isFumble);
+  const highest = results.length > 0 ? Math.max(...results) : total;
+  const lowest = results.length > 0 ? Math.min(...results) : total;
+  return {
+    sides,
+    count,
+    results,
+    total,
+    formula,
+    allMax,
+    isMax,
+    isFumble,
+    highest,
+    lowest,
+  };
+}
 
 // Mapeamento visual estrito de ícones para as Condições de Status (D&D 5.5e / 5e)
 const CONDITION_ICONS = {
@@ -114,55 +207,147 @@ export function TacticalMapCanvas({
   const [localTokenPositions, setLocalTokenPositions] = useState({});
   const justDraggedRef = useRef(false);
 
-  // Dimensões Naturais e Proporção da Imagem (Exibição por inteiro sem cortar bordas)
-  const [naturalDimensions, setNaturalDimensions] = useState({ width: 1400, height: 900 });
+  // Dimensões Naturais Exatas em Pixels Reais e Carregamento Progressivo HD
+  const [naturalDimensions, setNaturalDimensions] = useState({
+    width: Number(map?.naturalWidth) || 1400,
+    height: Number(map?.naturalHeight) || 900,
+  });
+  const [resolvedImageUrl, setResolvedImageUrl] = useState(map?.imageUrl || '');
+  const [loadingHd, setLoadingHd] = useState(false);
   const [imageStatus, setImageStatus] = useState('loading'); // 'loading' | 'loaded' | 'error'
+  const zoomBoundsRef = useRef({ min: 0.1, max: 4.5 });
 
+  // Sincroniza configurações de grade ao trocar de mapa
   useEffect(() => {
-    if (map?.imageUrl) {
-      setImageStatus('loading');
+    setShowGrid(map?.gridType !== 'none');
+    setGridOpacity(map?.gridOpacity ?? 0.25);
+    if (map?.autoGrid) {
+      setGridSize(computeAutoGridSize(naturalDimensions.width, naturalDimensions.height));
+    } else if (Number.isFinite(Number(map?.gridSize)) && Number(map?.gridSize) >= 10) {
+      setGridSize(Number(map.gridSize));
+    } else {
+      setGridSize(computeAutoGridSize(naturalDimensions.width, naturalDimensions.height));
+    }
+  }, [map?.id, map?.gridType, map?.gridSize, map?.gridOpacity, map?.autoGrid, naturalDimensions.width, naturalDimensions.height]);
+
+  // Carrega imagem do mapa preservando dimensões exatas em pixels (com upgrade automático de chunks HD)
+  useEffect(() => {
+    let cancelled = false;
+    const baseUrl = map?.imageUrl || '';
+    const hasSavedDims =
+      Number.isFinite(Number(map?.naturalWidth)) &&
+      Number(map?.naturalWidth) > 0 &&
+      Number.isFinite(Number(map?.naturalHeight)) &&
+      Number(map?.naturalHeight) > 0;
+
+    if (hasSavedDims) {
+      setNaturalDimensions({
+        width: Math.round(Number(map.naturalWidth)),
+        height: Math.round(Number(map.naturalHeight)),
+      });
+    }
+
+    setResolvedImageUrl(baseUrl);
+    setLoadingHd(false);
+
+    if (!baseUrl) {
+      setImageStatus('loaded');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setImageStatus('loading');
+
+    const probeUrl = (url, allowDimUpdate) => {
       const probe = new Image();
       probe.onload = () => {
+        if (cancelled) return;
         const w = probe.naturalWidth || 1400;
         const h = probe.naturalHeight || 900;
-        setNaturalDimensions({ width: w, height: h });
+        if (allowDimUpdate || !hasSavedDims) {
+          setNaturalDimensions({ width: w, height: h });
+        }
         setImageStatus('loaded');
       };
       probe.onerror = () => {
-        setImageStatus('error');
+        if (!cancelled) setImageStatus('error');
       };
-      probe.src = map.imageUrl;
-    } else {
-      setImageStatus('loaded');
-    }
-  }, [map?.id, map?.imageUrl]);
+      probe.src = url;
+    };
 
-  // Cálculo das dimensões reais preservando proporção natural da imagem
-  const mapDisplaySize = useMemo(() => {
-    const { width, height } = naturalDimensions;
-    const ratio = width > 0 && height > 0 ? width / height : 1.5;
-    let baseW = 1400;
-    let baseH = Math.round(baseW / ratio);
-    if (ratio < 0.75) {
-      baseH = 1200;
-      baseW = Math.round(baseH * ratio);
+    const hasHdChunks = Number(map?.hd_chunk_count || 0) > 0;
+    probeUrl(baseUrl, !hasHdChunks);
+
+    if (hasHdChunks) {
+      setLoadingHd(true);
+      loadMapHdImageUrl({
+        id: map?.id,
+        imageUrl: baseUrl,
+        hd_chunk_count: map?.hd_chunk_count,
+        hd_mime_type: map?.hd_mime_type,
+      })
+        .then((hdUrl) => {
+          if (cancelled) return;
+          if (hdUrl && hdUrl !== baseUrl) {
+            setResolvedImageUrl(hdUrl);
+            probeUrl(hdUrl, true);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setLoadingHd(false);
+        });
     }
-    return { width: baseW, height: baseH };
+
+    return () => {
+      cancelled = true;
+    };
+  }, [map?.id, map?.imageUrl, map?.hd_chunk_count, map?.hd_mime_type, map?.naturalWidth, map?.naturalHeight]);
+
+  // Dimensões EXATAS em pixels reais da imagem (sem redução artificial para 1400px)
+  const mapDisplaySize = useMemo(() => {
+    const w = Math.max(100, Math.round(Number(naturalDimensions.width) || 1400));
+    const h = Math.max(100, Math.round(Number(naturalDimensions.height) || 900));
+    return { width: w, height: h };
   }, [naturalDimensions]);
 
-  // Ajustar mapa à tela (Fit to screen — essencial para notebooks e telas menores)
-  const handleFitToScreen = useCallback(() => {
+  // Fator proporcional para manter tokens, rótulos, pings e régua nítidos e proporcionais em mapas de qualquer resolução (600px a 8K)
+  const mapScaleFactor = useMemo(() => {
+    const w = mapDisplaySize.width || 1400;
+    const h = mapDisplaySize.height || 900;
+    const ratio = w / Math.max(1, h);
+    const refFactor = ratio < 0.75 ? h / 1200 : w / 1400;
+    return Math.max(0.55, Math.min(4.0, Math.round(refFactor * 1000) / 1000));
+  }, [mapDisplaySize]);
+
+  // Calcula limites de zoom dinâmicos compatíveis com resoluções exatas (ex: 4K/8K em telas menores)
+  const computeFitAndBounds = useCallback(() => {
     const container = containerRef.current;
-    if (!container || !mapDisplaySize.width || !mapDisplaySize.height) return;
+    if (!container || !mapDisplaySize.width || !mapDisplaySize.height) {
+      return { fitScale: 1.0, minZoom: 0.1, maxZoom: 4.5 };
+    }
     const cWidth = Math.max(240, container.clientWidth - 24);
     const cHeight = Math.max(200, container.clientHeight - 24);
     const scaleW = cWidth / mapDisplaySize.width;
     const scaleH = cHeight / mapDisplaySize.height;
-    const fitScale = Math.min(scaleW, scaleH);
-    const rounded = Math.max(0.25, Math.min(2.5, Math.round(fitScale * 100) / 100));
-    setZoom(rounded);
-    setPan({ x: 0, y: 0 });
+    const rawFit = Math.min(scaleW, scaleH);
+    const minZoom = Math.min(0.25, Math.max(0.04, Math.round(rawFit * 0.6 * 1000) / 1000));
+    const maxZoom = Math.max(
+      4.0,
+      Math.min(8.0, Math.round(Math.max(1, 2400 / Math.max(mapDisplaySize.width, mapDisplaySize.height)) * 3.5 * 10) / 10)
+    );
+    const fitScale = Math.max(minZoom, Math.min(maxZoom, Math.round(rawFit * 1000) / 1000));
+    zoomBoundsRef.current = { min: minZoom, max: maxZoom };
+    return { fitScale, minZoom, maxZoom };
   }, [mapDisplaySize]);
+
+  // Ajustar mapa à tela (Fit to screen — essencial para notebooks, telas menores e mapas 4K)
+  const handleFitToScreen = useCallback(() => {
+    const { fitScale } = computeFitAndBounds();
+    setZoom(fitScale);
+    setPan({ x: 0, y: 0 });
+  }, [computeFitAndBounds]);
 
   // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro na viewport
   useEffect(() => {
@@ -174,7 +359,7 @@ export function TacticalMapCanvas({
     }
   }, [map?.id, imageStatus, fullViewport, handleFitToScreen]);
 
-  // Zoom suave com Scroll do Mouse dentro do mapa sem rolar a página externa
+  // Zoom suave proporcional com Scroll do Mouse dentro do mapa sem rolar a página externa
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -186,9 +371,9 @@ export function TacticalMapCanvas({
       // Impede a rolagem vertical/horizontal da página
       e.preventDefault();
 
-      // deltaY < 0: scroll para cima (aumenta o zoom) | deltaY > 0: scroll para baixo (diminui o zoom)
-      const zoomStep = e.deltaY < 0 ? 0.12 : -0.12;
-      setZoom((z) => Math.min(3.5, Math.max(0.35, Math.round((z + zoomStep) * 100) / 100)));
+      const { min, max } = zoomBoundsRef.current;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setZoom((z) => Math.min(max, Math.max(min, Math.round(z * factor * 1000) / 1000)));
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
@@ -257,6 +442,8 @@ export function TacticalMapCanvas({
   const MAX_ROLL_HISTORY = 15;
   const [sidebarPanel, setSidebarPanel] = useState(map?.combat_active ? 'initiative' : null);
   const [mobileRailOpen, setMobileRailOpen] = useState(true);
+  const [diceCount, setDiceCount] = useState(1);
+  const [diceCountInput, setDiceCountInput] = useState('1');
   const [recentRoll, setRecentRoll] = useState(null);
   const [active3DRoll, setActive3DRoll] = useState(null);
   const [sharedBannerRoll, setSharedBannerRoll] = useState(null);
@@ -265,6 +452,12 @@ export function TacticalMapCanvas({
   const processedRollKeysRef = useRef(new Set());
   const initialHistorySeededRef = useRef(false);
   const bannerTimerRef = useRef(null);
+
+  const updateDiceCount = (nextVal) => {
+    const clamped = Math.max(1, Math.min(20, Math.floor(Number(nextVal) || 1)));
+    setDiceCount(clamped);
+    setDiceCountInput(String(clamped));
+  };
 
   const toggleSidebarPanel = (panel) => {
     setSidebarPanel((prev) => (prev === panel ? null : panel));
@@ -278,7 +471,7 @@ export function TacticalMapCanvas({
     }
     bannerTimerRef.current = setTimeout(() => {
       setSharedBannerRoll((cur) => (cur?.seed === rollObj.seed ? null : cur));
-    }, 4200);
+    }, 4800);
   }, []);
 
   useEffect(() => {
@@ -289,7 +482,7 @@ export function TacticalMapCanvas({
 
   const getRollSeedKey = useCallback((r) => {
     if (!r) return '';
-    return r.seed ? `${r.seed}_${r.sides}_${r.roll}` : String(r.id || '');
+    return r.seed ? `${r.seed}_${r.count || 1}d${r.sides}_${r.roll}` : String(r.id || '');
   }, []);
 
   const getRollTime = useCallback((r) => {
@@ -341,7 +534,7 @@ export function TacticalMapCanvas({
         }
       } catch {}
 
-      // Transmite o resultado consolidado para todos os outros jogadores e Mestre exatamente quando o dado para
+      // Transmite o resultado consolidado para todos os outros jogadores e Mestre exatamente quando os dados param
       if (onDiceRoll && map?.id) {
         try {
           await onDiceRoll({
@@ -350,6 +543,8 @@ export function TacticalMapCanvas({
             user_name: settledRoll.user_name || currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
             user_role: settledRoll.user_role || (isMaster ? 'master' : 'player'),
             sides: settledRoll.sides,
+            count: settledRoll.count || 1,
+            results: settledRoll.results || [settledRoll.roll],
             roll: settledRoll.roll,
             seed: settledRoll.seed,
           });
@@ -425,9 +620,15 @@ export function TacticalMapCanvas({
     }
   }, [tokens, localDraggingId]);
 
-  // Controle de Zoom
-  const handleZoomIn = () => setZoom((z) => Math.min(3.5, Math.round((z + 0.15) * 100) / 100));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.35, Math.round((z - 0.15) * 100) / 100));
+  // Controle de Zoom (suporta escalas exatas de imagens pequenas até mapas 4K/8K)
+  const handleZoomIn = () => {
+    const { min, max } = zoomBoundsRef.current;
+    setZoom((z) => Math.min(max, Math.max(min, Math.round(z * 1.15 * 1000) / 1000)));
+  };
+  const handleZoomOut = () => {
+    const { min, max } = zoomBoundsRef.current;
+    setZoom((z) => Math.min(max, Math.max(min, Math.round((z / 1.15) * 1000) / 1000)));
+  };
   const handleResetView = () => {
     setZoom(1.0);
     setPan({ x: 0, y: 0 });
@@ -671,14 +872,30 @@ export function TacticalMapCanvas({
     setInspectModalOpen(true);
   };
 
-  // Rolador Rápido de Dados com Simulação 3D e Transmissão em Tempo Real
-  const rollDice = async (sides) => {
+  // Rolador Rápido de Dados (1 a 20 dados simultâneos, ex: d20, 3d20, 4d4) com Simulação 3D e Transmissão em Tempo Real
+  const rollDice = async (sides, explicitCount = null) => {
     const validSides = [4, 6, 8, 10, 12, 20].includes(Number(sides)) ? Number(sides) : 20;
-    // Probabilidade 100% matemática uniforme (1 a N)
-    const roll = Math.floor(Math.random() * validSides) + 1;
-    const isCrit = validSides === 20 && roll === 20;
-    const isMax = roll === validSides;
-    const isFumble = validSides === 20 && roll === 1;
+    const safeCount = Math.max(
+      1,
+      Math.min(20, Math.floor(Number(explicitCount ?? diceCount) || 1))
+    );
+
+    // Probabilidade 100% matemática uniforme (1 a N) para cada dado
+    const results = [];
+    for (let i = 0; i < safeCount; i += 1) {
+      results.push(Math.floor(Math.random() * validSides) + 1);
+    }
+
+    const total = results.reduce((acc, v) => acc + v, 0);
+    const maxHits = results.filter((v) => v === validSides).length;
+    const fumbleHits = validSides === 20 ? results.filter((v) => v === 1).length : 0;
+    const allMax = results.every((v) => v === validSides);
+    const allFumble = validSides === 20 && results.every((v) => v === 1);
+
+    const isCrit = validSides === 20 && maxHits > 0;
+    const isMax = safeCount === 1 ? results[0] === validSides : allMax || isCrit;
+    const isFumble = validSides === 20 && allFumble;
+    const formula = safeCount > 1 ? `${safeCount}d${validSides}` : `d${validSides}`;
     const seed = Math.random();
 
     const nowMs = Date.now();
@@ -689,7 +906,14 @@ export function TacticalMapCanvas({
       user_name: currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
       user_role: isMaster ? 'master' : 'player',
       sides: validSides,
-      roll,
+      count: safeCount,
+      results,
+      roll: total,
+      total,
+      formula,
+      max_hits: maxHits,
+      fumble_hits: fumbleHits,
+      all_max: allMax,
       seed,
       is_max: isMax,
       is_crit: isCrit,
@@ -701,10 +925,10 @@ export function TacticalMapCanvas({
       createdAt: { toMillis: () => nowMs },
     };
 
-    const seedKey = `${seed}_${validSides}_${roll}`;
+    const seedKey = `${seed}_${safeCount}d${validSides}_${total}`;
     processedRollKeysRef.current.add(localRoll.id);
     processedRollKeysRef.current.add(seedKey);
-    // O dado 3D roda apenas para a pessoa que girou; o resultado e a transmissão para todos ocorrem em handleRollSettled
+    // Os dados 3D rodam para quem arremessou; o resultado consolidado e a transmissão para todos ocorrem em handleRollSettled
     setRollingSeedKey(seedKey);
     setActive3DRoll(localRoll);
   };
@@ -1112,64 +1336,193 @@ export function TacticalMapCanvas({
                   </div>
                 </div>
 
-                {/* Rolador Rápido 3D */}
-                <div className="p-3.5 border-b border-white/10 space-y-2.5 shrink-0 bg-white/[0.02]">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                    Rolador D&amp;D 3D
-                  </span>
+                {/* Rolador Rápido 3D (1 dado em 1 clique ou múltiplos dados, ex: 3d20, 4d4) */}
+                <div className="p-3.5 border-b border-white/10 space-y-3 shrink-0 bg-white/[0.02]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Rolador D&amp;D 3D
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-white/8 border border-white/12 text-[10px] font-mono font-bold text-slate-200">
+                      {diceCount === 1 ? '1 dado' : `${diceCount} dados`}
+                    </span>
+                  </div>
+
+                  {/* Seletor Intuitivo de Quantidade de Dados (1 a 20) */}
+                  <div className="p-2 rounded-xl bg-[#0c101b] border border-white/12 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pl-0.5">
+                        Quantidade
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateDiceCount(diceCount - 1)}
+                          disabled={diceCount <= 1}
+                          aria-label="Diminuir quantidade de dados"
+                          className="h-7 w-7 rounded-lg bg-white/8 border border-white/12 hover:bg-white/15 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center text-white transition-colors"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          inputMode="numeric"
+                          aria-label="Quantidade de dados para rolar"
+                          value={diceCountInput}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setDiceCountInput(raw);
+                            const parsed = parseInt(raw, 10);
+                            if (Number.isFinite(parsed) && parsed >= 1) {
+                              setDiceCount(Math.min(20, parsed));
+                            }
+                          }}
+                          onBlur={() => updateDiceCount(diceCountInput)}
+                          className="w-11 h-7 rounded-lg bg-[#0c101b] border border-white/15 text-center text-xs font-mono font-black text-white focus:outline-none focus:border-white/35 tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateDiceCount(diceCount + 1)}
+                          disabled={diceCount >= 20}
+                          aria-label="Aumentar quantidade de dados"
+                          className="h-7 w-7 rounded-lg bg-white/8 border border-white/12 hover:bg-white/15 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center text-white transition-colors"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Atalhos Rápidos de Quantidade (1x sempre em 1 toque) */}
+                    <div className="grid grid-cols-6 gap-1">
+                      {DICE_QUICK_COUNTS.map((qty) => {
+                        const active = diceCount === qty;
+                        return (
+                          <button
+                            key={qty}
+                            type="button"
+                            onClick={() => updateDiceCount(qty)}
+                            title={qty === 1 ? 'Rolar 1 dado por vez' : `Rolar ${qty} dados de vez`}
+                            className={cn(
+                              'py-1 rounded-lg text-[10px] font-mono font-bold border transition-all text-center',
+                              active
+                                ? 'bg-white/18 border-white/35 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
+                                : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            )}
+                          >
+                            {qty}x
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Grade de Poliedros (exibe d20 quando 1x, ou 3d20 / 4d4 quando múltiplos) */}
                   <div className="grid grid-cols-3 gap-1.5">
-                    {[4, 6, 8, 10, 12, 20].map((sides) => (
-                      <button
-                        key={sides}
-                        type="button"
-                        onClick={() => rollDice(sides)}
-                        className="py-2 px-2 rounded-xl bg-white/[0.06] border border-white/12 hover:bg-white/15 hover:border-white/25 active:scale-95 text-xs font-mono font-bold text-white transition-all text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-                      >
-                        d{sides}
-                      </button>
-                    ))}
+                    {DICE_SIDES_LIST.map((sides) => {
+                      const label = diceCount > 1 ? `${diceCount}d${sides}` : `d${sides}`;
+                      return (
+                        <button
+                          key={sides}
+                          type="button"
+                          onClick={() => rollDice(sides)}
+                          title={`Rolar ${label}`}
+                          className="group py-2.5 px-2 rounded-xl bg-white/[0.06] border border-white/12 hover:bg-white/15 hover:border-white/25 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                        >
+                          <PolyhedronGlyph
+                            sides={sides}
+                            className="h-4 w-4 text-slate-300 group-hover:text-white transition-colors"
+                          />
+                          <span className="text-xs font-mono font-black text-white tracking-tight">
+                            {diceCount > 1 ? (
+                              <>
+                                <span className="text-slate-300">{diceCount}</span>d{sides}
+                              </>
+                            ) : (
+                              <>d{sides}</>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {rollingSeedKey && active3DRoll ? (
                     <div className="p-2.5 rounded-xl border border-white/15 bg-white/5 text-center animate-pulse">
                       <div className="text-[10px] uppercase font-bold text-slate-400">
-                        Rolando d{active3DRoll.sides}...
+                        Rolando {active3DRoll.formula || `d${active3DRoll.sides}`}...
                       </div>
                       <div className="text-xs font-bold font-mono text-slate-200 mt-0.5">
-                        Aguardando dado parar...
+                        {(active3DRoll.count || 1) > 1
+                          ? 'Aguardando dados pararem...'
+                          : 'Aguardando dado parar...'}
                       </div>
                     </div>
                   ) : (
-                    recentRoll && (
-                      <div
-                        key={recentRoll.id || recentRoll.seed}
-                        className={cn(
-                          'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95',
-                          recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit
-                            ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
-                            : recentRoll.is_fumble || recentRoll.isFumble
-                            ? 'bg-rose-500/15 border-rose-400/50 text-rose-200'
-                            : 'bg-white/8 border-white/15 text-white'
-                        )}
-                      >
-                        <div className="text-[10px] uppercase font-bold text-slate-400">
-                          Último Resultado (d{recentRoll.sides})
-                        </div>
-                        <div className="text-2xl font-black font-mono leading-tight mt-0.5">
-                          {recentRoll.roll}
-                        </div>
-                        {(recentRoll.is_max || recentRoll.isMax || recentRoll.isCrit) && (
-                          <div className="text-[10px] font-bold text-amber-300 mt-0.5">
-                            Sucesso Máximo!
+                    recentRoll && (() => {
+                      const meta = normalizeRollMeta(recentRoll);
+                      if (!meta) return null;
+                      return (
+                        <div
+                          key={recentRoll.id || recentRoll.seed}
+                          className={cn(
+                            'p-2.5 rounded-xl border text-center transition-all animate-in fade-in zoom-in-95 space-y-1.5',
+                            meta.isMax
+                              ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
+                              : meta.isFumble
+                              ? 'bg-rose-500/15 border-rose-400/50 text-rose-200'
+                              : 'bg-white/8 border-white/15 text-white'
+                          )}
+                        >
+                          <div className="text-[10px] uppercase font-bold text-slate-400">
+                            Último Resultado ({meta.formula})
                           </div>
-                        )}
-                        {(recentRoll.is_fumble || recentRoll.isFumble) && (
-                          <div className="text-[10px] font-bold text-rose-300 mt-0.5">
-                            Falha Crítica!
+                          <div className="text-2xl font-black font-mono leading-tight">
+                            {meta.total}
                           </div>
-                        )}
-                      </div>
-                    )
+
+                          {meta.results.length > 1 && (
+                            <div className="flex flex-wrap items-center justify-center gap-1 pt-0.5">
+                              {meta.results.map((val, i) => (
+                                <span
+                                  key={i}
+                                  className={cn(
+                                    'px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border leading-none',
+                                    val === meta.sides
+                                      ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                                      : meta.sides === 20 && val === 1
+                                      ? 'bg-rose-500/20 border-rose-400/50 text-rose-200'
+                                      : 'bg-black/40 border-white/15 text-slate-200'
+                                  )}
+                                >
+                                  {val}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {meta.sides === 20 && meta.results.length > 1 && (
+                            <div className="text-[10px] font-mono text-slate-300">
+                              Maior: <span className="font-bold text-white">{meta.highest}</span> • Menor:{' '}
+                              <span className="font-bold text-white">{meta.lowest}</span>
+                            </div>
+                          )}
+
+                          {meta.isMax && (
+                            <div className="text-[10px] font-bold text-amber-300">
+                              {meta.count > 1 && !meta.allMax
+                                ? 'Crítico Natural!'
+                                : 'Sucesso Máximo!'}
+                            </div>
+                          )}
+                          {meta.isFumble && (
+                            <div className="text-[10px] font-bold text-rose-300">
+                              Falha Crítica!
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
 
@@ -1186,7 +1539,7 @@ export function TacticalMapCanvas({
                           {active3DRoll.user_name || 'Aventureiro'}
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono">
-                          Rolando d{active3DRoll.sides}...
+                          Rolando {active3DRoll.formula || `d${active3DRoll.sides}`}...
                         </div>
                       </div>
                       <div className="h-7 w-7 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center font-mono text-xs font-bold text-slate-300">
@@ -1201,8 +1554,8 @@ export function TacticalMapCanvas({
                     </div>
                   ) : (
                     rollHistory.map((item, idx) => {
-                      const isMax = Boolean(item.is_max || item.isMax || item.isCrit || item.is_crit);
-                      const isFumble = Boolean(item.is_fumble || item.isFumble);
+                      const meta = normalizeRollMeta(item);
+                      if (!meta) return null;
                       const itemKey = getRollSeedKey(item) || item.id || idx;
 
                       return (
@@ -1210,9 +1563,9 @@ export function TacticalMapCanvas({
                           key={itemKey}
                           className={cn(
                             'flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl border transition-all',
-                            isMax
+                            meta.isMax
                               ? 'bg-amber-950/40 border-amber-400/40 text-amber-100'
-                              : isFumble
+                              : meta.isFumble
                               ? 'bg-rose-950/40 border-rose-400/40 text-rose-100'
                               : 'bg-white/[0.04] border-white/10 text-slate-200'
                           )}
@@ -1227,39 +1580,59 @@ export function TacticalMapCanvas({
                                 {item.user_name || 'Aventureiro'}
                               </span>
                             </div>
-                            <div className="flex items-center gap-1.5 mt-0.5 pl-4">
-                              <span className="text-[10px] font-mono font-semibold text-slate-400">
-                                d{item.sides}
+                            <div className="flex items-center flex-wrap gap-1.5 mt-0.5 pl-4">
+                              <span className="text-[10px] font-mono font-bold text-slate-300">
+                                {meta.formula}
                               </span>
                               {item.user_role === 'master' && (
                                 <span className="text-[9px] px-1 rounded bg-white/10 text-slate-300 font-semibold">
                                   Mestre
                                 </span>
                               )}
-                              {isMax && (
+                              {meta.isMax && (
                                 <span className="text-[9px] font-bold text-amber-300">
-                                  Máximo!
+                                  {meta.count > 1 && !meta.allMax ? 'Crítico!' : 'Máximo!'}
                                 </span>
                               )}
-                              {isFumble && (
+                              {meta.isFumble && (
                                 <span className="text-[9px] font-bold text-rose-400">
                                   Falha!
                                 </span>
                               )}
                             </div>
+
+                            {meta.results.length > 1 && (
+                              <div className="flex flex-wrap items-center gap-1 mt-1 pl-4">
+                                {meta.results.map((val, rIdx) => (
+                                  <span
+                                    key={rIdx}
+                                    className={cn(
+                                      'px-1 py-0.2 rounded text-[9px] font-mono font-bold border leading-tight',
+                                      val === meta.sides
+                                        ? 'bg-amber-500/20 border-amber-400/45 text-amber-200'
+                                        : meta.sides === 20 && val === 1
+                                        ? 'bg-rose-500/20 border-rose-400/45 text-rose-200'
+                                        : 'bg-black/35 border-white/10 text-slate-300'
+                                    )}
+                                  >
+                                    {val}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
 
                           <div
                             className={cn(
-                              'h-8 min-w-[2rem] px-1.5 rounded-lg flex items-center justify-center font-mono font-black text-sm shrink-0 border',
-                              isMax
+                              'h-8 min-w-[2.25rem] px-2 rounded-lg flex items-center justify-center font-mono font-black text-sm shrink-0 border',
+                              meta.isMax
                                 ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
-                                : isFumble
+                                : meta.isFumble
                                 ? 'bg-rose-500/20 border-rose-400/50 text-rose-300'
                                 : 'bg-white/10 border-white/15 text-white'
                             )}
                           >
-                            {item.roll}
+                            {meta.total}
                           </div>
                         </div>
                       );
@@ -1399,69 +1772,110 @@ export function TacticalMapCanvas({
           </div>
         )}
 
-      {/* BANNER SUPERIOR DE RESULTADO SINCRONIZADO PARA TODOS (EXIBIDO APENAS APÓS O DADO PARAR DE ROLAR) */}
-      {sharedBannerRoll && (
-        <div
-          key={getRollSeedKey(sharedBannerRoll)}
-          className={cn(
-            'pointer-events-auto absolute top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-2xl transition-all duration-300 animate-in fade-in zoom-in-95',
-            sharedBannerRoll.is_max || sharedBannerRoll.isMax
-              ? 'bg-amber-950/90 border-amber-400/70 text-amber-200 shadow-[0_0_35px_rgba(245,158,11,0.3)]'
-              : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble
-              ? 'bg-rose-950/90 border-rose-400/70 text-rose-200 shadow-[0_0_35px_rgba(244,63,94,0.3)]'
-              : 'bg-[#0c101b]/92 border-white/20 text-white shadow-[0_0_30px_rgba(0,0,0,0.75)]'
-          )}
-        >
+      {/* BANNER SUPERIOR DE RESULTADO SINCRONIZADO PARA TODOS (EXIBIDO APENAS APÓS OS DADOS PARAREM DE ROLAR) */}
+      {sharedBannerRoll && (() => {
+        const meta = normalizeRollMeta(sharedBannerRoll);
+        if (!meta) return null;
+        return (
           <div
+            key={getRollSeedKey(sharedBannerRoll)}
             className={cn(
-              'h-11 w-11 rounded-xl flex items-center justify-center font-black font-mono text-xl shadow-inner shrink-0',
-              sharedBannerRoll.is_max || sharedBannerRoll.isMax
-                ? 'bg-amber-500/25 border border-amber-400/60 text-amber-300'
-                : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble
-                ? 'bg-rose-500/25 border border-rose-400/60 text-rose-300'
-                : 'bg-white/10 border border-white/15 text-white'
+              'pointer-events-auto absolute top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-2xl transition-all duration-300 animate-in fade-in zoom-in-95 max-w-[min(92vw,460px)]',
+              meta.isMax
+                ? 'bg-amber-950/90 border-amber-400/70 text-amber-200 shadow-[0_0_35px_rgba(245,158,11,0.3)]'
+                : meta.isFumble
+                ? 'bg-rose-950/90 border-rose-400/70 text-rose-200 shadow-[0_0_35px_rgba(244,63,94,0.3)]'
+                : 'bg-[#0c101b]/92 border-white/20 text-white shadow-[0_0_30px_rgba(0,0,0,0.75)]'
             )}
           >
-            {sharedBannerRoll.roll}
-          </div>
-
-          <div className="space-y-0.5 min-w-0">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
-              <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-              <span className="truncate max-w-[160px] font-bold text-white">
-                {sharedBannerRoll.user_name || 'Aventureiro'}
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                (d{sharedBannerRoll.sides})
-              </span>
+            <div
+              className={cn(
+                'min-w-[2.75rem] h-11 px-2 rounded-xl flex items-center justify-center font-black font-mono text-xl shadow-inner shrink-0',
+                meta.isMax
+                  ? 'bg-amber-500/25 border border-amber-400/60 text-amber-300'
+                  : meta.isFumble
+                  ? 'bg-rose-500/25 border border-rose-400/60 text-rose-300'
+                  : 'bg-white/10 border border-white/15 text-white'
+              )}
+            >
+              {meta.total}
             </div>
 
-            <div className="text-sm font-black tracking-wide">
-              {sharedBannerRoll.is_max || sharedBannerRoll.isMax ? (
-                <span className="text-amber-300 flex items-center gap-1">
-                  <Zap className="h-4 w-4" />
-                  SUCESSO MÁXIMO! ({sharedBannerRoll.roll})
+            <div className="space-y-0.5 min-w-0">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <span className="truncate max-w-[160px] font-bold text-white">
+                  {sharedBannerRoll.user_name || 'Aventureiro'}
                 </span>
-              ) : sharedBannerRoll.is_fumble || sharedBannerRoll.isFumble ? (
-                <span className="text-rose-400 font-bold">
-                  FALHA CRÍTICA! (1)
+                <span className="px-1.5 py-0.2 rounded bg-white/10 border border-white/15 text-[10px] text-slate-200 font-mono font-bold shrink-0">
+                  {meta.formula}
                 </span>
-              ) : (
-                <span className="text-slate-100">
-                  Rolou {sharedBannerRoll.roll} no d{sharedBannerRoll.sides}
-                </span>
+              </div>
+
+              <div className="text-sm font-black tracking-wide">
+                {meta.isMax ? (
+                  <span className="text-amber-300 flex items-center gap-1">
+                    <Zap className="h-4 w-4 shrink-0" />
+                    {meta.count > 1 && !meta.allMax
+                      ? `CRÍTICO NO ${meta.formula}! (Total ${meta.total})`
+                      : `SUCESSO MÁXIMO! (${meta.total})`}
+                  </span>
+                ) : meta.isFumble ? (
+                  <span className="text-rose-400 font-bold">
+                    FALHA CRÍTICA! ({meta.total})
+                  </span>
+                ) : (
+                  <span className="text-slate-100">
+                    {meta.count > 1
+                      ? `Rolou ${meta.formula} • Total ${meta.total}`
+                      : `Rolou ${meta.total} no ${meta.formula}`}
+                  </span>
+                )}
+              </div>
+
+              {meta.results.length > 1 && (
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  {meta.results.map((val, i) => (
+                    <span
+                      key={i}
+                      className={cn(
+                        'px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border leading-none',
+                        val === meta.sides
+                          ? 'bg-amber-500/25 border-amber-400/55 text-amber-200'
+                          : meta.sides === 20 && val === 1
+                          ? 'bg-rose-500/25 border-rose-400/55 text-rose-200'
+                          : 'bg-white/10 border-white/15 text-slate-200'
+                      )}
+                    >
+                      {val}
+                    </span>
+                  ))}
+                  {meta.sides === 20 && (
+                    <span className="text-[10px] font-mono text-slate-300 ml-1">
+                      • Maior {meta.highest} / Menor {meta.lowest}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
-          </div>
 
-          <button
-            type="button"
-            onClick={() => setSharedBannerRoll(null)}
-            className="ml-2 h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-            title="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </button>
+            <button
+              type="button"
+              onClick={() => setSharedBannerRoll(null)}
+              className="ml-1 h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              title="Fechar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Indicador discreto durante upgrade progressivo de textura HD */}
+      {loadingHd && (
+        <div className="pointer-events-none absolute bottom-3 right-3 z-30 flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0c101b]/90 border border-white/15 text-[10px] font-mono text-slate-300 backdrop-blur-xl shadow-lg">
+          <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
+          Aprimorando mapa para HD...
         </div>
       )}
 
@@ -1492,8 +1906,8 @@ export function TacticalMapCanvas({
             transformOrigin: 'center center',
           }}
         >
-          {/* Imagem do Mapa: Exibição por inteiro com object-contain e maior qualidade */}
-          {map?.imageUrl ? (
+          {/* Imagem do Mapa: Exibição 1:1 no tamanho exato em pixels e qualidade máxima */}
+          {resolvedImageUrl || map?.imageUrl ? (
             <>
               {imageStatus === 'loading' && (
                 <div className="absolute inset-0 rounded-lg bg-slate-950/80 flex flex-col items-center justify-center gap-2.5 text-slate-300 font-mono text-xs z-10 backdrop-blur-sm pointer-events-none">
@@ -1537,12 +1951,23 @@ export function TacticalMapCanvas({
                 </div>
               ) : (
                 <img
-                  key={map.id + (map.imageUrl ? map.imageUrl.slice(0, 40) : '')}
-                  src={map.imageUrl}
+                  key={`${map.id}_${(resolvedImageUrl || map.imageUrl || '').slice(0, 48)}`}
+                  src={resolvedImageUrl || map.imageUrl}
                   alt={map.title || 'Mapa Tático'}
                   draggable={false}
+                  decoding="async"
+                  loading="eager"
                   referrerPolicy="no-referrer"
-                  onLoad={() => setImageStatus('loaded')}
+                  onLoad={(e) => {
+                    const nw = e.currentTarget?.naturalWidth;
+                    const nh = e.currentTarget?.naturalHeight;
+                    if (nw > 0 && nh > 0 && (!map?.hd_chunk_count || (resolvedImageUrl && resolvedImageUrl !== map.imageUrl))) {
+                      setNaturalDimensions((prev) =>
+                        prev.width === nw && prev.height === nh ? prev : { width: nw, height: nh }
+                      );
+                    }
+                    setImageStatus('loaded');
+                  }}
                   onError={() => setImageStatus('error')}
                   className={cn(
                     'w-full h-full block pointer-events-none rounded-lg shadow-2xl object-fill transition-opacity duration-300',
@@ -1591,19 +2016,19 @@ export function TacticalMapCanvas({
                 x2={`${rulerCurrent.x}%`}
                 y2={`${rulerCurrent.y}%`}
                 stroke="#38bdf8"
-                strokeWidth="2.5"
-                strokeDasharray="6 4"
+                strokeWidth={2.5 * mapScaleFactor}
+                strokeDasharray={`${6 * mapScaleFactor} ${4 * mapScaleFactor}`}
               />
-              <circle cx={`${rulerStart.x}%`} cy={`${rulerStart.y}%`} r="4" fill="#38bdf8" />
-              <circle cx={`${rulerCurrent.x}%`} cy={`${rulerCurrent.y}%`} r="5" fill="#38bdf8" />
+              <circle cx={`${rulerStart.x}%`} cy={`${rulerStart.y}%`} r={4 * mapScaleFactor} fill="#38bdf8" />
+              <circle cx={`${rulerCurrent.x}%`} cy={`${rulerCurrent.y}%`} r={5 * mapScaleFactor} fill="#38bdf8" />
               <text
                 x={`${(rulerStart.x + rulerCurrent.x) / 2}%`}
                 y={`${(rulerStart.y + rulerCurrent.y) / 2}%`}
                 fill="#ffffff"
-                fontSize="12"
+                fontSize={12 * mapScaleFactor}
                 fontWeight="bold"
                 textAnchor="middle"
-                dy="-8"
+                dy={-8 * mapScaleFactor}
                 className="font-mono bg-black"
               >
                 {rulerDistance}m ({Math.round(rulerDistance * 3.28)} ft)
@@ -1621,11 +2046,12 @@ export function TacticalMapCanvas({
             return (
               <div
                 key={p.id || idx}
-                className="absolute pointer-events-none z-30 flex flex-col items-center justify-center -translate-x-1/2 -translate-y-1/2 transition-opacity duration-200"
+                className="absolute pointer-events-none z-30 flex flex-col items-center justify-center transition-opacity duration-200"
                 style={{
                   left: `${p.x}%`,
                   top: `${p.y}%`,
                   opacity: Math.max(0, Math.min(1, fadeRatio)),
+                  transform: `translate(-50%, -50%) scale(${mapScaleFactor})`,
                 }}
               >
                 {/* Ondas concêntricas de radar */}
@@ -1666,7 +2092,7 @@ export function TacticalMapCanvas({
             const isMovable = canMoveToken(token);
             const isCurrentTurn = map?.current_turn_token_id === token.id;
             const sizeCfg = TOKEN_SIZES[token.size] || TOKEN_SIZES.M;
-            const tokenPx = sizeCfg.px;
+            const tokenPx = Math.max(20, Math.round(sizeCfg.px * mapScaleFactor));
             const showHp = canViewTokenHp(token);
             const nameHidden = isTokenNameHiddenForViewer(token);
             const displayName = getVisibleTokenName(token, false);
@@ -1701,9 +2127,15 @@ export function TacticalMapCanvas({
                   isMovable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                 )}
               >
-                {/* Condições de Status Ativas com Ícones (Dobro do Tamanho: 32x32px / h-8 w-8 com ícone 20x20px / h-5 w-5) */}
+                {/* Condições de Status Ativas com Ícones (escaladas proporcionalmente à resolução exata do mapa) */}
                 {Array.isArray(token.conditions) && token.conditions.length > 0 && (
-                  <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 flex items-center justify-center gap-1 z-20 pointer-events-none">
+                  <div
+                    className="absolute bottom-full mb-1.5 left-1/2 flex items-center justify-center gap-1 z-20 pointer-events-none"
+                    style={{
+                      transform: `translateX(-50%) scale(${mapScaleFactor})`,
+                      transformOrigin: 'bottom center',
+                    }}
+                  >
                     {token.conditions.slice(0, 5).map((condId) => {
                       const meta = TOKEN_CONDITIONS.find((c) => c.id === condId);
                       const CondIcon = CONDITION_ICONS[condId];
@@ -1742,7 +2174,7 @@ export function TacticalMapCanvas({
                     background: token.avatar
                       ? '#0c101b'
                       : `radial-gradient(circle at 32% 28%, ${ringColor}ff 0%, ${ringColor}cc 55%, #090d16 100%)`,
-                    border: `2.5px solid ${ringColor}`,
+                    border: `${Math.max(2, Math.round(2.5 * mapScaleFactor))}px solid ${ringColor}`,
                     boxShadow: `inset 0 2px 4px rgba(255, 255, 255, 0.35), inset 0 -3px 6px rgba(0, 0, 0, 0.75), 0 6px 16px rgba(0, 0, 0, 0.8), 0 0 16px ${ringColor}66`,
                   }}
                 >
@@ -1766,7 +2198,10 @@ export function TacticalMapCanvas({
 
                   {/* Ícone de Oculto se for Token Invisível aos jogadores */}
                   {token.hidden && (
-                    <div className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-black/90 border border-amber-400/50 text-amber-300 shadow-lg">
+                    <div
+                      className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-black/90 border border-amber-400/50 text-amber-300 shadow-lg"
+                      style={{ transform: `scale(${Math.min(1.8, Math.max(0.85, mapScaleFactor))})` }}
+                    >
                       <EyeOff className="h-3.5 w-3.5" />
                     </div>
                   )}
@@ -1776,6 +2211,7 @@ export function TacticalMapCanvas({
                     <div
                       title="Aliado dos jogadores"
                       className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-emerald-950/95 border border-emerald-400/70 text-emerald-300 shadow-lg"
+                      style={{ transform: `scale(${Math.min(1.8, Math.max(0.85, mapScaleFactor))})` }}
                     >
                       <ShieldCheck className="h-3 w-3" />
                     </div>
@@ -1783,7 +2219,13 @@ export function TacticalMapCanvas({
                 </div>
 
                 {/* Rótulo de Vida e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
-                <div className="absolute top-full left-1/2 -translate-x-1/2 pt-1.5 flex flex-col items-center pointer-events-none z-10 w-40">
+                <div
+                  className="absolute top-full left-1/2 pt-1.5 flex flex-col items-center pointer-events-none z-10 w-40"
+                  style={{
+                    transform: `translateX(-50%) scale(${mapScaleFactor})`,
+                    transformOrigin: 'top center',
+                  }}
+                >
                   {/* Barra de Vida sob o Token (Oculta para jogadores em monstros não-aliados) */}
                   {showHp && (
                     <div className="w-12 h-1.5 bg-black/90 rounded-full overflow-hidden border border-white/25 shadow-md">

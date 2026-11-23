@@ -15,8 +15,8 @@
 
 ## Sistema de Mapas Táticos e Mesa Virtual (VTT)
 - **Mesa & Mapas para Mestrar (`MasterMapManager.jsx`, `PlayerMapView.jsx` & `TacticalMapCanvas.jsx`):**
-  - **Upload de Imagens em Alta Fidelidade (Sem Bordas Cortadas):** O Mestre pode subir qualquer imagem de mapa (PNG, JPG, WebP). O compressor client-side preserva proporção original até 1920px (qualidade 0.85) sob 820KB para o Firestore. O canvas tático calcula o aspecto natural da imagem e aplica `object-contain` em dimensões dinâmicas, garantindo exibição de 100% do mapa sem qualquer corte de bordas.
-  - **Zoom com Scroll do Mouse sem Rolar a Página:** Listener nativo com `{ passive: false }` e `e.preventDefault()` no canvas do mapa. O scroll do mouse dentro da área tática aumenta ou diminui o zoom suavemente (35% a 350%) sem deslocar o scroll vertical da página, funcionando perfeitamente tanto para o Mestre quanto para o Jogador.
+  - **Upload de Imagens na Máxima Qualidade e Tamanho Real Exato em Pixels (Sem Input Manual de px):** O Mestre pode subir ou arrastar qualquer imagem de mapa (PNG, JPG, WebP) ou informar uma URL. O campo manual de tamanho em `px` foi removido do modal de inserção: o sistema detecta automaticamente as dimensões exatas (`naturalWidth × naturalHeight`) e renderiza o mapa 1:1 no tamanho real da imagem. Imagens até 880 KB sobem intactas (zero perda); imagens intermediárias usam busca binária WebP HD preservando os pixels originais; mapas ultra-detalhados/4K+ são armazenados em chunks HD na subcoleção `maps/{mapId}/image_chunks` (com cache Blob URL em memória e fallback automático WebP de alta qualidade). A grade tática, os tokens, pings e régua escalam proporcionalmente à resolução real do mapa.
+  - **Zoom com Scroll do Mouse sem Rolar a Página:** Listener nativo com `{ passive: false }` e `e.preventDefault()` no canvas do mapa. O scroll do mouse dentro da área tática aplica zoom proporcional dinâmico calibrado à resolução exata da imagem (de mapas pequenos a 4K/8K) sem deslocar o scroll vertical da página, funcionando perfeitamente tanto para o Mestre quanto para o Jogador.
   - **Interface do Jogador Focada e Imersiva:** Removida a barra superior redundante da tela do jogador (`PlayerMapView.jsx`), permitindo que a mesa tática ocupe a visão limpa e imersiva do cenário.
   - **Ajuste Instantâneo à Tela (Fit View):** Botão `Maximize2` na barra de ferramentas enquadra o mapa inteiro no viewport com um clique.
   - **Barra de Ferramentas Minimalista (Apenas Ícones):** A barra superior não exibe textos redundantes ("Mover", "Régua", "Sinalizar", "Fixado", "Livre"), apresentando exclusivamente ícones limpos (`Move`, `Ruler`, `Crosshair`, `Lock`/`Unlock`, `Grid`, `Maximize2`, `Shield`, `Dices`) com tooltips explicativos e contador de cargas.
@@ -39,17 +39,17 @@
     * Limite estrito de 3 sinalizações a cada 15 segundos (não cumulativo, recarrega para 3 ao passar 15s).
     * Duração máxima de 5 segundos no mapa com contagem regressiva e fade out suave.
     * Desduplicação espacial (< 3%) e temporal (< 4.5s) elimina completamente ondas duplicadas no mapa.
-  - **Rolador Rápido de Dados Integrado:** HUD flutuante para rolagem imediata de d4, d6, d8, d10, d12 e d20 com detecção de críticos e vibração háptica.
-  - **Rolagem de Dados 3D na Mesa em Tempo Real (`TacticalDice3D.jsx`, `dice-audio.js` & `map_rolls`):**
-    * **Modelos Poliedrais 3D Oficiais (Three.js WebGL):** Geometrias precisas e texturizadas com CanvasTexture 256x256 para d4 (Tetrahedron), d6 (Box), d8 (Octahedron), d10 (Trapezoedro Pentagonal customizado), d12 (Dodecahedron) e d20 (Icosahedron).
-    * **Probabilidade Matemática e Faces 1:1:** Distribuição uniforme rigorosa (`Math.floor(Math.random() * sides) + 1`). Alinhamento por quaternions e interpolação esférica (SLERP) garantindo que a face correspondente ao resultado sorteado pouse voltada para cima em direção à câmera.
-    * **Física de Queda e Rolagem Fluida:** Animação de gravidade com amortecimento de quiques (bounce damping), dispersão aleatória de rotação e ondas de impacto visual no plano do mapa.
+  - **Rolador Rápido de Dados Unitário e Múltiplo Integrado (1 a 20 dados, ex: d20, 3d20, 4d4):** Painel lateral tático para Jogadores e Mestre com seletor intuitivo de quantidade (`1x`, `2x`, `3x`, `4x`, `6x`, `8x` + controles `-`/`+` e input numérico até 20), mantendo rolagem de 1 dado em 1 único clique por padrão. Exibe soma total, detalhamento individual de cada dado, destaque de críticos/falhas e indicador Maior/Menor em múltiplos d20.
+  - **Rolagem de Dados 3D na Mesa em Tempo Real (`TacticalDice3D.jsx`, `dice-audio.js` & `map_pings` / `map_rolls`):**
+    * **Modelos Poliedrais 3D Oficiais (Three.js WebGL) para 1 ou Múltiplos Dados Simultâneos:** Geometrias compartilhadas precisas e texturizadas (512x512 até 3 dados, 256x256 para 4+) para d4 (Tetrahedron), d6 (Box), d8 (Octahedron), d10 (Trapezoedro Pentagonal coplanar), d12 (Dodecahedron) e d20 (Icosahedron), com formação espacial sem colisões e enquadramento automático de câmera em qualquer tela.
+    * **Probabilidade Matemática e Faces 1:1:** Distribuição uniforme rigorosa (`Math.floor(Math.random() * sides) + 1`) por dado. Alinhamento matricial ortonormal individual voltado exatamente para a câmera garantindo que todos os números sorteados pousem legíveis e em pé.
+    * **Física de Queda e Rolagem Fluida:** Animação de gravidade escalonada com amortecimento de quiques (bounce damping), sombras de contato individuais e ondas de impacto visual no plano do mapa.
     * **Efeitos Sonoros Procedurais (Web Audio API):**
       - Síntese nativa em tempo real com osciladores e filtros, sem arquivos de áudio externos ou risco de 404.
-      - Impactos percussivos de madeira/resina nos quiques.
-      - Som agradável de sucesso (arpejo pentatônico C5-E5-G5-B5-C6) em resultados máximos (20 no d20, 12 no d12, 10 no d10, 8 no d8, 6 no d6 e 4 no d4).
-      - Som dramático de falha crítica (trítono dissonante Eb3 -> C3 -> Gb2 com filtro passa-baixa) para resultado 1 no d20.
-    * **Sincronização em Tempo Real Multiusuário:** Coleção `map_rolls` no Firestore com regras autenticadas. Disparo instantâneo e compartilhado entre Mestre e Jogadores, com banner translúcido contendo o nome de quem rolou, cargo (Mestre/Jogador), tipo de dado e resultado destacado.
+      - Impactos percussivos de madeira/resina nos quiques com throttling natural em rolagens múltiplas.
+      - Som agradável de sucesso (arpejo pentatônico C5-E5-G5-B5-C6) em resultados máximos ou críticos naturais no d20.
+      - Som dramático de falha crítica (trítono dissonante Eb3 -> C3 -> Gb2 com filtro passa-baixa) para resultado 1 no d20 (ou todos 1s em múltiplos d20).
+    * **Sincronização em Tempo Real Multiusuário:** Disparo instantâneo e compartilhado entre Mestre e Jogadores, com banner translúcido contendo nome, fórmula (`d20`, `3d20`, `4d4`), total destacado, chips individuais de cada dado e histórico das últimas 15 rolagens.
   - **Invisibilidade / Névoa:** Tokens de monstros podem ser ocultados dos jogadores até o momento do combate.
   - **Precisão Matemática de 100% nos Tokens (`TacticalMapCanvas.jsx` & `rpg-service.js`):**
     * **Coordenadas Sub-pixel e 4 Casas Decimais:** Precisão de 4 casas decimais (`0.0001%`), eliminando truncamentos numéricos que causavam pequenos saltos de pixels ao soltar o token no mapa.
