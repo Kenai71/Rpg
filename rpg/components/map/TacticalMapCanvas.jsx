@@ -80,8 +80,8 @@ import { cn } from '../../lib/utils';
 const DICE_QUICK_COUNTS = [1, 2, 3, 4, 6, 8];
 const DICE_SIDES_LIST = [4, 6, 8, 10, 12, 20];
 
-// Escala da régua e movimentação: 5x menor que o antigo fator 0.3 (antes 5m -> agora 1m)
-const RULER_METERS_PER_PCT = 0.06;
+// Escala da régua e movimentação: 5x mais detalhada que o antigo fator 0.3 (0.3 -> 1.5: mapa de ponta a ponta = 150m; 9m = 6% do mapa)
+const RULER_METERS_PER_PCT = 1.5;
 const DEFAULT_PLAYER_MOVE_LIMIT_M = 9;
 const MOVE_LIMIT_PRESETS = [4.5, 6, 9, 12, 15, 18, 30];
 
