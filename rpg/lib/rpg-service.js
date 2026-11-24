@@ -1615,6 +1615,56 @@ export async function broadcastMapDiceRoll({
   };
 }
 
+/**
+ * Limpa todo o histórico/chat de rolagens de dados da mesa (exclusivo do Mestre).
+ * Remove apenas documentos de rolagem de dados em `map_pings` e `map_rolls`,
+ * preservando pings de radar ativos e o documento de fallback de áudio `table_audio_state`.
+ */
+export async function clearMapDiceRollsHistory() {
+  const firestore = requireDb();
+  let deletedCount = 0;
+
+  try {
+    const pingsSnap = await getDocs(collection(firestore, 'map_pings'));
+    const pingRolls = pingsSnap.docs.filter((d) => {
+      const data = d.data();
+      return data?.event_type === 'dice_roll' || data?.roll !== undefined;
+    });
+    if (pingRolls.length > 0) {
+      await Promise.all(
+        pingRolls.map((d) => deleteDoc(doc(firestore, 'map_pings', d.id)))
+      );
+      deletedCount += pingRolls.length;
+    }
+  } catch (err) {
+    console.error('Erro ao limpar histórico de dados (map_pings):', err);
+    throw err;
+  }
+
+  try {
+    const rollsSnap = await getDocs(collection(firestore, 'map_rolls'));
+    const legacyRolls = rollsSnap.docs.filter((d) => {
+      if (d.id === 'table_audio_state') return false;
+      const data = d.data();
+      return (
+        data?.event_type === 'dice_roll' ||
+        data?.roll !== undefined ||
+        data?.sides !== undefined
+      );
+    });
+    if (legacyRolls.length > 0) {
+      await Promise.all(
+        legacyRolls.map((d) => deleteDoc(doc(firestore, 'map_rolls', d.id)))
+      );
+      deletedCount += legacyRolls.length;
+    }
+  } catch (err) {
+    console.warn('Aviso ao limpar histórico legado de map_rolls:', err);
+  }
+
+  return deletedCount;
+}
+
 // =========================================================================
 // FICHA EDITÁVEL EM PDF (Ficha.pdf) — SINCRONIZAÇÃO EM TEMPO REAL
 // =========================================================================

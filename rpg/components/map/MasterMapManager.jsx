@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import {
   broadcastMapPing,
   broadcastMapDiceRoll,
+  clearMapDiceRollsHistory,
   createMap,
   createMapToken,
   deleteMapWithTokens,
@@ -529,6 +530,17 @@ export function MasterMapManager({
     } catch {}
   };
 
+  // Limpar todo o histórico/chat de rolagens de dados da mesa para todos
+  const handleClearDiceHistory = async () => {
+    try {
+      await clearMapDiceRollsHistory();
+      toast.success('Histórico de dados da mesa limpo para todos!');
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao limpar histórico de dados.');
+      throw err;
+    }
+  };
+
   // Invocação de monstro do Livro dos Monstros ou NPC personalizado no mapa ativo
   const handleSpawnBestiaryToken = async (tokenPayload) => {
     if (!currentMap) return;
@@ -729,6 +741,7 @@ export function MasterMapManager({
           onUpdateMap={updateMap}
           onPing={handlePing}
           onDiceRoll={handleDiceRoll}
+          onClearDiceHistory={handleClearDiceHistory}
           onInspectMonsterId={handleInspectMonsterById}
         />
       ) : (

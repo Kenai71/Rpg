@@ -170,6 +170,7 @@ export function TacticalMapCanvas({
   pings = [],
   diceRolls = [],
   onDiceRoll,
+  onClearDiceHistory,
   onInspectMonsterId,
 }) {
   const containerRef = useRef(null);
@@ -465,7 +466,9 @@ export function TacticalMapCanvas({
   const [sharedBannerRoll, setSharedBannerRoll] = useState(null);
   const [rollingSeedKey, setRollingSeedKey] = useState(null);
   const [settledLocalRolls, setSettledLocalRolls] = useState([]);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const processedRollKeysRef = useRef(new Set());
+  const prevRemoteRollCountRef = useRef(0);
   const initialHistorySeededRef = useRef(false);
   const bannerTimerRef = useRef(null);
 
@@ -574,7 +577,21 @@ export function TacticalMapCanvas({
 
   // Ouve resultados em tempo real de outros jogadores ou Mestre (exibe banner no topo + histórico para todos, sem conflito de dado 3D)
   useEffect(() => {
-    if (!remoteDiceRolls || remoteDiceRolls.length === 0) return;
+    const currentLen = remoteDiceRolls ? remoteDiceRolls.length : 0;
+
+    // Se o Mestre limpou todo o histórico no Firestore (transição de >0 para 0), zera também o estado local de todos
+    if (currentLen === 0) {
+      if (prevRemoteRollCountRef.current > 0) {
+        setSettledLocalRolls([]);
+        setRecentRoll(null);
+        setSharedBannerRoll(null);
+        processedRollKeysRef.current.clear();
+      }
+      prevRemoteRollCountRef.current = 0;
+      return;
+    }
+
+    prevRemoteRollCountRef.current = currentLen;
 
     // No primeiro snapshot ao abrir a página, registra o histórico existente sem disparar banner antigo
     if (!initialHistorySeededRef.current) {
@@ -624,6 +641,28 @@ export function TacticalMapCanvas({
     // Limite estrito das últimas 15 rolagens: toda vez que entra uma nova, a 15ª mais antiga sai
     return deduped.slice(0, MAX_ROLL_HISTORY);
   }, [remoteDiceRolls, settledLocalRolls, rollingSeedKey, getRollSeedKey, getRollTime]);
+
+  const handleClearDiceHistory = async () => {
+    if (!isMaster || clearingHistory) return;
+    if (rollHistory.length === 0 && !recentRoll) return;
+    if (!confirm('Limpar todo o histórico de rolagens de dados da mesa para todos os jogadores?')) {
+      return;
+    }
+    setClearingHistory(true);
+    try {
+      if (onClearDiceHistory) {
+        await onClearDiceHistory();
+      }
+      setSettledLocalRolls([]);
+      setRecentRoll(null);
+      setSharedBannerRoll(null);
+      processedRollKeysRef.current.clear();
+    } catch {
+      // Erro já notificado pelo handler do Mestre
+    } finally {
+      setClearingHistory(false);
+    }
+  };
 
   useEffect(() => {
     setIsLocked(Boolean(map?.is_locked));
@@ -1577,9 +1616,24 @@ export function TacticalMapCanvas({
 
                 {/* Histórico das últimas 15 rolagens */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-0.5 mb-1">
-                    Histórico da Mesa
-                  </span>
+                  <div className="flex items-center justify-between gap-2 px-0.5 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Histórico da Mesa
+                    </span>
+                    {isMaster && (rollHistory.length > 0 || recentRoll) && (
+                      <button
+                        type="button"
+                        onClick={handleClearDiceHistory}
+                        disabled={clearingHistory}
+                        title="Excluir todo o histórico de rolagens de dados da mesa"
+                        aria-label="Limpar histórico de dados da mesa"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.05] border border-white/12 hover:bg-rose-500/15 hover:border-rose-500/35 text-[10px] font-bold text-slate-300 hover:text-rose-300 disabled:opacity-40 transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        {clearingHistory ? 'Limpando...' : 'Limpar'}
+                      </button>
+                    )}
+                  </div>
 
                   {rollingSeedKey && active3DRoll && (
                     <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white/5 border border-white/15 animate-pulse">
