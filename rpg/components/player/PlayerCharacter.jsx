@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import {
-  Backpack,
   Circle,
   Crown,
   Dices,
@@ -10,7 +9,6 @@ import {
   Gem,
   Glasses,
   Hand,
-  Hexagon,
   Plus,
   RectangleHorizontal,
   Search,
@@ -19,6 +17,7 @@ import {
   Sword,
   Trash2,
 } from 'lucide-react';
+import { GiBackpack, GiShield } from 'react-icons/gi';
 import { toast } from 'sonner';
 import {
   RARITIES,
@@ -162,28 +161,37 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
         }}
         onClick={() => item && setInspectedEquipSlot(slotKey)}
         aria-label={item ? `${meta.label}: ${item.name}` : `Slot ${meta.label} vazio`}
-        className={`h-20 w-full rounded-xl border flex flex-col items-center justify-center gap-1 p-2 transition-all ${
+        className={`relative overflow-hidden h-20 w-full rounded-xl border flex flex-col items-center justify-center gap-1.5 p-2 transition-all ${
           item
-            ? 'bg-[var(--surface-0)]/90 hover:scale-[1.03] cursor-pointer shadow-inner'
-            : 'border-dashed border-white/10 bg-white/[0.02] opacity-70 hover:opacity-100 hover:border-white/25'
+            ? 'border-white/15 hover:border-white/25 bg-[var(--surface-0)]/90 hover:-translate-y-0.5 cursor-pointer shadow-inner'
+            : 'border-dashed border-white/10 bg-white/[0.02] opacity-75 hover:opacity-100 hover:border-white/25'
         }`}
-        style={
-          item
-            ? {
-                borderColor: rarityMeta.color,
-                boxShadow: `inset 0 0 16px ${rarityMeta.color}1a`,
-              }
-            : undefined
-        }
       >
+        {item && (
+          <>
+            <span
+              aria-hidden="true"
+              className="absolute top-0 inset-x-0 h-[3px]"
+              style={{ backgroundColor: rarityMeta.color }}
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute top-[3px] inset-x-0 h-8"
+              style={{
+                background: `linear-gradient(180deg, ${rarityMeta.color}1c 0%, transparent 100%)`,
+              }}
+            />
+          </>
+        )}
         <Icon
-          className="h-5 w-5 shrink-0"
+          className="h-5 w-5 shrink-0 relative z-10"
           style={{ color: item ? rarityMeta.color : '#64748b' }}
           aria-hidden="true"
         />
         <span
-          className="text-[11px] font-semibold w-full truncate text-center"
-          style={{ color: item ? rarityMeta.color : '#64748b' }}
+          className={`text-[11px] font-semibold w-full truncate text-center relative z-10 ${
+            item ? 'text-white' : 'text-slate-500'
+          }`}
         >
           {item ? item.name : meta.label}
         </span>
@@ -233,7 +241,7 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
           <div className="w-full flex items-start justify-between gap-2">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-slate-300" />
+                <GiShield className="h-5 w-5 text-slate-300" />
                 Equipamento
               </CardTitle>
               <CardDescription className="mt-1">
@@ -275,7 +283,7 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
         <CardHeader className="border-b border-[var(--border-subtle)] pb-4 flex-wrap gap-3">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Backpack className="h-5 w-5 text-slate-300" />
+              <GiBackpack className="h-5 w-5 text-slate-300" />
               Mochila
               <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono">
                 {inventory.length} / {maxSlots}
@@ -352,27 +360,32 @@ export function PlayerCharacter({ profile, onOpenRoulette }) {
                     e.dataTransfer.effectAllowed = 'move';
                   }}
                   onClick={() => setInspectedInvIdx(i)}
-                  className="aspect-square rounded-xl border bg-[var(--surface-0)]/80 hover:bg-[var(--surface-2)] hover:-translate-y-0.5 p-2.5 flex flex-col justify-between text-left transition-all relative cursor-pointer"
-                  style={{
-                    borderColor: `${rarityMeta.color}66`,
-                    boxShadow: `inset 0 0 14px ${rarityMeta.color}14`,
-                  }}
+                  className="aspect-square rounded-xl border border-white/12 hover:border-white/25 bg-[var(--surface-0)]/85 hover:bg-[var(--surface-2)] hover:-translate-y-0.5 p-2.5 pt-3 flex flex-col justify-between text-left transition-all relative overflow-hidden cursor-pointer group"
                 >
-                  <div className="flex items-center justify-between w-full gap-1">
-                    <span className="px-1.5 py-0.5 rounded bg-black/50 text-[10px] font-mono font-bold text-slate-200">
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-0 inset-x-0 h-[3.5px]"
+                    style={{ backgroundColor: rarityMeta.color }}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-[3.5px] inset-x-0 h-9"
+                    style={{
+                      background: `linear-gradient(180deg, ${rarityMeta.color}18 0%, transparent 100%)`,
+                    }}
+                  />
+                  <div className="flex items-center justify-between w-full gap-1 relative z-10">
+                    <span className="px-1.5 py-0.5 rounded bg-black/55 border border-white/10 text-[10px] font-mono font-bold text-slate-200 tabular-nums">
                       x{item.qty}
                     </span>
                     {isGacha && (
-                      <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-bold text-white">
+                      <span className="px-1.5 py-0.5 rounded bg-white/15 border border-white/20 text-[10px] font-bold text-white">
                         ABRIR
                       </span>
                     )}
                   </div>
 
-                  <p
-                    className="text-xs font-bold leading-snug line-clamp-2 w-full"
-                    style={{ color: rarityMeta.color }}
-                  >
+                  <p className="text-xs font-bold leading-snug line-clamp-2 w-full text-white relative z-10">
                     {item.name}
                   </p>
                 </button>

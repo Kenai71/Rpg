@@ -134,7 +134,7 @@ export function PlayerShop({ shopItems, profile }) {
   return (
     <div className="space-y-5">
       {/* Filters & Rarity Chips */}
-      <div className="space-y-3">
+      <div className="rounded-2xl surface-card p-3.5 sm:p-4 space-y-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="w-full md:max-w-xs">
             <Input
@@ -148,6 +148,10 @@ export function PlayerShop({ shopItems, profile }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <span className="hidden lg:inline-flex items-center px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/10 text-[11px] font-mono text-slate-400 tabular-nums">
+              {availableItems.length} {availableItems.length === 1 ? 'item' : 'itens'}
+            </span>
+
             <Select
               aria-label="Filtrar por tipo"
               value={typeFilter}
@@ -173,7 +177,7 @@ export function PlayerShop({ shopItems, profile }) {
               <option value="price_desc">Maior Preço</option>
             </Select>
 
-            <div className="hidden sm:inline-flex items-center p-0.5 rounded-xl bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+            <div className="hidden sm:inline-flex items-center p-0.5 rounded-xl bg-[var(--surface-0)]/80 border border-white/10">
               <button
                 type="button"
                 onClick={() => setDisplayLayout('grid')}
@@ -181,7 +185,7 @@ export function PlayerShop({ shopItems, profile }) {
                 aria-pressed={displayLayout === 'grid'}
                 className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
                   displayLayout === 'grid'
-                    ? 'bg-[var(--surface-2)] text-white'
+                    ? 'bg-white/12 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -194,7 +198,7 @@ export function PlayerShop({ shopItems, profile }) {
                 aria-pressed={displayLayout === 'list'}
                 className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
                   displayLayout === 'list'
-                    ? 'bg-[var(--surface-2)] text-white'
+                    ? 'bg-white/12 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -205,14 +209,14 @@ export function PlayerShop({ shopItems, profile }) {
         </div>
 
         {/* Rarity filter chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
           <button
             type="button"
             onClick={() => setRarityFilter('ALL')}
             className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors shrink-0 ${
               rarityFilter === 'ALL'
-                ? 'bg-white/10 text-white border-white/20'
-                : 'bg-[var(--surface-1)] text-slate-400 border-[var(--border-subtle)] hover:text-white'
+                ? 'bg-white/12 text-white border-white/25'
+                : 'bg-white/[0.03] text-slate-400 border-white/10 hover:text-white hover:bg-white/[0.06]'
             }`}
           >
             Todas Raridades
@@ -226,8 +230,8 @@ export function PlayerShop({ shopItems, profile }) {
                 onClick={() => setRarityFilter(r.name)}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors shrink-0 ${
                   active
-                    ? 'bg-[var(--surface-2)] text-white border-white/25'
-                    : 'bg-[var(--surface-1)] text-slate-400 border-[var(--border-subtle)] hover:text-white'
+                    ? 'bg-white/12 text-white border-white/25'
+                    : 'bg-white/[0.03] text-slate-400 border-white/10 hover:text-white hover:bg-white/[0.06]'
                 }`}
               >
                 <span
@@ -262,15 +266,25 @@ export function PlayerShop({ shopItems, profile }) {
                 key={item.id}
                 interactive
                 onClick={() => handleOpenItem(item)}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer"
-                style={{
-                  borderColor: rarityMeta.color,
-                  boxShadow: `0 0 14px -4px ${rarityMeta.color}33`,
-                }}
+                className="relative overflow-hidden py-3.5 pr-4 pl-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer group border-white/10 hover:border-white/20"
               >
-                <div className="min-w-0 space-y-1">
+                {/* Thick left rarity accent line (does not surround entire card) */}
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 w-1 transition-all duration-200 group-hover:w-[5px]"
+                  style={{ backgroundColor: rarityMeta.color }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-0 w-14 opacity-80"
+                  style={{
+                    background: `linear-gradient(90deg, ${rarityMeta.color}18 0%, transparent 100%)`,
+                  }}
+                />
+
+                <div className="min-w-0 space-y-1 relative z-10">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge className="bg-white/5 text-slate-300 border-white/10">
+                    <Badge className="bg-white/[0.05] text-slate-300 border-white/10">
                       <TypeIcon className="h-3 w-3 text-slate-300" />
                       {itemTypeLabel}
                     </Badge>
@@ -283,11 +297,14 @@ export function PlayerShop({ shopItems, profile }) {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0 justify-between sm:justify-end">
-                  <span className="font-mono text-xs text-slate-400">Est: {item.quantity}</span>
-                  <span className="font-mono text-sm font-bold text-amber-300 inline-flex items-center gap-1">
+                <div className="flex items-center gap-3 shrink-0 justify-between sm:justify-end relative z-10">
+                  <span className="font-mono text-xs text-slate-400 tabular-nums">
+                    Est: {item.quantity}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-slate-100 inline-flex items-center gap-1.5 tabular-nums">
                     <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
-                    {formatNumber(item.price)} G
+                    {formatNumber(item.price)}
+                    <span className="text-[11px] font-semibold text-slate-400">G</span>
                   </span>
                   <Button
                     size="sm"
@@ -317,26 +334,39 @@ export function PlayerShop({ shopItems, profile }) {
                 key={item.id}
                 interactive
                 onClick={() => handleOpenItem(item)}
-                className="flex flex-col justify-between cursor-pointer group overflow-hidden"
-                style={{
-                  borderColor: rarityMeta.color,
-                  boxShadow: `0 0 16px -4px ${rarityMeta.color}33`,
-                }}
+                className="relative flex flex-col justify-between cursor-pointer group overflow-hidden border-white/10 hover:border-white/20"
               >
-                <div>
-                  <CardHeader className="pb-2">
+                {/* Thick top rarity accent bar (does not circle the entire square) */}
+                <div
+                  aria-hidden="true"
+                  className="h-[4px] w-full shrink-0 transition-opacity duration-200 group-hover:brightness-110"
+                  style={{
+                    backgroundColor: rarityMeta.color,
+                    boxShadow: `0 2px 14px -1px ${rarityMeta.color}66`,
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-[4px] inset-x-0 h-12"
+                  style={{
+                    background: `linear-gradient(180deg, ${rarityMeta.color}16 0%, transparent 100%)`,
+                  }}
+                />
+
+                <div className="relative z-10">
+                  <CardHeader className="pt-4 pb-2">
                     <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge className="bg-white/5 text-slate-300 border-white/10">
+                        <Badge className="bg-white/[0.05] text-slate-300 border-white/10">
                           <TypeIcon className="h-3 w-3 text-slate-300" />
                           {itemTypeLabel}
                         </Badge>
                       </div>
-                      <CardTitle className="text-base group-hover:text-slate-100 transition-colors text-white">
+                      <CardTitle className="text-base group-hover:text-white transition-colors text-white">
                         {item.item_name}
                       </CardTitle>
                     </div>
-                    <Badge className="bg-[var(--surface-0)] text-slate-300 border-[var(--border-subtle)] font-mono shrink-0">
+                    <Badge className="bg-white/[0.04] text-slate-300 border-white/10 font-mono shrink-0">
                       x{item.quantity}
                     </Badge>
                   </CardHeader>
@@ -348,10 +378,11 @@ export function PlayerShop({ shopItems, profile }) {
                   </CardContent>
                 </div>
 
-                <CardFooter className="justify-between">
-                  <span className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-amber-300 tabular-nums">
+                <CardFooter className="justify-between relative z-10">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-slate-100 tabular-nums">
                     <GiCoinsPile className="h-4 w-4 text-amber-400" aria-hidden="true" />
-                    {formatNumber(item.price)} G
+                    {formatNumber(item.price)}
+                    <span className="text-xs font-semibold text-slate-400">G</span>
                   </span>
                   <Button
                     size="sm"
@@ -462,14 +493,14 @@ export function PlayerShop({ shopItems, profile }) {
                   onClick={() => handleConfirmBuy(false)}
                   className={`rounded-2xl border p-4 text-left transition-all flex flex-col gap-2 ${
                     hasEnoughGold && bagHasSpace
-                      ? 'border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer'
+                      ? 'border-white/15 bg-white/[0.04] hover:bg-white/[0.09] hover:border-white/25 cursor-pointer'
                       : 'border-white/10 bg-white/[0.02] opacity-50 cursor-not-allowed'
                   }`}
                 >
                   <GiCoinsPile className="h-5 w-5 text-amber-400" />
                   <div>
-                    <span className="block font-mono text-lg font-extrabold text-amber-300">
-                      {formatNumber(totalPrice)} G
+                    <span className="block font-mono text-lg font-extrabold text-white">
+                      {formatNumber(totalPrice)} <span className="text-xs font-semibold text-slate-400">G</span>
                     </span>
                     <span className="text-xs text-slate-300">
                       {!bagHasSpace

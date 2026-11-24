@@ -8,7 +8,6 @@ import {
   List,
   Search,
   Users,
-  Zap,
 } from 'lucide-react';
 import { GiCoinsPile, GiScrollUnfurled } from 'react-icons/gi';
 import { toast } from 'sonner';
@@ -76,11 +75,11 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
   return (
     <div className="space-y-5">
       {/* Controls */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="rounded-2xl surface-card p-3.5 sm:p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3.5">
         <div
           role="tablist"
           aria-label="Filtrar mural de missões"
-          className="inline-flex p-1 rounded-xl bg-[var(--surface-1)] border border-[var(--border-subtle)] w-fit flex-wrap"
+          className="inline-flex p-1 rounded-xl bg-[var(--surface-0)]/80 border border-white/10 w-fit flex-wrap gap-0.5"
         >
           <button
             type="button"
@@ -89,8 +88,8 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
             onClick={() => setViewMode('open')}
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'open'
-                ? 'bg-white/10 text-white border border-white/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-white/12 text-white border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]'
+                : 'text-slate-400 hover:text-white border border-transparent'
             }`}
           >
             Disponíveis
@@ -102,8 +101,8 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
             onClick={() => setViewMode('mine')}
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'mine'
-                ? 'bg-white/10 text-white border border-white/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-white/12 text-white border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]'
+                : 'text-slate-400 hover:text-white border border-transparent'
             }`}
           >
             Meus Contratos ({myActiveCount})
@@ -115,16 +114,16 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
             onClick={() => setViewMode('history')}
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'history'
-                ? 'bg-white/10 text-white border border-white/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-white/12 text-white border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]'
+                : 'text-slate-400 hover:text-white border border-transparent'
             }`}
           >
             Histórico
           </button>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <div className="sm:w-64">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <div className="sm:w-60">
             <Input
               icon={Search}
               placeholder="Buscar missão..."
@@ -135,14 +134,14 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
             />
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 sm:pb-0">
             <button
               type="button"
               onClick={() => setRankFilter('ALL')}
               className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors shrink-0 ${
                 rankFilter === 'ALL'
-                  ? 'bg-white/10 text-white border-white/20'
-                  : 'bg-[var(--surface-1)] text-slate-400 border-[var(--border-subtle)] hover:text-white'
+                  ? 'bg-white/12 text-white border-white/25'
+                  : 'bg-white/[0.03] text-slate-400 border-white/10 hover:text-white hover:bg-white/[0.06]'
               }`}
             >
               Todos
@@ -154,22 +153,22 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                 onClick={() => setRankFilter(r)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors shrink-0 ${
                   rankFilter === r
-                    ? 'bg-white/10 text-white border-white/20'
-                    : 'bg-[var(--surface-1)] text-slate-400 border-[var(--border-subtle)] hover:text-white'
+                    ? 'bg-white/12 text-white border-white/25'
+                    : 'bg-white/[0.03] text-slate-400 border-white/10 hover:text-white hover:bg-white/[0.06]'
                 }`}
               >
                 {r}
               </button>
             ))}
 
-            <div className="hidden sm:inline-flex items-center p-0.5 rounded-xl bg-[var(--surface-1)] border border-[var(--border-subtle)] ml-1 shrink-0">
+            <div className="hidden sm:inline-flex items-center p-0.5 rounded-xl bg-[var(--surface-0)]/80 border border-white/10 ml-1 shrink-0">
               <button
                 type="button"
                 onClick={() => setDisplayLayout('grid')}
                 aria-label="Visualizar em grade"
                 aria-pressed={displayLayout === 'grid'}
                 className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
-                  displayLayout === 'grid' ? 'bg-[var(--surface-2)] text-white' : 'text-slate-400 hover:text-white'
+                  displayLayout === 'grid' ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
@@ -180,7 +179,7 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                 aria-label="Visualizar em lista"
                 aria-pressed={displayLayout === 'list'}
                 className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
-                  displayLayout === 'list' ? 'bg-[var(--surface-2)] text-white' : 'text-slate-400 hover:text-white'
+                  displayLayout === 'list' ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <List className="h-3.5 w-3.5" />
@@ -210,9 +209,13 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                 key={m.id}
                 interactive
                 onClick={() => setInspectedMission(m)}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer"
-                style={{ borderLeftWidth: '3px', borderLeftColor: rankMeta.color }}
+                className="relative overflow-hidden py-3.5 pr-4 pl-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer group border-white/10 hover:border-white/20"
               >
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 w-1"
+                  style={{ backgroundColor: rankMeta.color }}
+                />
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <RankBadge rank={m.rank} />
@@ -225,10 +228,13 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0 justify-between sm:justify-end">
-                  <div className="flex items-center gap-2 font-mono text-xs">
-                    <span className="text-sky-300">{formatNumber(m.xp_reward)} XP</span>
+                  <div className="flex items-center gap-2.5 font-mono text-xs tabular-nums">
+                    <span className="text-sky-300 font-semibold">{formatNumber(m.xp_reward)} XP</span>
                     <span className="text-slate-600">•</span>
-                    <span className="text-amber-300">{formatNumber(m.gold_reward)} G</span>
+                    <span className="text-slate-100 font-semibold inline-flex items-center gap-1">
+                      <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
+                      {formatNumber(m.gold_reward)} G
+                    </span>
                   </div>
                   <Button
                     variant="secondary"
@@ -255,17 +261,24 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                 key={m.id}
                 interactive
                 onClick={() => setInspectedMission(m)}
-                className="flex flex-col justify-between overflow-hidden cursor-pointer group"
-                style={{ borderLeftWidth: '4px', borderLeftColor: rankMeta.color }}
+                className="relative flex flex-col justify-between overflow-hidden cursor-pointer group border-white/10 hover:border-white/20"
               >
+                <div
+                  aria-hidden="true"
+                  className="h-[4px] w-full shrink-0"
+                  style={{
+                    backgroundColor: rankMeta.color,
+                    boxShadow: `0 2px 12px -1px ${rankMeta.color}55`,
+                  }}
+                />
                 <div>
-                  <CardHeader className="pb-2">
+                  <CardHeader className="pt-4 pb-2">
                     <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <RankBadge rank={m.rank} />
                         {m.status !== 'open' && <MissionStatusBadge status={m.status} />}
                       </div>
-                      <CardTitle className="text-base leading-snug group-hover:text-slate-100 transition-colors">
+                      <CardTitle className="text-base leading-snug group-hover:text-white transition-colors">
                         {m.title}
                       </CardTitle>
                     </div>
@@ -275,14 +288,13 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                     />
                   </CardHeader>
 
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500/10 border border-sky-500/20 px-2.5 py-1 text-xs font-mono font-semibold text-sky-300">
-                        <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+                  <CardContent className="space-y-3.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.04] border border-white/10 px-2.5 py-1 text-xs font-mono font-semibold text-sky-300 tabular-nums">
                         {formatNumber(m.xp_reward)} XP
                       </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-xs font-mono font-semibold text-amber-300">
-                        <GiCoinsPile className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.04] border border-white/10 px-2.5 py-1 text-xs font-mono font-semibold text-slate-100 tabular-nums">
+                        <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
                         {formatNumber(m.gold_reward)} Ouro
                       </span>
                     </div>
@@ -370,20 +382,21 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
         {inspectedMission && (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl bg-[var(--surface-0)]/80 border border-[var(--border-subtle)] p-3.5 space-y-1">
+              <div className="rounded-xl bg-[var(--surface-0)]/80 border border-white/10 p-3.5 space-y-1">
                 <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
                   Recompensa XP
                 </span>
-                <span className="text-lg font-extrabold font-mono text-sky-300 inline-flex items-center gap-1.5">
-                  <Zap className="h-4 w-4" /> {formatNumber(inspectedMission.xp_reward)}
+                <span className="text-lg font-extrabold font-mono text-sky-300 inline-flex items-center gap-1.5 tabular-nums">
+                  {formatNumber(inspectedMission.xp_reward)} XP
                 </span>
               </div>
-              <div className="rounded-xl bg-[var(--surface-0)]/80 border border-[var(--border-subtle)] p-3.5 space-y-1">
+              <div className="rounded-xl bg-[var(--surface-0)]/80 border border-white/10 p-3.5 space-y-1">
                 <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
                   Recompensa Ouro
                 </span>
-                <span className="text-lg font-extrabold font-mono text-amber-300 inline-flex items-center gap-1.5">
-                  <GiCoinsPile className="h-4 w-4" /> {formatNumber(inspectedMission.gold_reward)} G
+                <span className="text-lg font-extrabold font-mono text-white inline-flex items-center gap-1.5 tabular-nums">
+                  <GiCoinsPile className="h-4 w-4 text-amber-400" /> {formatNumber(inspectedMission.gold_reward)}{' '}
+                  <span className="text-xs font-semibold text-slate-400">G</span>
                 </span>
               </div>
             </div>

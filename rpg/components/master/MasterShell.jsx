@@ -22,6 +22,7 @@ import Logo from '../../app/components/Logo';
 import { Button } from '../ui/Button';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { RoleBadge } from '../ui/Badge';
+import { UserAvatar } from '../ui/UserAvatar';
 import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
 import { MasterNarrationToolbar } from '../tabletop/TabletopImmersionModals';
 import { cn } from '../../lib/utils';
@@ -57,6 +58,9 @@ export function MasterShell({
       </div>
 
       <nav className="flex-1 px-2.5 py-3 xl:px-3 xl:py-4 space-y-1 overflow-y-auto" aria-label="Navegação Administrativa">
+        <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+          Gestão do Reino
+        </p>
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const active = activeSection === item.id;
@@ -77,12 +81,18 @@ export function MasterShell({
               }}
               aria-current={active ? 'page' : undefined}
               className={cn(
-                'w-full flex items-center justify-between gap-2.5 px-3 py-2 xl:px-3.5 xl:py-2.5 rounded-xl text-xs xl:text-sm font-medium transition-all',
+                'relative w-full flex items-center justify-between gap-2.5 px-3 py-2 xl:px-3.5 xl:py-2.5 rounded-xl text-xs xl:text-sm font-medium transition-all',
                 active
-                  ? 'bg-white/10 text-white border border-white/20 shadow-sm'
+                  ? 'bg-white/10 text-white border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]'
                   : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.04] border border-transparent'
               )}
             >
+              {active && (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-white/80"
+                />
+              )}
               <span className="flex items-center gap-2.5 min-w-0">
                 <Icon
                   className="h-4 w-4 shrink-0 text-slate-300"
@@ -95,8 +105,8 @@ export function MasterShell({
                   className={cn(
                     'px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums',
                     item.id === 'requests'
-                      ? 'bg-white/20 text-white border border-white/10'
-                      : 'bg-amber-500/20 text-amber-300'
+                      ? 'bg-white/20 text-white border border-white/15'
+                      : 'bg-white/10 text-slate-200 border border-white/15'
                   )}
                 >
                   {badgeCount}
@@ -110,16 +120,23 @@ export function MasterShell({
       <div className="p-3 xl:p-4 border-t border-[var(--border-subtle)] space-y-2.5">
         <Link
           href="/player"
-          className="flex items-center justify-center gap-2 w-full h-8 xl:h-9 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)]/60 text-xs font-semibold text-slate-300 hover:text-white hover:border-[var(--border-strong)] transition-colors"
+          className="flex items-center justify-center gap-2 w-full h-9 rounded-xl border border-white/10 bg-white/[0.03] text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.07] hover:border-white/20 transition-colors"
         >
           <Compass className="h-3.5 w-3.5 text-slate-300" aria-hidden="true" />
           Visão do Aventureiro
         </Link>
 
-        <div className="rounded-xl bg-[var(--surface-0)]/70 border border-[var(--border-subtle)] p-2.5 xl:p-3 flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-slate-100 truncate">{profile?.username}</p>
-            <RoleBadge role={profile?.role} className="mt-0.5 text-[10px] px-2 py-0" />
+        <div className="rounded-xl bg-[var(--surface-0)]/75 border border-white/10 p-2.5 xl:p-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <UserAvatar
+              src={profile?.photoURL}
+              name={profile?.username}
+              className="h-8 w-8 text-xs shrink-0"
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-slate-100 truncate">{profile?.username}</p>
+              <RoleBadge role={profile?.role} className="mt-0.5 text-[10px] px-2 py-0" />
+            </div>
           </div>
           <Button
             variant="ghost"
@@ -127,7 +144,7 @@ export function MasterShell({
             onClick={onLogout}
             title="Sair da conta"
             aria-label="Sair da conta"
-            className="text-rose-300 hover:text-rose-200 hover:bg-rose-500/15"
+            className="text-rose-300 hover:text-rose-200 hover:bg-rose-500/15 shrink-0"
           >
             <LogOut className="h-4 w-4" />
           </Button>
@@ -165,8 +182,8 @@ export function MasterShell({
 
       {/* Main Content Area */}
       <div className="flex-1 lg:pl-56 xl:pl-64 flex flex-col min-w-0">
-        <header className="sticky top-0 z-20 border-b border-white/10 bg-[#080a11]/88 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
-          <div className="max-w-7xl mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-3">
+        <header className="sticky top-0 z-20 border-b border-white/10 bg-[#080a11]/90 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
+          <div className="w-full max-w-none mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <Button
                 variant="outline"

@@ -13,7 +13,6 @@ import {
   Trash2,
   Upload,
   Users,
-  Zap,
 } from 'lucide-react';
 import {
   GiBackpack,
@@ -114,6 +113,9 @@ export function PlayerShell({
   const rankMeta = getRankMeta(profile?.rank);
   const isPartyLeader = Boolean(myParty && myParty.leader_id === profile?.uid);
   const isMapTab = activeTab === 'map';
+  const gachaGiftsCount = (profile?.inventory || [])
+    .filter((i) => i.name === 'Gacha Gift')
+    .reduce((acc, i) => acc + (Number(i.qty) || 1), 0);
 
   const openRenameModal = () => {
     setNewName(profile?.username || '');
@@ -166,19 +168,17 @@ export function PlayerShell({
         isMapTab ? 'h-[100dvh] overflow-hidden' : 'min-h-screen pb-20 md:pb-6'
       )}
     >
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-30 shrink-0 border-b border-white/10 bg-[#080a11]/88 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
-        <div
-          className={cn(
-            'mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-2.5',
-            isMapTab ? 'w-full max-w-none' : 'max-w-7xl'
-          )}
-        >
+      {/* Top Navbar — Always full-width spread across all Player sections (matching Map view) */}
+      <header className="sticky top-0 z-30 shrink-0 border-b border-white/10 bg-[#080a11]/90 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
+        <div className="w-full max-w-none mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-2.5">
           <div className="flex items-center gap-3 lg:gap-5 min-w-0">
             <Logo size={32} subtitle="Guilda" />
 
             {/* Desktop / Notebook Navigation Tabs */}
-            <nav className="hidden md:flex items-center gap-1" aria-label="Navegação Principal">
+            <nav
+              className="hidden md:flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.07]"
+              aria-label="Navegação Principal"
+            >
               {TABS.map((t) => {
                 const Icon = t.icon;
                 const active = activeTab === t.id;
@@ -190,10 +190,10 @@ export function PlayerShell({
                     onClick={() => onSelectTab(t.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'inline-flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 lg:py-2 rounded-xl text-xs lg:text-sm font-semibold transition-all relative whitespace-nowrap',
+                      'inline-flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg text-xs lg:text-sm font-semibold transition-all relative whitespace-nowrap',
                       active
-                        ? 'bg-white/10 text-white border border-white/20 shadow-sm'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                        ? 'bg-white/12 text-white border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.05] border border-transparent'
                     )}
                   >
                     <Icon
@@ -220,7 +220,7 @@ export function PlayerShell({
             {profile?.role === 'master' && (
               <Link href="/master">
                 <Button variant="outline" size="sm">
-                  <Shield className="h-3.5 w-3.5 text-amber-400" />
+                  <Shield className="h-3.5 w-3.5 text-slate-300" />
                   <span className="hidden sm:inline">Painel Mestre</span>
                 </Button>
               </Link>
@@ -239,20 +239,20 @@ export function PlayerShell({
         </div>
       </header>
 
-      {/* Main Content: Fullscreen immersive canvas on Map tab; Hero Status HUD + centered container on other tabs */}
+      {/* Main Content: Fullscreen immersive canvas on Map tab; Hero Status HUD + container on other tabs */}
       {isMapTab ? (
         <main className="flex-1 min-h-0 w-full flex flex-col pb-[60px] md:pb-0 overflow-hidden">
           {children}
         </main>
       ) : (
-        <div className="max-w-7xl w-full mx-auto px-3 sm:px-5 xl:px-8 pt-3 sm:pt-4 space-y-3 sm:space-y-4">
+        <div className="max-w-7xl w-full mx-auto px-3 sm:px-5 xl:px-8 pt-4 sm:pt-5 space-y-4 sm:space-y-5">
           <section
             aria-label="Resumo do personagem"
-            className="rounded-2xl surface-card relative overflow-hidden transition-all p-3.5 sm:p-4"
+            className="rounded-2xl surface-card relative overflow-hidden transition-all p-4 sm:p-5"
           >
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-6">
               {/* Identity */}
-              <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-3.5 min-w-0">
                 <button
                   type="button"
                   onClick={openRenameModal}
@@ -271,7 +271,7 @@ export function PlayerShell({
                   </span>
                 </button>
 
-                <div className="min-w-0 space-y-1">
+                <div className="min-w-0 space-y-1.5">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
                       {profile?.username}
@@ -286,19 +286,19 @@ export function PlayerShell({
                       <Pencil className="h-3 w-3" />
                     </button>
                     {isPartyLeader && (
-                      <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30">
-                        <Crown className="h-3 w-3" /> Líder
+                      <Badge className="bg-white/[0.06] text-slate-200 border-white/15">
+                        <Crown className="h-3 w-3 text-amber-400" /> Líder
                       </Badge>
                     )}
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <RankBadge rank={profile?.rank || 'F'} />
-                    <Badge className="bg-white/5 text-slate-200 border-white/10 font-mono text-[11px]">
+                    <Badge className="bg-white/[0.05] text-slate-200 border-white/10 font-mono text-[11px]">
                       LVL {profile?.level || 1}
                     </Badge>
                     {myParty && (
-                      <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 text-[11px]">
+                      <Badge className="bg-emerald-500/12 text-emerald-300 border-emerald-500/25 text-[11px]">
                         {myParty.name}
                       </Badge>
                     )}
@@ -307,25 +307,29 @@ export function PlayerShell({
               </div>
 
               {/* Stats & Quick Action */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 lg:gap-5">
-                <div className="flex items-center gap-3.5">
-                  <div className="px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-400/25 space-y-0.5 shrink-0">
-                    <span className="text-[9px] uppercase tracking-wider text-amber-200/75 font-bold block">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3.5 lg:gap-5">
+                <div className="flex items-center gap-3.5 sm:gap-4 flex-1">
+                  {/* Gold Readout — Clean neutral glass, zero yellow background */}
+                  <div className="px-3.5 py-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-0.5 shrink-0">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">
                       Ouro
                     </span>
-                    <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-amber-300 tabular-nums leading-tight">
-                      <GiCoinsPile className="h-4 w-4 text-amber-400" aria-hidden="true" />
-                      {formatNumber(profile?.gold || 0)}
+                    <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-white tabular-nums leading-tight">
+                      <GiCoinsPile className="h-4 w-4 text-amber-400 shrink-0" aria-hidden="true" />
+                      <span>{formatNumber(profile?.gold || 0)}</span>
+                      <span className="text-xs font-semibold text-slate-400">G</span>
                     </div>
                   </div>
 
-                  <div className="flex-1 sm:w-44 xl:w-52 space-y-1.5">
-                    <div className="flex items-center justify-between text-[10px] sm:text-[11px]">
-                      <span className="text-slate-400 font-semibold inline-flex items-center gap-1">
-                        <Zap className="h-3 w-3 text-slate-300" aria-hidden="true" />
+                  {/* Experience Progress — Clean typography, zero lightning icon */}
+                  <div className="flex-1 sm:w-48 xl:w-56 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-slate-400 font-semibold tracking-wide">
                         Experiência
                       </span>
-                      <span className="font-mono text-slate-200 tabular-nums">{xpData.text}</span>
+                      <span className="font-mono text-slate-200 tabular-nums">
+                        {xpData.text}
+                      </span>
                     </div>
                     <div
                       role="progressbar"
@@ -336,7 +340,7 @@ export function PlayerShell({
                       className="h-2 w-full rounded-full bg-[#090c14] border border-white/10 overflow-hidden"
                     >
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-slate-300 to-white transition-all duration-500"
+                        className="h-full rounded-full bg-gradient-to-r from-slate-300 via-white to-slate-100 shadow-[0_0_10px_rgba(255,255,255,0.25)] transition-all duration-500"
                         style={{ width: `${xpData.percent}%` }}
                       />
                     </div>
@@ -347,11 +351,16 @@ export function PlayerShell({
                   size="sm"
                   variant="secondary"
                   onClick={onOpenRoulette || onRequestSpin}
-                  className="border-white/15 hover:border-white/30 hover:bg-white/5 whitespace-nowrap"
+                  className="border-white/15 hover:border-white/25 hover:bg-white/10 whitespace-nowrap shrink-0 h-10 px-3.5"
                   title="Girar a Roleta de Runas Arcanas"
                 >
                   <Dices className="h-4 w-4 text-slate-300" aria-hidden="true" />
-                  Roleta Arcana
+                  <span>Roleta Arcana</span>
+                  {gachaGiftsCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-white/15 text-white border border-white/20">
+                      {gachaGiftsCount}
+                    </span>
+                  )}
                 </Button>
               </div>
             </div>

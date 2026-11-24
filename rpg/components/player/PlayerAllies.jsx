@@ -1,8 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, Coins, Crown, Gift, Package, Search, Send, Users, X } from 'lucide-react';
+import { Check, Crown, Gift, Package, Search, Send, Users, X } from 'lucide-react';
+import { GiCoinsPile } from 'react-icons/gi';
 import { toast } from 'sonner';
+import { getRankMeta } from '../../lib/constants';
 import {
   acceptTradeTx,
   claimRefundOrCancelTradeTx,
@@ -138,16 +140,20 @@ export function PlayerAllies({
       {(pendingIncoming.length > 0 || activeOutgoing.length > 0) && (
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {pendingIncoming.length > 0 && (
-            <Card className="p-4 border-emerald-500/30 bg-emerald-500/[0.04] space-y-3">
-              <h3 className="text-sm font-bold text-emerald-300 flex items-center gap-2">
-                <Gift className="h-4 w-4" />
-                Ofertas Recebidas ({pendingIncoming.length})
+            <Card className="relative overflow-hidden border-white/12 p-4 pt-5 space-y-3">
+              <div aria-hidden="true" className="absolute top-0 inset-x-0 h-[3px] bg-emerald-400" />
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Gift className="h-4 w-4 text-emerald-400" />
+                Ofertas Recebidas
+                <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-mono text-[11px]">
+                  {pendingIncoming.length}
+                </Badge>
               </h3>
               <div className="space-y-2.5">
                 {pendingIncoming.map((t) => (
                   <div
                     key={t.id}
-                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="rounded-xl border border-white/10 bg-[var(--surface-0)]/75 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div className="space-y-0.5 min-w-0">
                       <p className="text-sm font-bold text-white truncate">
@@ -186,16 +192,20 @@ export function PlayerAllies({
           )}
 
           {activeOutgoing.length > 0 && (
-            <Card className="p-4 border-amber-500/25 bg-amber-500/[0.03] space-y-3">
-              <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                <Send className="h-4 w-4" />
-                Suas Transferências Enviadas ({activeOutgoing.length})
+            <Card className="relative overflow-hidden border-white/12 p-4 pt-5 space-y-3">
+              <div aria-hidden="true" className="absolute top-0 inset-x-0 h-[3px] bg-sky-400" />
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Send className="h-4 w-4 text-slate-300" />
+                Suas Transferências Enviadas
+                <Badge className="bg-white/[0.06] text-slate-200 border-white/15 font-mono text-[11px]">
+                  {activeOutgoing.length}
+                </Badge>
               </h3>
               <div className="space-y-2.5">
                 {activeOutgoing.map((t) => (
                   <div
                     key={t.id}
-                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="rounded-xl border border-white/10 bg-[var(--surface-0)]/75 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div className="space-y-0.5 min-w-0">
                       <p className="text-sm font-bold text-white truncate">
@@ -229,7 +239,7 @@ export function PlayerAllies({
       )}
 
       {/* Search & Party Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-2xl surface-card p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="w-full sm:max-w-xs">
           <Input
             icon={Search}
@@ -240,16 +250,21 @@ export function PlayerAllies({
             className="h-10"
           />
         </div>
-        {profile?.party_id && (
-          <Button
-            variant={onlyMyParty ? 'primary' : 'outline'}
-            size="sm"
-            onClick={() => setOnlyMyParty((prev) => !prev)}
-          >
-            <Users className="h-4 w-4" />
-            {onlyMyParty ? 'Mostrando Meu Grupo' : 'Filtrar Meu Grupo'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2.5">
+          <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/10 text-[11px] font-mono text-slate-400 tabular-nums">
+            {allies.length} {allies.length === 1 ? 'aventureiro' : 'aventureiros'}
+          </span>
+          {profile?.party_id && (
+            <Button
+              variant={onlyMyParty ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => setOnlyMyParty((prev) => !prev)}
+            >
+              <Users className="h-4 w-4 text-slate-300" />
+              {onlyMyParty ? 'Mostrando Meu Grupo' : 'Filtrar Meu Grupo'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Allies Grid */}
@@ -266,25 +281,32 @@ export function PlayerAllies({
             const party = parties.find((g) => g.id === ally.party_id);
             const isLeader = Boolean(party && party.leader_id === ally.uid);
             const sameParty = Boolean(profile?.party_id && ally.party_id === profile.party_id);
+            const rankMeta = getRankMeta(ally.rank);
 
             return (
               <Card
                 key={ally.uid}
                 interactive
-                className={`flex flex-col justify-between ${
+                className={`relative overflow-hidden flex flex-col justify-between ${
                   isSelf
                     ? 'border-white/25'
                     : sameParty
                     ? 'border-emerald-500/30'
-                    : ''
+                    : 'border-white/10 hover:border-white/20'
                 }`}
               >
-                <CardHeader className="pb-2">
+                <div
+                  aria-hidden="true"
+                  className="h-[3px] w-full shrink-0"
+                  style={{ backgroundColor: sameParty ? '#34d399' : rankMeta.color }}
+                />
+                <CardHeader className="pt-4 pb-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <UserAvatar
                       src={ally.photoURL}
                       name={ally.username}
                       className="h-11 w-11 text-sm"
+                      borderColor={`${rankMeta.color}66`}
                     />
                     <div className="min-w-0 space-y-1">
                       <CardTitle className="text-sm flex items-center gap-1.5 truncate">
@@ -358,19 +380,19 @@ export function PlayerAllies({
               onClick={() => setTransferType('gold')}
               className={`h-9 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                 transferType === 'gold'
-                  ? 'bg-[var(--surface-2)] text-amber-300 border border-[var(--border-subtle)]'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-white/12 text-white border border-white/20'
+                  : 'text-slate-400 hover:text-white border border-transparent'
               }`}
             >
-              <Coins className="h-3.5 w-3.5" /> Ouro
+              <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" /> Ouro
             </button>
             <button
               type="button"
               onClick={() => setTransferType('item')}
               className={`h-9 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                 transferType === 'item'
-                  ? 'bg-[var(--surface-2)] text-white border border-[var(--border-subtle)]'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-white/12 text-white border border-white/20'
+                  : 'text-slate-400 hover:text-white border border-transparent'
               }`}
             >
               <Package className="h-3.5 w-3.5" /> Item da Mochila

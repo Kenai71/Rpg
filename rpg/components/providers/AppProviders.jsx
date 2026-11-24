@@ -1,7 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { Toaster } from 'sonner';
+import { usePathname } from 'next/navigation';
+import { Toaster, toast, useSonner } from 'sonner';
 import { THEMES } from '../../lib/constants';
 import { initFirebaseAnalytics } from '../../lib/firebase';
 
@@ -15,7 +16,28 @@ export function useRealmTheme() {
   return useContext(ThemeContext);
 }
 
+function MasterToastSilencer() {
+  const { toasts } = useSonner();
+
+  useEffect(() => {
+    if (toasts.length > 0) {
+      toast.dismiss();
+    }
+  }, [toasts.length]);
+
+  useEffect(() => {
+    toast.dismiss();
+    return () => {
+      toast.dismiss();
+    };
+  }, []);
+
+  return null;
+}
+
 export function AppProviders({ children }) {
+  const pathname = usePathname();
+  const isMasterRoute = pathname === '/master' || Boolean(pathname?.startsWith('/master/'));
   const [theme, setThemeState] = useState('purple');
 
   useEffect(() => {
@@ -48,19 +70,23 @@ export function AppProviders({ children }) {
       <div className="min-h-screen bg-[var(--surface-0)] text-slate-100 antialiased selection:bg-white/20 selection:text-white">
         {children}
       </div>
-      <Toaster
-        position="top-right"
-        richColors
-        closeButton
-        theme="dark"
-        toastOptions={{
-          style: {
-            background: '#141720',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: '#f1f5f9',
-          },
-        }}
-      />
+      {isMasterRoute ? (
+        <MasterToastSilencer />
+      ) : (
+        <Toaster
+          position="top-right"
+          richColors
+          closeButton
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: '#141720',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#f1f5f9',
+            },
+          }}
+        />
+      )}
     </ThemeContext.Provider>
   );
 }

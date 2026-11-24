@@ -57,7 +57,7 @@ export function DataTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-2xl surface-card p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="w-full sm:max-w-xs">
           <Input
             icon={Search}
@@ -65,6 +65,7 @@ export function DataTable({
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
+            className="h-10"
           />
         </div>
         {filterSlot && <div className="flex flex-wrap items-center gap-2">{filterSlot}</div>}
@@ -84,7 +85,7 @@ export function DataTable({
 
           <div
             className={cn(
-              'rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] overflow-hidden',
+              'rounded-2xl surface-card overflow-hidden',
               renderMobileCard ? 'hidden md:block' : 'block overflow-x-auto'
             )}
           >
@@ -93,7 +94,7 @@ export function DataTable({
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr
                     key={headerGroup.id}
-                    className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)]/60"
+                    className="border-b border-white/10 bg-white/[0.03]"
                   >
                     {headerGroup.headers.map((header) => {
                       const canSort = header.column.getCanSort();

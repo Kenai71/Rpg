@@ -4,7 +4,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Bot, Coins, Minus, Pencil, Plus, ShoppingBag, Trash2, Zap } from 'lucide-react';
+import { Bot, Minus, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { GiCoinsPile, GiSwapBag } from 'react-icons/gi';
 import { toast } from 'sonner';
 import {
   ITEM_TYPES,
@@ -14,6 +15,7 @@ import {
   getItemType,
   getItemTypeLabel,
   getRarityFromItem,
+  getRarityMeta,
 } from '../../lib/constants';
 import {
   SHOP_RARITY_WEIGHTS,
@@ -287,6 +289,16 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
     });
   }, [shopItems, rarityFilter, typeFilter]);
 
+  const shopSummary = useMemo(() => {
+    const totalUnits = shopItems.reduce((acc, item) => acc + Math.max(0, Number(item.quantity || 0)), 0);
+    const outOfStock = shopItems.filter((item) => Number(item.quantity || 0) <= 0).length;
+    return {
+      totalCatalog: shopItems.length,
+      totalUnits,
+      outOfStock,
+    };
+  }, [shopItems]);
+
   const columns = useMemo(
     () => [
       {
@@ -295,15 +307,23 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
         cell: ({ row }) => {
           const item = row.original;
           const rarity = getRarityFromItem(item);
+          const rarityMeta = getRarityMeta(rarity);
           return (
-            <div className="max-w-sm space-y-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-white">{item.item_name}</span>
-                <RarityBadge rarity={rarity} />
+            <div className="flex items-stretch gap-3 max-w-sm">
+              <span
+                aria-hidden="true"
+                className="w-1 rounded-full shrink-0 my-0.5"
+                style={{ backgroundColor: rarityMeta.color }}
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-white">{item.item_name}</span>
+                  <RarityBadge rarity={rarity} className="text-[10px] px-2 py-0" />
+                </div>
+                <p className="text-xs text-slate-400 line-clamp-2">
+                  {cleanDescription(item.description)}
+                </p>
               </div>
-              <p className="text-xs text-slate-400 line-clamp-2">
-                {cleanDescription(item.description)}
-              </p>
             </div>
           );
         },
@@ -312,7 +332,7 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
         accessorKey: 'type',
         header: 'Tipo',
         cell: ({ row }) => (
-          <Badge className="bg-white/5 text-slate-300 border-white/10">
+          <Badge className="bg-white/[0.05] text-slate-300 border-white/10">
             {getItemTypeLabel(getItemType(row.original))}
           </Badge>
         ),
@@ -321,9 +341,10 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
         accessorKey: 'price',
         header: 'Preço',
         cell: ({ row }) => (
-          <span className="font-mono font-bold text-amber-300 inline-flex items-center gap-1 tabular-nums">
-            <Coins className="h-3.5 w-3.5" />
-            {formatNumber(row.original.price)} G
+          <span className="font-mono font-bold text-slate-100 inline-flex items-center gap-1.5 tabular-nums">
+            <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" />
+            {formatNumber(row.original.price)}
+            <span className="text-[11px] font-semibold text-slate-400">G</span>
           </span>
         ),
       },
@@ -436,11 +457,51 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
         </div>
       </div>
 
+      {/* Resumo Rápido do Catálogo */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-2xl surface-card px-4 py-3 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+              Itens Cadastrados
+            </span>
+            <span className="text-lg font-extrabold font-mono text-white tabular-nums">
+              {formatNumber(shopSummary.totalCatalog)}
+            </span>
+          </div>
+          <GiSwapBag className="h-5 w-5 text-slate-400 shrink-0 hidden sm:block" aria-hidden="true" />
+        </div>
+        <div className="rounded-2xl surface-card px-4 py-3 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+              Unidades em Estoque
+            </span>
+            <span className="text-lg font-extrabold font-mono text-white tabular-nums">
+              {formatNumber(shopSummary.totalUnits)}
+            </span>
+          </div>
+          <GiCoinsPile className="h-5 w-5 text-slate-400 shrink-0 hidden sm:block" aria-hidden="true" />
+        </div>
+        <div className="rounded-2xl surface-card px-4 py-3 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+              Esgotados
+            </span>
+            <span
+              className={`text-lg font-extrabold font-mono tabular-nums ${
+                shopSummary.outOfStock > 0 ? 'text-rose-400' : 'text-emerald-300'
+              }`}
+            >
+              {formatNumber(shopSummary.outOfStock)}
+            </span>
+          </div>
+        </div>
+      </div>
+
       <DataTable
         data={filteredItems}
         columns={columns}
         searchPlaceholder="Buscar item por nome ou efeito..."
-        emptyIcon={ShoppingBag}
+        emptyIcon={GiSwapBag}
         emptyTitle="Nenhum item na loja"
         emptyDescription="Adicione itens manualmente ou use 'Gerar Itens (IA)'."
         filterSlot={
@@ -475,40 +536,49 @@ export function MasterShop({ shopItems, onGenerateShopItems }) {
         }
         renderMobileCard={(item) => {
           const rarity = getRarityFromItem(item);
+          const rarityMeta = getRarityMeta(rarity);
           return (
-            <Card className="p-4 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <RarityBadge rarity={rarity} />
-                    <Badge className="bg-white/5 text-slate-300 border-white/10">
-                      {getItemTypeLabel(getItemType(item))}
-                    </Badge>
+            <Card className="relative overflow-hidden border-white/10">
+              <div
+                aria-hidden="true"
+                className="h-[4px] w-full"
+                style={{ backgroundColor: rarityMeta.color }}
+              />
+              <div className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <RarityBadge rarity={rarity} />
+                      <Badge className="bg-white/5 text-slate-300 border-white/10">
+                        {getItemTypeLabel(getItemType(item))}
+                      </Badge>
+                    </div>
+                    <h4 className="font-bold text-white text-sm">{item.item_name}</h4>
                   </div>
-                  <h4 className="font-bold text-white text-sm">{item.item_name}</h4>
+                  <span className="font-mono text-xs font-bold text-slate-100 inline-flex items-center gap-1 shrink-0 tabular-nums">
+                    <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" />
+                    {formatNumber(item.price)} G
+                  </span>
                 </div>
-                <span className="font-mono text-xs font-bold text-amber-300 shrink-0">
-                  {formatNumber(item.price)} G
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">{cleanDescription(item.description)}</p>
-              <div className="flex items-center justify-between pt-2 border-t border-[var(--border-subtle)]">
-                <div className="inline-flex items-center gap-1.5">
-                  <Button variant="outline" size="icon-sm" className="h-8 w-8" onClick={() => adjustStock(item, -1)}>
-                    <Minus className="h-3 w-3" />
-                  </Button>
-                  <span className="w-8 text-center font-mono text-xs font-bold">{item.quantity}</span>
-                  <Button variant="outline" size="icon-sm" className="h-8 w-8" onClick={() => adjustStock(item, 1)}>
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Button variant="outline" size="icon-sm" onClick={() => openEditModal(item)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button variant="danger" size="icon-sm" onClick={() => setConfirmDelete(item)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                <p className="text-xs text-slate-400">{cleanDescription(item.description)}</p>
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--border-subtle)]">
+                  <div className="inline-flex items-center gap-1.5">
+                    <Button variant="outline" size="icon-sm" className="h-8 w-8" onClick={() => adjustStock(item, -1)}>
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="w-8 text-center font-mono text-xs font-bold">{item.quantity}</span>
+                    <Button variant="outline" size="icon-sm" className="h-8 w-8" onClick={() => adjustStock(item, 1)}>
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button variant="outline" size="icon-sm" onClick={() => openEditModal(item)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="danger" size="icon-sm" onClick={() => setConfirmDelete(item)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>

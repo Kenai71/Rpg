@@ -2,8 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import {
-  Backpack,
-  Coins,
   Crown,
   FileText,
   Minus,
@@ -11,8 +9,8 @@ import {
   SlidersHorizontal,
   Trash2,
   Users,
-  Zap,
 } from 'lucide-react';
+import { GiBackpack, GiCoinsPile } from 'react-icons/gi';
 import { toast } from 'sonner';
 import {
   ITEM_TYPES,
@@ -20,8 +18,10 @@ import {
   RARITIES,
   calculateLevel,
   formatDescriptionWithRarity,
+  getRankMeta,
   getRarityFromItem,
   getRarityMeta,
+  getXpProgress,
 } from '../../lib/constants';
 import {
   assignPlayerToParty,
@@ -243,14 +243,17 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
           const p = row.original;
           const currentParty = parties.find((g) => g.id === p.party_id);
           const isLeader = currentParty?.leader_id === p.uid;
+          const rankMeta = getRankMeta(p.rank);
+          const xpProg = getXpProgress(p.level, p.xp);
           return (
-            <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
               <UserAvatar
                 src={p.photoURL}
                 name={p.username}
                 className="h-9 w-9 text-xs shrink-0"
+                borderColor={`${rankMeta.color}66`}
               />
-              <div className="space-y-0.5 min-w-0">
+              <div className="space-y-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-white truncate">{p.username}</span>
                   {p.role === 'master' && <RoleBadge role="master" className="text-[10px] px-2 py-0" />}
@@ -260,9 +263,20 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                     </span>
                   )}
                 </div>
-                <span className="text-xs text-slate-400">
-                  Nível {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 whitespace-nowrap">
+                    LVL {p.level} • {p.inventory?.length || 0}/{p.slots || 10} slots
+                  </span>
+                  <div
+                    className="hidden xl:block h-1.5 w-16 rounded-full bg-[#090c14] border border-white/10 overflow-hidden shrink-0"
+                    title={`XP: ${xpProg.text}`}
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-slate-300 to-white"
+                      style={{ width: `${xpProg.percent}%` }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -318,11 +332,12 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
           const p = row.original;
           return (
             <div className="flex flex-col gap-0.5 font-mono text-xs tabular-nums">
-              <span className="text-amber-300 inline-flex items-center gap-1">
-                <Coins className="h-3.5 w-3.5" /> {formatNumber(p.gold)} G
+              <span className="text-slate-100 inline-flex items-center gap-1.5 font-semibold">
+                <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" /> {formatNumber(p.gold)}{' '}
+                <span className="text-[11px] text-slate-400">G</span>
               </span>
-              <span className="text-sky-300 inline-flex items-center gap-1">
-                <Zap className="h-3.5 w-3.5" /> {formatNumber(p.xp)} XP
+              <span className="text-sky-300 font-semibold">
+                {formatNumber(p.xp)} XP
               </span>
             </div>
           );
@@ -353,7 +368,7 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                   setXpDelta('');
                 }}
               >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <SlidersHorizontal className="h-3.5 w-3.5 text-slate-300" />
                 Ouro / XP
               </Button>
               <Button
@@ -364,7 +379,7 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                   setSlotAddQty(1);
                 }}
               >
-                <Backpack className="h-3.5 w-3.5" />
+                <GiBackpack className="h-3.5 w-3.5 text-slate-300" />
                 Mochila
               </Button>
             </div>
@@ -542,7 +557,7 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                         setSlotAddQty(1);
                       }}
                     >
-                      <Backpack className="h-3.5 w-3.5" />
+                      <GiBackpack className="h-3.5 w-3.5 text-slate-300" />
                       Mochila
                     </Button>
                   </div>
@@ -854,17 +869,21 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                 return (
                   <div
                     key={i}
-                    className={`rounded-xl p-2.5 min-h-[76px] flex flex-col justify-between border relative ${
+                    className={`rounded-xl p-2.5 pt-3 min-h-[78px] flex flex-col justify-between border relative overflow-hidden ${
                       item
-                        ? 'bg-[var(--surface-0)]/80'
-                        : 'border-dashed border-white/10 bg-white/[0.02] items-center justify-center'
+                        ? 'border-white/12 bg-[var(--surface-0)]/85'
+                        : 'border-dashed border-white/10 bg-white/[0.02] items-center justify-center pt-2.5'
                     }`}
-                    style={item ? { borderColor: `${rarityMeta.color}55` } : undefined}
                   >
                     {item ? (
                       <>
-                        <div className="flex items-start justify-between gap-1">
-                          <span className="text-[11px] font-mono font-bold text-slate-300">
+                        <span
+                          aria-hidden="true"
+                          className="absolute top-0 inset-x-0 h-[3px]"
+                          style={{ backgroundColor: rarityMeta.color }}
+                        />
+                        <div className="flex items-start justify-between gap-1 relative z-10">
+                          <span className="text-[11px] font-mono font-bold text-slate-300 tabular-nums">
                             x{item.qty}
                           </span>
                           <button
@@ -878,10 +897,7 @@ export function MasterPlayers({ players, parties, currentUserProfile }) {
                             <Minus className="h-3 w-3" />
                           </button>
                         </div>
-                        <p
-                          className="text-xs font-semibold line-clamp-2 mt-1"
-                          style={{ color: rarityMeta.color }}
-                        >
+                        <p className="text-xs font-semibold line-clamp-2 mt-1 text-white relative z-10">
                           {item.name}
                         </p>
                       </>

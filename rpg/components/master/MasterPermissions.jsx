@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { Check, ShieldCheck, UserCog, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { getRankMeta } from '../../lib/constants';
 import { modifyPlayerStatsTx } from '../../lib/rpg-service';
 import { RoleBadge, RankBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
 import { ConfirmDialog } from '../ui/Modal';
+import { UserAvatar } from '../ui/UserAvatar';
 
 const PERMISSION_MATRIX = [
   { capability: 'Aceitar missões do mural', player: true, master: true },
@@ -119,23 +121,32 @@ export function MasterPermissions({ allProfiles, currentUid }) {
           {allProfiles.map((userProf) => {
             const isSelf = userProf.uid === currentUid;
             const isMaster = userProf.role === 'master';
+            const rankMeta = getRankMeta(userProf.rank);
             return (
               <div
                 key={userProf.uid}
-                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)]/60 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="rounded-xl border border-white/10 bg-[var(--surface-0)]/75 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-white">{userProf.username}</span>
-                    {isSelf && (
-                      <span className="text-[11px] font-semibold text-slate-300">
-                        (Você)
-                      </span>
-                    )}
-                    <RoleBadge role={userProf.role} />
-                    <RankBadge rank={userProf.rank} />
+                <div className="flex items-center gap-3 min-w-0">
+                  <UserAvatar
+                    src={userProf.photoURL}
+                    name={userProf.username}
+                    className="h-10 w-10 text-xs shrink-0"
+                    borderColor={`${rankMeta.color}66`}
+                  />
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-white truncate">{userProf.username}</span>
+                      {isSelf && (
+                        <span className="text-[11px] font-semibold text-slate-400">
+                          (Você)
+                        </span>
+                      )}
+                      <RoleBadge role={userProf.role} />
+                      <RankBadge rank={userProf.rank} />
+                    </div>
+                    <p className="text-xs font-mono text-slate-500 truncate">UID: {userProf.uid}</p>
                   </div>
-                  <p className="text-xs font-mono text-slate-500 truncate">UID: {userProf.uid}</p>
                 </div>
 
                 <Button
@@ -143,6 +154,7 @@ export function MasterPermissions({ allProfiles, currentUid }) {
                   size="sm"
                   onClick={() => setConfirmTarget(userProf)}
                   disabled={isSelf && mastersCount <= 1}
+                  className="shrink-0"
                 >
                   {isMaster ? 'Alterar para Jogador' : 'Promover a Mestre'}
                 </Button>

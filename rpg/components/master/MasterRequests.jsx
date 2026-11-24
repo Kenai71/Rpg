@@ -7,6 +7,7 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { EmptyState } from '../ui/EmptyState';
+import { UserAvatar } from '../ui/UserAvatar';
 
 export function MasterRequests({ requests, players, onResolveRequest }) {
   const [tab, setTab] = useState('pending'); // 'pending' | 'resolved'
@@ -89,78 +90,88 @@ export function MasterRequests({ requests, players, onResolveRequest }) {
               <Card
                 key={req.id}
                 interactive
-                className={`p-4 flex flex-col justify-between gap-4 ${
-                  isRoulette && tab === 'pending' ? 'border-white/20' : ''
-                }`}
+                className="relative overflow-hidden border-white/10 hover:border-white/20 flex flex-col justify-between"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div
-                      className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                        isRoulette
-                          ? 'bg-white/10 text-slate-300'
-                          : 'bg-white/5 text-slate-300'
-                      }`}
-                    >
-                      {isRoulette ? <Dices className="h-5 w-5" /> : <Package className="h-5 w-5" />}
-                    </div>
-                    <div className="min-w-0 space-y-1">
-                      <h3 className="text-sm font-bold text-white truncate">
-                        {isRoulette ? 'Roleta Gacha (Gacha Gift)' : `${req.quantity}x ${req.item_name}`}
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Jogador:{' '}
-                        <strong className="text-slate-200">
-                          {player?.username || req.player_name || 'Aventureiro'}
-                        </strong>
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Enviado em {formatDate(req.createdAt)}
-                        {player && (
-                          <span>
-                            {' '}
-                            • Mochila: {usedSlots}/{maxSlots}
+                {tab === 'pending' && (
+                  <div
+                    aria-hidden="true"
+                    className="h-[3px] w-full"
+                    style={{ backgroundColor: isRoulette ? '#a78bfa' : '#38bdf8' }}
+                  />
+                )}
+                <div className="p-4 flex flex-col justify-between gap-4 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0 bg-white/[0.05] border border-white/10 text-slate-300">
+                        {isRoulette ? <Dices className="h-5 w-5" /> : <Package className="h-5 w-5" />}
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <h3 className="text-sm font-bold text-white truncate">
+                          {isRoulette ? 'Roleta Gacha (Gacha Gift)' : `${req.quantity}x ${req.item_name}`}
+                        </h3>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <UserAvatar
+                            src={player?.photoURL}
+                            name={player?.username || req.player_name || 'Aventureiro'}
+                            className="h-5 w-5 text-[9px] shrink-0"
+                          />
+                          <span className="text-xs font-semibold text-slate-200 truncate">
+                            {player?.username || req.player_name || 'Aventureiro'}
                           </span>
-                        )}
-                      </p>
+                          {player && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono border ${
+                                bagFull
+                                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/25'
+                                  : 'bg-white/[0.04] text-slate-300 border-white/10'
+                              }`}
+                            >
+                              Mochila {usedSlots}/{maxSlots}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Enviado em {formatDate(req.createdAt)}
+                        </p>
+                      </div>
                     </div>
+
+                    {tab === 'resolved' && (
+                      <Badge
+                        className={
+                          req.status === 'approved'
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                        }
+                      >
+                        {req.status === 'approved' ? 'Aprovado' : 'Recusado'}
+                      </Badge>
+                    )}
                   </div>
 
-                  {tab === 'resolved' && (
-                    <Badge
-                      className={
-                        req.status === 'approved'
-                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                          : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                      }
-                    >
-                      {req.status === 'approved' ? 'Aprovado' : 'Recusado'}
-                    </Badge>
+                  {tab === 'pending' && (
+                    <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-subtle)]">
+                      {bagFull ? (
+                        <span className="text-[11px] font-semibold text-rose-300">
+                          Mochila cheia (se não empilhar, falhará)
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">Pronto para entrega</span>
+                      )}
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button variant="danger" size="sm" onClick={() => onResolveRequest(req, false)}>
+                          <X className="h-4 w-4" />
+                          Recusar
+                        </Button>
+                        <Button variant="success" size="sm" onClick={() => onResolveRequest(req, true)}>
+                          <Check className="h-4 w-4" />
+                          Aprovar
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {tab === 'pending' && (
-                  <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-subtle)]">
-                    {bagFull ? (
-                      <span className="text-[11px] font-semibold text-amber-300">
-                        Atenção: mochila cheia (se não empilhar, falhará)
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-slate-400">Pronto para entrega</span>
-                    )}
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Button variant="danger" size="sm" onClick={() => onResolveRequest(req, false)}>
-                        <X className="h-4 w-4" />
-                        Recusar
-                      </Button>
-                      <Button variant="success" size="sm" onClick={() => onResolveRequest(req, true)}>
-                        <Check className="h-4 w-4" />
-                        Aprovar
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </Card>
             );
           })}

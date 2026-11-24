@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  ArrowUpRight,
   Check,
   Dices,
   Inbox,
@@ -146,7 +147,7 @@ export function MasterOverview({
       </section>
 
       {/* Atalhos Rápidos da Mesa Narrativa */}
-      <section aria-label="Ações rápidas da sessão" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <section aria-label="Ações rápidas da sessão" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           {
             label: 'Abrir Mesa Tática',
@@ -181,22 +182,25 @@ export function MasterOverview({
             key={label}
             type="button"
             onClick={onClick}
-            className="group p-3.5 rounded-2xl surface-card surface-card-interactive hover:-translate-y-0.5 text-left flex items-center gap-3 transition-all"
+            className="group relative overflow-hidden rounded-2xl surface-card surface-card-interactive hover:-translate-y-0.5 text-left transition-all border-white/10 hover:border-white/20"
           >
             <span
-              className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border transition-transform duration-200 group-hover:scale-105"
-              style={{
-                backgroundColor: `${color}18`,
-                borderColor: `${color}38`,
-                color,
-              }}
-            >
-              <Icon className="h-5 w-5" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-xs sm:text-sm font-bold text-white truncate">{label}</span>
-              <span className="block text-[11px] text-slate-400 truncate mt-0.5">{desc}</span>
-            </span>
+              aria-hidden="true"
+              className="block h-[3px] w-full opacity-85 group-hover:opacity-100 transition-opacity"
+              style={{ backgroundColor: color }}
+            />
+            <div className="p-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0 bg-white/[0.05] border border-white/10 text-slate-300 group-hover:text-white transition-all duration-200 group-hover:scale-105">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-xs sm:text-sm font-bold text-white truncate">{label}</span>
+                  <span className="block text-[11px] text-slate-400 truncate mt-0.5">{desc}</span>
+                </span>
+              </div>
+              <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-white shrink-0 transition-colors" aria-hidden="true" />
+            </div>
           </button>
         ))}
       </section>
