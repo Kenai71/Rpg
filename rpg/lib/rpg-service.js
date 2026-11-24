@@ -1323,9 +1323,24 @@ export async function deleteMapWithTokens(mapId) {
   await batch.commit();
 }
 
+export function getTokenSyncGroupId(token) {
+  if (!token) return null;
+  if (typeof token.sync_group_id === 'string' && token.sync_group_id.trim()) {
+    return token.sync_group_id.trim();
+  }
+  if (token.type === 'player' && token.character_id) {
+    return `hero:${token.character_id}`;
+  }
+  if (token.id) {
+    return `tok:${token.id}`;
+  }
+  return null;
+}
+
 export async function createMapToken(data) {
   const firestore = requireDb();
   const tokensRef = collection(firestore, 'map_tokens');
+  const tokenRef = doc(tokensRef);
 
   const cleanName = String(data.name || 'Guerreiro').trim().slice(0, 100);
   const size = ['S', 'M', 'L', 'H', 'G'].includes(data.size) ? data.size : 'M';
@@ -1338,13 +1353,20 @@ export async function createMapToken(data) {
 
   const isAllyDefault = type === 'player';
   const nameHiddenDefault = type === 'monster';
+  const syncGroupId =
+    typeof data.sync_group_id === 'string' && data.sync_group_id.trim()
+      ? data.sync_group_id.trim().slice(0, 128)
+      : type === 'player' && data.character_id
+      ? `hero:${String(data.character_id).slice(0, 118)}`
+      : `tok:${tokenRef.id}`;
 
-  const docRef = await addDoc(tokensRef, {
+  await setDoc(tokenRef, {
     map_id: String(data.map_id),
     name: cleanName,
     type,
     character_id: data.character_id || null,
     owner_id: data.owner_id || null,
+    sync_group_id: syncGroupId,
     color: data.color || '#60a5fa',
     avatar: data.avatar || null,
     x: finalX,
@@ -1364,7 +1386,7 @@ export async function createMapToken(data) {
     updatedAt: serverTimestamp(),
   });
 
-  return docRef.id;
+  return tokenRef.id;
 }
 
 export async function updateMapTokenPosition(tokenId, { x, y }) {
@@ -1383,6 +1405,22 @@ export async function updateMapTokenPosition(tokenId, { x, y }) {
   });
 }
 
+// Campos de vitalidade/combate sincronizados automaticamente entre todos os mapas para o mesmo token
+const CROSS_MAP_SYNCED_TOKEN_FIELDS = [
+  'hp',
+  'max_hp',
+  'mana',
+  'max_mana',
+  'ac',
+  'conditions',
+  'name',
+  'size',
+  'color',
+  'avatar',
+  'is_ally',
+  'name_hidden',
+];
+
 export async function updateMapTokenStats(tokenId, statsData) {
   if (!tokenId) return;
   const firestore = requireDb();
@@ -1399,7 +1437,7 @@ export async function updateMapTokenStats(tokenId, statsData) {
   if (statsData.ac !== undefined) payload.ac = Math.max(0, Math.floor(Number(statsData.ac)));
   if (statsData.mana !== undefined) payload.mana = Math.max(0, Math.floor(Number(statsData.mana)));
   if (statsData.max_mana !== undefined) payload.max_mana = Math.max(0, Math.floor(Number(statsData.max_mana)));
-  if (statsData.conditions !== undefined) payload.conditions = Array.isArray(statsData.conditions) ? statsData.conditions : [];
+  if (statsData.conditions !== undefined) payload.conditions = Array.isArray(statsData.conditions) ? statsData.conditions.slice(0, 20) : [];
   if (statsData.color !== undefined) payload.color = statsData.color;
   if (statsData.avatar !== undefined) payload.avatar = statsData.avatar || null;
   if (statsData.hidden !== undefined) payload.hidden = Boolean(statsData.hidden);
@@ -1409,6 +1447,65 @@ export async function updateMapTokenStats(tokenId, statsData) {
   if (statsData.initiative !== undefined) payload.initiative = Number(statsData.initiative);
 
   await updateDoc(tokenRef, payload);
+
+  // Propaga vida e atributos compartilhados em tempo real para todas as cópias deste token nos demais mapas
+  const sharedPatch = {};
+  CROSS_MAP_SYNCED_TOKEN_FIELDS.forEach((field) => {
+    if (payload[field] !== undefined) {
+      sharedPatch[field] = payload[field];
+    }
+  });
+
+  if (Object.keys(sharedPatch).length === 0) return;
+
+  try {
+    const targetSnap = await getDoc(tokenRef);
+    if (!targetSnap.exists()) return;
+    const targetData = { id: targetSnap.id, ...targetSnap.data() };
+    const syncGroupId = getTokenSyncGroupId(targetData);
+    const charId = targetData.type === 'player' ? targetData.character_id : null;
+
+    const siblingRefs = new Map();
+
+    if (syncGroupId) {
+      const byGroupSnap = await getDocs(
+        query(collection(firestore, 'map_tokens'), where('sync_group_id', '==', syncGroupId))
+      );
+      byGroupSnap.forEach((d) => {
+        if (d.id !== tokenId) siblingRefs.set(d.id, d.ref);
+      });
+    }
+
+    // Compatibilidade com tokens de heróis antigos (antes de sync_group_id existir)
+    if (charId) {
+      const byCharSnap = await getDocs(
+        query(collection(firestore, 'map_tokens'), where('character_id', '==', charId))
+      );
+      byCharSnap.forEach((d) => {
+        if (d.id !== tokenId) siblingRefs.set(d.id, d.ref);
+      });
+    }
+
+    if (siblingRefs.size === 0) return;
+
+    const batch = writeBatch(firestore);
+    const propagatedUpdate = {
+      ...sharedPatch,
+      ...(syncGroupId ? { sync_group_id: syncGroupId } : {}),
+      updatedAt: serverTimestamp(),
+    };
+
+    if (!targetData.sync_group_id && syncGroupId) {
+      batch.update(tokenRef, { sync_group_id: syncGroupId });
+    }
+    siblingRefs.forEach((ref) => {
+      batch.update(ref, propagatedUpdate);
+    });
+
+    await batch.commit();
+  } catch (err) {
+    console.warn('Aviso ao propagar vida do token para outros mapas:', err?.message || err);
+  }
 }
 
 export async function deleteMapToken(tokenId) {
@@ -1417,57 +1514,136 @@ export async function deleteMapToken(tokenId) {
   await deleteDoc(doc(firestore, 'map_tokens', tokenId));
 }
 
-export async function syncHeroTokensToMap(mapId, playerProfiles, existingTokens = []) {
-  if (!mapId || !Array.isArray(playerProfiles)) return 0;
+/**
+ * Sincroniza os tokens selecionados pelo Mestre (heróis, aliados, NPCs e monstros ativos)
+ * para o mapa alvo, preservando 100% da vida atual/máxima, mana, CA, condições e vinculando
+ * suas identidades (`sync_group_id`) para manter a vida sincronizada entre todos os mapas.
+ */
+export async function syncTokensToMap(targetMapId, selectedItems = [], existingMapTokens = []) {
+  if (!targetMapId || !Array.isArray(selectedItems) || selectedItems.length === 0) return 0;
   const firestore = requireDb();
   const batch = writeBatch(firestore);
   let addedCount = 0;
+  let updatedLinksCount = 0;
 
-  const existingHeroUids = new Set(
-    existingTokens
-      .filter((t) => t.map_id === mapId && t.type === 'player')
-      .map((t) => t.character_id)
-  );
+  const existingKeysOnTarget = new Set();
+  const existingCharIdsOnTarget = new Set();
 
-  playerProfiles.forEach((p, idx) => {
-    if (existingHeroUids.has(p.uid)) return;
+  existingMapTokens
+    .filter((t) => t.map_id === targetMapId)
+    .forEach((t) => {
+      const key = getTokenSyncGroupId(t);
+      if (key) existingKeysOnTarget.add(key);
+      if (t.type === 'player' && t.character_id) {
+        existingCharIdsOnTarget.add(t.character_id);
+      }
+    });
+
+  const existingCountOffset = existingMapTokens.filter((t) => t.map_id === targetMapId).length;
+
+  selectedItems.forEach((item, idx) => {
+    const syncGroupId = String(item.sync_group_id || '').trim().slice(0, 128);
+    if (!syncGroupId) return;
+    if (existingKeysOnTarget.has(syncGroupId)) return;
+    if (item.type === 'player' && item.character_id && existingCharIdsOnTarget.has(item.character_id)) {
+      return;
+    }
 
     const tokenRef = doc(collection(firestore, 'map_tokens'));
+    const slotIdx = existingCountOffset + addedCount;
+    const type = ['player', 'npc', 'monster'].includes(item.type) ? item.type : 'player';
+    const size = ['S', 'M', 'L', 'H', 'G'].includes(item.size) ? item.size : 'M';
+    const maxHp = Math.max(1, Math.floor(Number(item.max_hp ?? 20)));
+    const hp = Math.max(0, Math.floor(Number(item.hp ?? maxHp)));
+    const maxMana = Math.max(0, Math.floor(Number(item.max_mana ?? 10)));
+    const mana = Math.max(0, Math.floor(Number(item.mana ?? maxMana)));
+
+    batch.set(tokenRef, {
+      map_id: targetMapId,
+      name: String(item.name || 'Guerreiro').trim().slice(0, 100),
+      type,
+      character_id: item.character_id || null,
+      owner_id: item.owner_id || null,
+      sync_group_id: syncGroupId,
+      color: item.color || (type === 'player' ? '#60a5fa' : type === 'npc' ? '#10b981' : '#ef4444'),
+      avatar: item.avatar || null,
+      x: 12 + ((slotIdx * 8) % 76),
+      y: Math.max(12, 84 - Math.floor(slotIdx / 10) * 9),
+      size,
+      hp,
+      max_hp: maxHp,
+      ac: Math.max(0, Math.floor(Number(item.ac ?? 12))),
+      mana,
+      max_mana: maxMana,
+      conditions: Array.isArray(item.conditions) ? item.conditions.slice(0, 20) : [],
+      initiative: Math.floor(Number(item.initiative || 0)),
+      hidden: Boolean(item.hidden),
+      is_ally: item.is_ally !== undefined ? Boolean(item.is_ally) : type === 'player',
+      name_hidden: item.name_hidden !== undefined ? Boolean(item.name_hidden) : type === 'monster',
+      monster_id: item.monster_id ? String(item.monster_id).slice(0, 128) : null,
+      updatedAt: serverTimestamp(),
+    });
+
+    // Vincula também os tokens de origem legados (que ainda não tinham sync_group_id) para manter a vida sincronizada entre os mapas
+    if (Array.isArray(item.sourceTokenIdsToLink) && item.sourceTokenIdsToLink.length > 0) {
+      item.sourceTokenIdsToLink.forEach((srcId) => {
+        if (!srcId) return;
+        batch.update(doc(firestore, 'map_tokens', srcId), {
+          sync_group_id: syncGroupId,
+        });
+        updatedLinksCount += 1;
+      });
+    }
+
+    existingKeysOnTarget.add(syncGroupId);
+    if (type === 'player' && item.character_id) {
+      existingCharIdsOnTarget.add(item.character_id);
+    }
+    addedCount += 1;
+  });
+
+  if (addedCount > 0 || updatedLinksCount > 0) {
+    await batch.commit();
+  }
+  return addedCount;
+}
+
+export async function syncHeroTokensToMap(mapId, playerProfiles, existingTokens = []) {
+  if (!mapId || !Array.isArray(playerProfiles)) return 0;
+
+  const items = playerProfiles.map((p) => {
     const heroLevel = Number(p.level || 1);
     const calculatedHp = 18 + heroLevel * 6;
     const calculatedMana = 10 + heroLevel * 4;
+    const existingHeroToken = existingTokens.find(
+      (t) => t.type === 'player' && t.character_id === p.uid
+    );
 
-    batch.set(tokenRef, {
-      map_id: mapId,
-      name: p.username || 'Herói',
+    return {
+      sync_group_id: `hero:${p.uid}`,
+      name: p.username || existingHeroToken?.name || 'Herói',
       type: 'player',
       character_id: p.uid,
       owner_id: p.uid,
-      color: '#60a5fa',
-      avatar: p.photoURL || null,
-      x: 10 + ((idx * 8) % 80),
-      y: 84 - Math.floor(idx / 10) * 8,
-      size: 'M',
-      hp: calculatedHp,
-      max_hp: calculatedHp,
-      ac: 14,
-      mana: calculatedMana,
-      max_mana: calculatedMana,
-      conditions: [],
-      initiative: 0,
+      color: existingHeroToken?.color || '#60a5fa',
+      avatar: p.photoURL || existingHeroToken?.avatar || null,
+      size: existingHeroToken?.size || 'M',
+      hp: existingHeroToken ? existingHeroToken.hp : calculatedHp,
+      max_hp: existingHeroToken ? existingHeroToken.max_hp : calculatedHp,
+      ac: existingHeroToken ? existingHeroToken.ac : 14,
+      mana: existingHeroToken ? existingHeroToken.mana : calculatedMana,
+      max_mana: existingHeroToken ? existingHeroToken.max_mana : calculatedMana,
+      conditions: Array.isArray(existingHeroToken?.conditions) ? existingHeroToken.conditions : [],
+      initiative: existingHeroToken?.initiative || 0,
       hidden: false,
       is_ally: true,
       name_hidden: false,
       monster_id: null,
-      updatedAt: serverTimestamp(),
-    });
-    addedCount++;
+      sourceTokenIdsToLink: existingHeroToken && !existingHeroToken.sync_group_id ? [existingHeroToken.id] : [],
+    };
   });
 
-  if (addedCount > 0) {
-    await batch.commit();
-  }
-  return addedCount;
+  return syncTokensToMap(mapId, items, existingTokens);
 }
 
 export async function broadcastMapPing({ map_id, user_id, user_name, x, y, color = '#38bdf8' }) {

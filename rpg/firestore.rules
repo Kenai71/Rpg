@@ -145,6 +145,7 @@ service cloud.firestore {
     //   - is_ally: bool (optional - marks monster/NPC as ally so players can see its HP bar)
     //   - name_hidden: bool (optional - hides monster/NPC name from players until revealed)
     //   - monster_id: string | null (optional, 0..128 chars - Monster Manual bestiary reference)
+    //   - sync_group_id: string | null (optional, 0..128 chars - links identical entities across maps for synchronized HP/vitals)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
     //
@@ -414,6 +415,7 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'is_ally') &&
         isSafeOptionalBool(data, 'name_hidden') &&
         isSafeOptionalString(data, 'monster_id', 0, 128) &&
+        isSafeOptionalString(data, 'sync_group_id', 0, 128) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }

@@ -7,14 +7,20 @@ import {
   ChevronLeft,
   ChevronRight,
   Compass,
+  Heart,
   Image as ImageIcon,
   Link2,
   Plus,
+  RefreshCw,
+  Search,
+  Shield,
+  ShieldCheck,
   Skull,
   Trash2,
   Upload,
   Users,
   X,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -25,8 +31,9 @@ import {
   createMapToken,
   deleteMapWithTokens,
   deleteMapToken,
+  getTokenSyncGroupId,
   setActiveMapTx,
-  syncHeroTokensToMap,
+  syncTokensToMap,
   updateMap,
   updateMapTokenPosition,
   updateMapTokenStats,
@@ -56,6 +63,10 @@ export function MasterMapManager({
   const [selectedMapId, setSelectedMapId] = useState(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [spawnMonsterModalOpen, setSpawnMonsterModalOpen] = useState(false);
+  const [syncTokensModalOpen, setSyncTokensModalOpen] = useState(false);
+  const [selectedSyncKeys, setSelectedSyncKeys] = useState([]);
+  const [syncSearch, setSyncSearch] = useState('');
+  const [syncTypeFilter, setSyncTypeFilter] = useState('all'); // 'all' | 'active_map' | 'player' | 'npc_monster'
 
   // Fonte do mapa no modal de criação ('upload' | 'preset' | 'url')
   const [mapSourceTab, setMapSourceTab] = useState('upload');
@@ -72,7 +83,7 @@ export function MasterMapManager({
   const [mapTitle, setMapTitle] = useState('');
   const [gridType, setGridType] = useState('square');
   const [creating, setCreating] = useState(false);
-  const [syncingHeroes, setSyncingHeroes] = useState(false);
+  const [syncingTokens, setSyncingTokens] = useState(false);
 
   // Detecta automaticamente as dimensões exatas em pixels quando o Mestre cola uma URL da Web
   useEffect(() => {
@@ -479,21 +490,219 @@ export function MasterMapManager({
     }
   };
 
-  // Sincronizar todos os heróis da mesa para o mapa atual
-  const handleSyncHeroes = async () => {
-    if (!currentMap) return;
-    setSyncingHeroes(true);
-    try {
-      const count = await syncHeroTokensToMap(currentMap.id, players, currentTokens);
-      if (count > 0) {
-        toast.success(`${count} herói(s) sincronizado(s) no mapa com sucesso!`);
+  // Catálogo unificado de todos os tokens ativos na mesa + heróis (preservando vida real e atributos entre mapas)
+  const syncTokenCandidates = useMemo(() => {
+    const mapById = new Map(maps.map((m) => [m.id, m]));
+    const getUpdatedMs = (t) => {
+      if (!t?.updatedAt) return 0;
+      if (t.updatedAt?.toMillis) return t.updatedAt.toMillis();
+      if (t.updatedAt?.seconds) return t.updatedAt.seconds * 1000;
+      if (t.updatedAt instanceof Date) return t.updatedAt.getTime();
+      return Number(t.updatedAt) || 0;
+    };
+
+    const grouped = new Map();
+
+    tokens.forEach((tok) => {
+      if (!tok?.map_id || !mapById.has(tok.map_id)) return;
+      const syncKey = getTokenSyncGroupId(tok);
+      if (!syncKey) return;
+
+      const mapMeta = mapById.get(tok.map_id);
+      const isFromActive = Boolean(activeMap && tok.map_id === activeMap.id);
+      const isFromCurrent = Boolean(currentMap && tok.map_id === currentMap.id);
+      const updatedMs = getUpdatedMs(tok);
+
+      if (!grouped.has(syncKey)) {
+        grouped.set(syncKey, {
+          sync_group_id: syncKey,
+          bestToken: tok,
+          bestUpdatedMs: updatedMs,
+          bestIsActive: isFromActive,
+          mapIds: new Set([tok.map_id]),
+          originMapTitles: new Set(!isFromCurrent && mapMeta?.title ? [mapMeta.title] : []),
+          isOnActiveMap: isFromActive,
+          isOnCurrentMap: isFromCurrent,
+          sourceTokenIdsToLink: !tok.sync_group_id ? [tok.id] : [],
+        });
       } else {
-        toast.info('Todos os heróis já possuem bonequinhos neste mapa.');
+        const entry = grouped.get(syncKey);
+        entry.mapIds.add(tok.map_id);
+        if (!isFromCurrent && mapMeta?.title) {
+          entry.originMapTitles.add(mapMeta.title);
+        }
+        if (isFromActive) entry.isOnActiveMap = true;
+        if (isFromCurrent) entry.isOnCurrentMap = true;
+        if (!tok.sync_group_id) {
+          entry.sourceTokenIdsToLink.push(tok.id);
+        }
+        // Mantém a cópia mais recente como fonte autoritativa da vida/status
+        if (
+          updatedMs > entry.bestUpdatedMs ||
+          (updatedMs === entry.bestUpdatedMs && isFromActive && !entry.bestIsActive)
+        ) {
+          entry.bestToken = tok;
+          entry.bestUpdatedMs = updatedMs;
+          entry.bestIsActive = isFromActive;
+        }
       }
+    });
+
+    const candidates = [];
+
+    grouped.forEach((entry) => {
+      const t = entry.bestToken;
+      const matchingProfile =
+        t.type === 'player' && t.character_id
+          ? players.find((p) => p.uid === t.character_id)
+          : null;
+
+      candidates.push({
+        sync_group_id: entry.sync_group_id,
+        name: matchingProfile?.username || t.name || 'Token',
+        type: t.type || 'player',
+        character_id: t.character_id || null,
+        owner_id: t.owner_id || null,
+        color: t.color || (t.type === 'player' ? '#60a5fa' : '#ef4444'),
+        avatar: matchingProfile?.photoURL || t.avatar || null,
+        size: t.size || 'M',
+        hp: Number.isFinite(Number(t.hp)) ? Number(t.hp) : 20,
+        max_hp: Math.max(1, Number(t.max_hp) || 20),
+        ac: Number.isFinite(Number(t.ac)) ? Number(t.ac) : 12,
+        mana: Number.isFinite(Number(t.mana)) ? Number(t.mana) : 0,
+        max_mana: Math.max(0, Number(t.max_mana) || 0),
+        conditions: Array.isArray(t.conditions) ? t.conditions : [],
+        initiative: Number(t.initiative || 0),
+        hidden: Boolean(t.hidden),
+        is_ally: t.is_ally !== undefined ? Boolean(t.is_ally) : t.type === 'player',
+        name_hidden: t.name_hidden !== undefined ? Boolean(t.name_hidden) : t.type === 'monster',
+        monster_id: t.monster_id || null,
+        isOnActiveMap: entry.isOnActiveMap,
+        isOnCurrentMap: entry.isOnCurrentMap,
+        originMaps: Array.from(entry.originMapTitles),
+        sourceTokenIdsToLink: entry.sourceTokenIdsToLink,
+        isNewHeroProfile: false,
+      });
+    });
+
+    // Inclui heróis registrados que ainda não têm token em nenhum mapa
+    players.forEach((p) => {
+      const heroKey = `hero:${p.uid}`;
+      if (grouped.has(heroKey)) return;
+      const heroLevel = Number(p.level || 1);
+      const calculatedHp = 18 + heroLevel * 6;
+      const calculatedMana = 10 + heroLevel * 4;
+      candidates.push({
+        sync_group_id: heroKey,
+        name: p.username || 'Herói',
+        type: 'player',
+        character_id: p.uid,
+        owner_id: p.uid,
+        color: '#60a5fa',
+        avatar: p.photoURL || null,
+        size: 'M',
+        hp: calculatedHp,
+        max_hp: calculatedHp,
+        ac: 14,
+        mana: calculatedMana,
+        max_mana: calculatedMana,
+        conditions: [],
+        initiative: 0,
+        hidden: false,
+        is_ally: true,
+        name_hidden: false,
+        monster_id: null,
+        isOnActiveMap: false,
+        isOnCurrentMap: false,
+        originMaps: [],
+        sourceTokenIdsToLink: [],
+        isNewHeroProfile: true,
+      });
+    });
+
+    // Ordena: disponíveis primeiro -> no mapa ativo -> heróis -> aliados/NPCs -> monstros -> alfabética
+    const typeRank = (c) => {
+      if (c.type === 'player') return 0;
+      if (c.is_ally || c.type === 'npc') return 1;
+      return 2;
+    };
+
+    candidates.sort((a, b) => {
+      if (a.isOnCurrentMap !== b.isOnCurrentMap) return a.isOnCurrentMap ? 1 : -1;
+      if (a.isOnActiveMap !== b.isOnActiveMap) return a.isOnActiveMap ? -1 : 1;
+      const rDiff = typeRank(a) - typeRank(b);
+      if (rDiff !== 0) return rDiff;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
+
+    return candidates;
+  }, [maps, tokens, players, activeMap, currentMap]);
+
+  const filteredSyncCandidates = useMemo(() => {
+    const q = syncSearch.trim().toLowerCase();
+    return syncTokenCandidates.filter((c) => {
+      if (syncTypeFilter === 'active_map' && !c.isOnActiveMap) return false;
+      if (syncTypeFilter === 'player' && c.type !== 'player') return false;
+      if (syncTypeFilter === 'npc_monster' && c.type === 'player') return false;
+      if (q && !c.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [syncTokenCandidates, syncSearch, syncTypeFilter]);
+
+  const availableSyncCandidates = useMemo(
+    () => syncTokenCandidates.filter((c) => !c.isOnCurrentMap),
+    [syncTokenCandidates]
+  );
+
+  // Abre modal de seleção de tokens ativos para sincronizar no mapa atual
+  const handleOpenSyncTokensModal = () => {
+    if (!currentMap) return;
+    setSyncSearch('');
+    setSyncTypeFilter('all');
+
+    const activeMapAvailable = availableSyncCandidates.filter((c) => c.isOnActiveMap);
+    if (activeMapAvailable.length > 0) {
+      setSelectedSyncKeys(activeMapAvailable.map((c) => c.sync_group_id));
+    } else {
+      const heroAvailable = availableSyncCandidates.filter((c) => c.type === 'player');
+      setSelectedSyncKeys(heroAvailable.map((c) => c.sync_group_id));
+    }
+
+    setSyncTokensModalOpen(true);
+  };
+
+  const toggleSyncKey = (syncKey) => {
+    setSelectedSyncKeys((prev) =>
+      prev.includes(syncKey) ? prev.filter((k) => k !== syncKey) : [...prev, syncKey]
+    );
+  };
+
+  // Executa a sincronização dos tokens escolhidos preservando a vida e vinculando entre mapas
+  const handleConfirmSyncTokens = async () => {
+    if (!currentMap) return;
+    const selectedItems = availableSyncCandidates.filter((c) =>
+      selectedSyncKeys.includes(c.sync_group_id)
+    );
+    if (selectedItems.length === 0) {
+      toast.info('Selecione pelo menos um token para sincronizar neste mapa.');
+      return;
+    }
+
+    setSyncingTokens(true);
+    try {
+      const count = await syncTokensToMap(currentMap.id, selectedItems, currentTokens);
+      if (count > 0) {
+        toast.success(
+          `${count} token(s) sincronizado(s) com vida e atributos vinculados entre os mapas!`
+        );
+      } else {
+        toast.info('Os tokens selecionados já estão presentes neste mapa.');
+      }
+      setSyncTokensModalOpen(false);
     } catch (err) {
-      toast.error('Erro ao sincronizar heróis.');
+      toast.error(err?.message || 'Erro ao sincronizar tokens.');
     } finally {
-      setSyncingHeroes(false);
+      setSyncingTokens(false);
     }
   };
 
@@ -603,14 +812,14 @@ export function MasterMapManager({
         <Button
           size="sm"
           variant="secondary"
-          onClick={handleSyncHeroes}
-          loading={syncingHeroes}
+          onClick={handleOpenSyncTokensModal}
+          loading={syncingTokens}
           disabled={!currentMap}
           className="text-xs gap-1.5"
-          title="Adicionar automaticamente tokens de todos os heróis da mesa neste mapa"
+          title="Selecionar tokens ativos na mesa (heróis, aliados e monstros) e sincronizar mantendo vida e atributos entre todos os mapas"
         >
-          <Users className="h-3.5 w-3.5 text-slate-300" />
-          Sincronizar Heróis
+          <RefreshCw className="h-3.5 w-3.5 text-slate-300" />
+          Sincronizar Tokens
         </Button>
 
         <Button
@@ -1034,6 +1243,305 @@ export function MasterMapManager({
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* MODAL DE SELEÇÃO E SINCRONIZAÇÃO DE TOKENS ENTRE MAPAS (VIDA & ATRIBUTOS VINCULADOS) */}
+      <Modal
+        open={syncTokensModalOpen}
+        onOpenChange={setSyncTokensModalOpen}
+        title="Sincronizar Tokens para este Mapa"
+        description={
+          currentMap
+            ? `Escolha os tokens ativos para trazer para "${currentMap.title}". A vida atual, mana, CA e condições permanecem sincronizadas em tempo real entre todos os mapas.`
+            : 'Selecione os tokens para sincronizar.'
+        }
+        maxWidth="max-w-2xl"
+      >
+        <div className="space-y-3.5">
+          {/* Busca e Filtros Rápidos */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
+                value={syncSearch}
+                onChange={(e) => setSyncSearch(e.target.value)}
+                placeholder="Buscar token por nome..."
+                className="pl-9 h-9 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-black/40 border border-white/10 overflow-x-auto shrink-0">
+              {[
+                { id: 'all', label: 'Todos' },
+                { id: 'active_map', label: 'Mapa Ativo' },
+                { id: 'player', label: 'Heróis' },
+                { id: 'npc_monster', label: 'Monstros / NPCs' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSyncTypeFilter(tab.id)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap',
+                    syncTypeFilter === tab.id
+                      ? 'bg-white/15 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Barra de Atalhos de Seleção */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedSyncKeys(availableSyncCandidates.map((c) => c.sync_group_id))
+                }
+                disabled={availableSyncCandidates.length === 0}
+                className="px-2.5 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 disabled:opacity-35 text-[11px] font-semibold text-slate-200 transition-colors"
+              >
+                Selecionar Todos ({availableSyncCandidates.length})
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedSyncKeys(
+                    availableSyncCandidates
+                      .filter((c) => c.type === 'player')
+                      .map((c) => c.sync_group_id)
+                  )
+                }
+                disabled={availableSyncCandidates.every((c) => c.type !== 'player')}
+                className="px-2.5 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 disabled:opacity-35 text-[11px] font-semibold text-slate-200 transition-colors"
+              >
+                Apenas Heróis
+              </button>
+              {availableSyncCandidates.some((c) => c.isOnActiveMap) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedSyncKeys(
+                      availableSyncCandidates
+                        .filter((c) => c.isOnActiveMap)
+                        .map((c) => c.sync_group_id)
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[11px] font-semibold text-slate-200 transition-colors"
+                >
+                  Todos do Mapa Ativo
+                </button>
+              )}
+              {selectedSyncKeys.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSyncKeys([])}
+                  className="px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-400 hover:text-white transition-colors"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+
+            <span className="text-[11px] font-mono font-bold text-slate-300">
+              {selectedSyncKeys.filter((k) =>
+                availableSyncCandidates.some((c) => c.sync_group_id === k)
+              ).length}{' '}
+              selecionado(s)
+            </span>
+          </div>
+
+          {/* Lista de Tokens Ativos Disponíveis */}
+          <div className="max-h-[48vh] overflow-y-auto space-y-2 pr-1">
+            {filteredSyncCandidates.length === 0 ? (
+              <div className="py-10 text-center text-xs text-slate-400 rounded-2xl border border-dashed border-white/12">
+                Nenhum token encontrado com esse filtro.
+              </div>
+            ) : (
+              filteredSyncCandidates.map((cand) => {
+                const isSelected = selectedSyncKeys.includes(cand.sync_group_id);
+                const hpPct = Math.max(
+                  0,
+                  Math.min(100, Math.round(((cand.hp || 0) / Math.max(1, cand.max_hp || 1)) * 100))
+                );
+                const isAlliedNpc = cand.type !== 'player' && cand.is_ally;
+                const ringColor = isAlliedNpc ? '#10b981' : cand.color || '#60a5fa';
+
+                return (
+                  <button
+                    key={cand.sync_group_id}
+                    type="button"
+                    disabled={cand.isOnCurrentMap}
+                    onClick={() => !cand.isOnCurrentMap && toggleSyncKey(cand.sync_group_id)}
+                    className={cn(
+                      'w-full p-3 rounded-2xl border text-left transition-all flex items-center gap-3',
+                      cand.isOnCurrentMap
+                        ? 'bg-white/[0.02] border-white/8 opacity-55 cursor-default'
+                        : isSelected
+                        ? 'bg-white/12 border-white/35 shadow-sm'
+                        : 'bg-white/[0.04] border-white/10 hover:bg-white/[0.08] hover:border-white/20'
+                    )}
+                  >
+                    {/* Checkbox */}
+                    <span
+                      className={cn(
+                        'h-5 w-5 rounded-md border flex items-center justify-center shrink-0 transition-all',
+                        cand.isOnCurrentMap
+                          ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                          : isSelected
+                          ? 'bg-white text-[#07080c] border-white'
+                          : 'bg-[#0c101b] border-white/25 text-transparent'
+                      )}
+                    >
+                      <Check className="h-3.5 w-3.5 stroke-[3]" />
+                    </span>
+
+                    {/* Avatar / Emblema Circular do Token */}
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center font-black font-mono text-xs text-white shrink-0 overflow-hidden"
+                      style={{
+                        background: cand.avatar
+                          ? '#0c101b'
+                          : `radial-gradient(circle at 32% 28%, ${ringColor}ff 0%, ${ringColor}bb 60%, #090d16 100%)`,
+                        border: `2px solid ${ringColor}`,
+                      }}
+                    >
+                      {cand.avatar ? (
+                        <img
+                          src={cand.avatar}
+                          alt={cand.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        cand.name.slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+
+                    {/* Informações + Origem */}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-extrabold text-white truncate max-w-[190px]">
+                          {cand.name}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded-md bg-white/10 border border-white/12 text-[10px] font-semibold text-slate-200 inline-flex items-center gap-1">
+                          {cand.type === 'player' ? (
+                            <>
+                              <Users className="h-2.5 w-2.5 text-slate-300" /> Herói
+                            </>
+                          ) : isAlliedNpc ? (
+                            <>
+                              <ShieldCheck className="h-2.5 w-2.5 text-emerald-300" /> Aliado
+                            </>
+                          ) : cand.type === 'npc' ? (
+                            'NPC'
+                          ) : (
+                            <>
+                              <Skull className="h-2.5 w-2.5 text-rose-400" /> Monstro
+                            </>
+                          )}
+                        </span>
+
+                        {cand.isOnCurrentMap ? (
+                          <span className="px-1.5 py-0.2 rounded-md bg-emerald-500/15 border border-emerald-400/35 text-[10px] font-bold text-emerald-300">
+                            Já está neste mapa
+                          </span>
+                        ) : cand.isOnActiveMap ? (
+                          <span className="px-1.5 py-0.2 rounded-md bg-amber-500/15 border border-amber-400/35 text-[10px] font-bold text-amber-300">
+                            Ativo em {activeMap?.title || 'Mapa Ativo'}
+                          </span>
+                        ) : cand.originMaps.length > 0 ? (
+                          <span className="px-1.5 py-0.2 rounded-md bg-white/5 border border-white/10 text-[10px] font-medium text-slate-400 truncate max-w-[170px]">
+                            Em: {cand.originMaps.join(', ')}
+                          </span>
+                        ) : cand.isNewHeroProfile ? (
+                          <span className="px-1.5 py-0.2 rounded-md bg-white/5 border border-white/10 text-[10px] font-medium text-slate-400">
+                            Novo na mesa
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {/* Barra de Vida Real Preservada + Atributos */}
+                      <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <Heart className="h-3 w-3 text-rose-400 shrink-0" />
+                          <span className="font-bold text-white">
+                            {cand.hp}/{cand.max_hp} PV
+                          </span>
+                          <div className="w-16 h-1.5 rounded-full bg-black/60 border border-white/10 overflow-hidden">
+                            <div
+                              className={cn(
+                                'h-full',
+                                hpPct > 50
+                                  ? 'bg-emerald-400'
+                                  : hpPct > 25
+                                  ? 'bg-amber-400'
+                                  : 'bg-rose-500'
+                              )}
+                              style={{ width: `${hpPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <span className="inline-flex items-center gap-1 text-slate-300">
+                          <Shield className="h-3 w-3 text-slate-400" />
+                          {cand.ac} CA
+                        </span>
+
+                        {cand.max_mana > 0 && (
+                          <span className="inline-flex items-center gap-1 text-slate-300">
+                            <Zap className="h-3 w-3 text-slate-400" />
+                            {cand.mana}/{cand.max_mana}
+                          </span>
+                        )}
+
+                        {cand.conditions.length > 0 && (
+                          <span className="text-[10px] text-amber-300 font-semibold">
+                            • {cand.conditions.length} status
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Rodapé do Modal */}
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setSyncTokensModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              loading={syncingTokens}
+              disabled={
+                selectedSyncKeys.filter((k) =>
+                  availableSyncCandidates.some((c) => c.sync_group_id === k)
+                ).length === 0
+              }
+              onClick={handleConfirmSyncTokens}
+              className="gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Sincronizar{' '}
+              {
+                selectedSyncKeys.filter((k) =>
+                  availableSyncCandidates.some((c) => c.sync_group_id === k)
+                ).length
+              }{' '}
+              Token(s)
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* MODAL DO LIVRO DOS MONSTROS (ORDEM ALFABÉTICA, FOTOS CIRCULARES E ESTATÍSTICAS) + NPC PERSONALIZADO */}
