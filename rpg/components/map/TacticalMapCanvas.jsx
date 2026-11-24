@@ -42,6 +42,19 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import {
+  GiCampfire,
+  GiCrossedSwords,
+  GiDragonHead,
+  GiDustCloud,
+  GiFog,
+  GiLightningStorm,
+  GiSandstorm,
+  GiSnowflake2,
+  GiSun,
+  GiTorch,
+  GiWoodenDoor,
+} from 'react-icons/gi';
 import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -49,9 +62,14 @@ import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { TacticalDice3D } from './TacticalDice3D';
 import {
+  DARKNESS_BLIND_THRESHOLD,
   MAP_EFFECT_PRESETS,
   MAP_WEATHER_OPTIONS,
   MapAtmosphereOverlay,
+  TOKEN_LIGHT_COLORS,
+  TOKEN_LIGHT_PRESETS,
+  computeViewerLightingState,
+  getTokenLightColorMeta,
   normalizeMapEffects,
 } from './MapAtmosphereOverlay';
 import { useTabletopMusic } from '../music/TabletopMusicProvider';
@@ -204,6 +222,13 @@ export function TacticalMapCanvas({
   // Régua
   const [rulerStart, setRulerStart] = useState(null);
   const [rulerCurrent, setRulerCurrent] = useState(null);
+  const rulerClearTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (rulerClearTimerRef.current) clearTimeout(rulerClearTimerRef.current);
+    };
+  }, []);
 
   // Token selecionado para edição / inspeção (ID para sincronização em TEMPO REAL)
   const [selectedTokenId, setSelectedTokenId] = useState(null);
@@ -473,6 +498,7 @@ export function TacticalMapCanvas({
   // Atmosfera & Visibilidade do Mapa (Clima, Névoa, Escuridão, Tocha, Blackout)
   const [localEffects, setLocalEffects] = useState(() => normalizeMapEffects(map?.effects));
   const [previewEffectsAsPlayer, setPreviewEffectsAsPlayer] = useState(false);
+  const [previewHeroTokenId, setPreviewHeroTokenId] = useState(null);
   const effectsSaveTimerRef = useRef(null);
 
   useEffect(() => {
@@ -758,15 +784,19 @@ export function TacticalMapCanvas({
 
   // Pan do Mapa com o mouse (quando mapa não está travado)
   const handleMapPointerDown = (e) => {
-    if (e.target.closest('[data-token-element]')) return;
-
+    // Em modo Régua ou Ping, ignora cliques nos tokens para medir/sinalizar livremente mesmo em cima de heróis
     if (activeTool === 'ruler') {
+      if (rulerClearTimerRef.current) {
+        clearTimeout(rulerClearTimerRef.current);
+        rulerClearTimerRef.current = null;
+      }
       const rect = mapImageRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
       setRulerStart({ x, y });
       setRulerCurrent({ x, y });
+      e.currentTarget.setPointerCapture?.(e.pointerId);
       return;
     }
 
@@ -813,6 +843,8 @@ export function TacticalMapCanvas({
       return;
     }
 
+    if (e.target.closest('[data-token-element]')) return;
+
     if (!isLocked) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
@@ -824,8 +856,8 @@ export function TacticalMapCanvas({
     if (activeTool === 'ruler' && rulerStart) {
       const rect = mapImageRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
       setRulerCurrent({ x, y });
       return;
     }
@@ -840,10 +872,14 @@ export function TacticalMapCanvas({
 
   const handleMapPointerUp = (e) => {
     if (activeTool === 'ruler') {
-      setTimeout(() => {
+      try {
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+      } catch {}
+      if (rulerClearTimerRef.current) clearTimeout(rulerClearTimerRef.current);
+      rulerClearTimerRef.current = setTimeout(() => {
         setRulerStart(null);
         setRulerCurrent(null);
-      }, 4000);
+      }, 4500);
     }
     if (isPanning) {
       setIsPanning(false);
@@ -856,14 +892,17 @@ export function TacticalMapCanvas({
   // Drag and Drop de Tokens
   const canMoveToken = useCallback(
     (token) => {
+      if (activeTool !== 'select') return false;
       if (isMaster) return true;
       if (!token) return false;
       return token.owner_id === currentUserId || token.character_id === currentUserId;
     },
-    [isMaster, currentUserId]
+    [activeTool, isMaster, currentUserId]
   );
 
   const handleTokenPointerDown = (token, e) => {
+    // Proteção absoluta: em modo Régua ou Ping, nunca move nem captura o token
+    if (activeTool !== 'select') return;
     e.stopPropagation();
     if (!canMoveToken(token)) {
       toast.error('Você só pode mover o seu próprio herói.');
@@ -976,8 +1015,9 @@ export function TacticalMapCanvas({
     }
   };
 
-  // Clique no Token para abrir detalhes/edição
+  // Clique no Token para abrir detalhes/edição (bloqueado no modo Régua/Ping para evitar cliques acidentais)
   const handleTokenClick = (token, e) => {
+    if (activeTool !== 'select') return;
     e.stopPropagation();
     if (justDraggedRef.current) return;
     setSelectedTokenId(token.id);
@@ -1076,20 +1116,65 @@ export function TacticalMapCanvas({
   );
 
   // Tokens visíveis (Mestre vê todos; jogadores não veem tokens com hidden === true)
-  const visibleTokens = tokens.filter((t) => (isMaster ? true : !t.hidden));
+  const visibleTokens = useMemo(
+    () => tokens.filter((t) => (isMaster ? true : !t.hidden)),
+    [tokens, isMaster]
+  );
 
-  // Posição de foco da Tocha / Baixa Visibilidade (acompanha o token do jogador em tempo real durante o arraste)
-  const heroFocusPct = useMemo(() => {
-    const heroTok = !isMaster
-      ? visibleTokens.find((t) => t.owner_id === currentUserId || t.character_id === currentUserId)
-      : visibleTokens.find((t) => t.type === 'player');
-    if (!heroTok) return { x: 50, y: 50 };
-    const rawPos = localTokenPositions[heroTok.id] || { x: heroTok.x, y: heroTok.y };
-    return {
-      x: Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50,
-      y: Number.isFinite(Number(rawPos.y)) ? Number(rawPos.y) : 50,
-    };
-  }, [isMaster, visibleTokens, currentUserId, localTokenPositions]);
+  // Tokens de herói no mapa (para o jogador identificar seu próprio token e para o Mestre testar a prévia por herói)
+  const heroTokensOnMap = useMemo(
+    () => visibleTokens.filter((t) => t.type === 'player'),
+    [visibleTokens]
+  );
+
+  const activeViewerTokenId = useMemo(() => {
+    if (!isMaster) {
+      const own = visibleTokens.find(
+        (t) => t.owner_id === currentUserId || t.character_id === currentUserId
+      );
+      return own?.id || null;
+    }
+    if (previewEffectsAsPlayer) {
+      if (previewHeroTokenId && heroTokensOnMap.some((t) => t.id === previewHeroTokenId)) {
+        return previewHeroTokenId;
+      }
+      return heroTokensOnMap[0]?.id || null;
+    }
+    return null;
+  }, [isMaster, visibleTokens, currentUserId, previewEffectsAsPlayer, previewHeroTokenId, heroTokensOnMap]);
+
+  // Motor geométrico unificado de Escuridão (>= 60% oculta players fora da luz) + Iluminação por Proximidade (parcial vs. juntos)
+  const lightingState = useMemo(
+    () =>
+      computeViewerLightingState({
+        tokens: visibleTokens,
+        localTokenPositions,
+        effects: localEffects,
+        isMaster,
+        previewAsPlayer: previewEffectsAsPlayer,
+        viewerTokenId: activeViewerTokenId,
+        mapWidth: mapDisplaySize.width,
+        mapHeight: mapDisplaySize.height,
+      }),
+    [
+      visibleTokens,
+      localTokenPositions,
+      localEffects,
+      isMaster,
+      previewEffectsAsPlayer,
+      activeViewerTokenId,
+      mapDisplaySize.width,
+      mapDisplaySize.height,
+    ]
+  );
+
+  const customLightTokensCount = useMemo(
+    () =>
+      visibleTokens.filter(
+        (tok) => typeof tok.light_radius === 'number' && Number.isFinite(tok.light_radius)
+      ).length,
+    [visibleTokens]
+  );
 
   // Ordenação de iniciativa para combate
   const initiativeOrder = [...visibleTokens].sort((a, b) => (b.initiative || 0) - (a.initiative || 0));
@@ -2071,6 +2156,35 @@ export function TacticalMapCanvas({
                         {previewEffectsAsPlayer ? 'Prévia ON' : 'Visão Mestre'}
                       </span>
                     </button>
+
+                    {/* Seletor de qual Herói pré-visualizar no modo Ver como Jogador */}
+                    {previewEffectsAsPlayer && heroTokensOnMap.length > 0 && (
+                      <div className="p-2.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          Testando campo de visão de:
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {heroTokensOnMap.map((ht) => {
+                            const selected = activeViewerTokenId === ht.id;
+                            return (
+                              <button
+                                key={ht.id}
+                                type="button"
+                                onClick={() => setPreviewHeroTokenId(ht.id)}
+                                className={cn(
+                                  'px-2 py-1 rounded-lg border text-[10px] font-semibold truncate max-w-[120px] transition-all',
+                                  selected
+                                    ? 'bg-white/16 border-white/35 text-white'
+                                    : 'bg-white/[0.03] border-white/10 text-slate-400 hover:text-white'
+                                )}
+                              >
+                                {ht.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Cenários Prontos em 1 clique */}
@@ -2113,30 +2227,48 @@ export function TacticalMapCanvas({
                     <div className="grid grid-cols-2 gap-1.5">
                       {MAP_WEATHER_OPTIONS.map((opt) => {
                         const active = localEffects.weather === opt.id;
+                        const WeatherIcon =
+                          opt.id === 'rain'
+                            ? CloudRain
+                            : opt.id === 'storm'
+                            ? GiLightningStorm
+                            : opt.id === 'snow'
+                            ? GiSnowflake2
+                            : opt.id === 'embers'
+                            ? GiCampfire
+                            : opt.id === 'ash'
+                            ? GiDustCloud
+                            : opt.id === 'sandstorm'
+                            ? GiSandstorm
+                            : GiSun;
                         return (
                           <button
                             key={opt.id}
                             type="button"
                             onClick={() => commitMapEffects({ ...localEffects, weather: opt.id })}
                             className={cn(
-                              'px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all text-center',
+                              'px-2.5 py-2 rounded-xl border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5',
                               active
-                                ? 'bg-white/16 border-white/35 text-white'
+                                ? 'bg-white/16 border-white/35 text-white shadow-sm'
                                 : 'bg-[#0c101b] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
                             )}
                           >
-                            {opt.label}
+                            <WeatherIcon className="h-3.5 w-3.5 shrink-0" />
+                            <span>{opt.label}</span>
                           </button>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Sliders de Visibilidade (Névoa, Escuridão, Raio de Tocha) */}
+                  {/* Sliders de Visibilidade (Névoa, Escuridão, Raio de Tocha Global) */}
                   <div className="p-3 rounded-xl bg-[#0c101b] border border-white/12 space-y-3.5">
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-slate-200">Névoa / Neblina</span>
+                        <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                          <GiFog className="h-3.5 w-3.5 text-slate-300" />
+                          Névoa / Neblina
+                        </span>
                         <span className="font-mono font-bold text-slate-300 tabular-nums">
                           {localEffects.fog}%
                         </span>
@@ -2172,11 +2304,19 @@ export function TacticalMapCanvas({
                         }
                         className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
                       />
+                      {localEffects.darkness >= DARKNESS_BLIND_THRESHOLD && (
+                        <div className="px-2 py-1 rounded-lg bg-violet-500/12 border border-violet-400/30 text-[10px] text-violet-200 leading-snug">
+                          Escuridão ≥ {DARKNESS_BLIND_THRESHOLD}%: jogadores só enxergam a própria luz; veem luz alheia parcialmente se dentro do alcance, ou completa apenas andando juntos.
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-slate-200">Visão de Tocha (Herói)</span>
+                        <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                          <GiTorch className="h-3.5 w-3.5 text-amber-300" />
+                          Tocha Global (Heróis)
+                        </span>
                         <span className="font-mono font-bold text-slate-300 tabular-nums">
                           {localEffects.torchRadius > 0 ? `${localEffects.torchRadius}%` : 'Desligada'}
                         </span>
@@ -2196,8 +2336,16 @@ export function TacticalMapCanvas({
                         className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
                       />
                       <p className="text-[10px] text-slate-400 leading-snug">
-                        Com escuridão ativa, ilumina apenas um halo circular ao redor do token de cada jogador.
+                        Ilumina heróis sem tocha individual. Clique em qualquer token para definir luz própria sem ser sobrescrita.
                       </p>
+                      {customLightTokensCount > 0 && (
+                        <div className="px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-400/30 text-[10px] font-semibold text-amber-200 flex items-center gap-1.5">
+                          <GiTorch className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                          <span>
+                            {customLightTokensCount} token(s) com iluminação individual protegida
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2209,18 +2357,18 @@ export function TacticalMapCanvas({
                       </span>
                       <div className="grid grid-cols-2 gap-1.5">
                         {[
-                          { id: 'thunder', label: 'Trovão', Icon: CloudLightning },
-                          { id: 'creaky_door', label: 'Porta', Icon: DoorOpen },
-                          { id: 'sword', label: 'Espada', Icon: Swords },
-                          { id: 'roar', label: 'Rugido', Icon: Skull },
-                        ].map(({ id, label, Icon }) => (
+                          { id: 'thunder', label: 'Trovão', Icon: GiLightningStorm, color: '#38bdf8' },
+                          { id: 'creaky_door', label: 'Porta', Icon: GiWoodenDoor, color: '#d97706' },
+                          { id: 'sword', label: 'Espada', Icon: GiCrossedSwords, color: '#e2e8f0' },
+                          { id: 'roar', label: 'Rugido', Icon: GiDragonHead, color: '#ef4444' },
+                        ].map(({ id, label, Icon, color }) => (
                           <button
                             key={id}
                             type="button"
                             onClick={() => tabletopMusic.triggerSoundEffect(id)}
                             className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.05] border border-white/12 hover:bg-white/15 text-[11px] font-semibold text-slate-200 hover:text-white active:scale-95 transition-all"
                           >
-                            <Icon className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+                            <Icon className="h-4 w-4 shrink-0" style={{ color }} />
                             <span>{label}</span>
                           </button>
                         ))}
@@ -2350,9 +2498,35 @@ export function TacticalMapCanvas({
         }}
       />
 
+      {/* Indicador discreto de Modo Régua / Sinalizar ativo (Tokens protegidos contra arraste acidental) */}
+      {activeTool === 'ruler' && (
+        <div className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-[#0c101b]/95 border border-sky-400/45 text-xs font-semibold text-sky-100 backdrop-blur-xl shadow-[0_12px_32px_rgba(0,0,0,0.8)]">
+          <Ruler className="h-3.5 w-3.5 text-sky-300 shrink-0" />
+          <span className="whitespace-nowrap">Modo Régua — arraste para medir (tokens bloqueados)</span>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool('select');
+              setRulerStart(null);
+              setRulerCurrent(null);
+            }}
+            className="px-2 py-0.5 rounded-full bg-white/12 hover:bg-white/20 border border-white/20 text-[10px] font-bold text-white transition-colors"
+          >
+            Sair
+          </button>
+        </div>
+      )}
+
       {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM — ZERO ACHATAMENTO / PROPORÇÃO 1:1 EXATA) */}
       <div
-        className="w-full h-full cursor-grab active:cursor-grabbing flex items-center justify-center overflow-hidden"
+        className={cn(
+          'w-full h-full flex items-center justify-center overflow-hidden',
+          activeTool === 'ruler' || activeTool === 'ping'
+            ? 'cursor-crosshair'
+            : isLocked
+            ? 'cursor-default'
+            : 'cursor-grab active:cursor-grabbing'
+        )}
         onPointerDown={handleMapPointerDown}
         onPointerMove={handleMapPointerMove}
         onPointerUp={handleMapPointerUp}
@@ -2472,10 +2646,10 @@ export function TacticalMapCanvas({
             />
           )}
 
-          {/* Linha da Régua Ativa */}
+          {/* Linha da Régua Ativa (com etiqueta nítida em metros, pés e quadrados) */}
           {rulerStart && rulerCurrent && (
             <svg
-              className="absolute inset-0 w-full h-full pointer-events-none z-20"
+              className="absolute inset-0 w-full h-full pointer-events-none z-30"
               style={{ overflow: 'visible' }}
             >
               <line
@@ -2483,23 +2657,36 @@ export function TacticalMapCanvas({
                 y1={`${rulerStart.y}%`}
                 x2={`${rulerCurrent.x}%`}
                 y2={`${rulerCurrent.y}%`}
+                stroke="rgba(56, 189, 248, 0.35)"
+                strokeWidth={7 * mapScaleFactor}
+                strokeLinecap="round"
+              />
+              <line
+                x1={`${rulerStart.x}%`}
+                y1={`${rulerStart.y}%`}
+                x2={`${rulerCurrent.x}%`}
+                y2={`${rulerCurrent.y}%`}
                 stroke="#38bdf8"
                 strokeWidth={2.5 * mapScaleFactor}
-                strokeDasharray={`${6 * mapScaleFactor} ${4 * mapScaleFactor}`}
+                strokeDasharray={`${7 * mapScaleFactor} ${4 * mapScaleFactor}`}
+                strokeLinecap="round"
               />
-              <circle cx={`${rulerStart.x}%`} cy={`${rulerStart.y}%`} r={4 * mapScaleFactor} fill="#38bdf8" />
-              <circle cx={`${rulerCurrent.x}%`} cy={`${rulerCurrent.y}%`} r={5 * mapScaleFactor} fill="#38bdf8" />
+              <circle cx={`${rulerStart.x}%`} cy={`${rulerStart.y}%`} r={4.5 * mapScaleFactor} fill="#38bdf8" stroke="#0c101b" strokeWidth={1.5 * mapScaleFactor} />
+              <circle cx={`${rulerCurrent.x}%`} cy={`${rulerCurrent.y}%`} r={5.5 * mapScaleFactor} fill="#ffffff" stroke="#38bdf8" strokeWidth={2 * mapScaleFactor} />
               <text
                 x={`${(rulerStart.x + rulerCurrent.x) / 2}%`}
                 y={`${(rulerStart.y + rulerCurrent.y) / 2}%`}
                 fill="#ffffff"
-                fontSize={12 * mapScaleFactor}
+                stroke="#070913"
+                strokeWidth={4 * mapScaleFactor}
+                paintOrder="stroke"
+                fontSize={13 * mapScaleFactor}
                 fontWeight="bold"
                 textAnchor="middle"
-                dy={-8 * mapScaleFactor}
-                className="font-mono bg-black"
+                dy={-10 * mapScaleFactor}
+                className="font-mono"
               >
-                {rulerDistance}m ({Math.round(rulerDistance * 3.28)} ft)
+                {rulerDistance}m ({Math.round(rulerDistance * 3.28)} ft • {Math.max(0, Math.round((rulerDistance / 1.5) * 10) / 10)}q)
               </text>
             </svg>
           )}
@@ -2550,8 +2737,16 @@ export function TacticalMapCanvas({
             );
           })}
 
-          {/* CAMADA DE BONEQUINHOS / TOKENS */}
+          {/* CAMADA DE BONEQUINHOS / TOKENS (RESPEITA VISIBILIDADE NA ESCURIDÃO >= 60% & LUZ POR PROXIMIDADE) */}
           {visibleTokens.map((token) => {
+            const visMeta = lightingState.tokenVisibility[token.id] || {
+              visible: true,
+              opacity: 1,
+              isOwn: false,
+            };
+            // Em escuridão >= 60%, jogadores NÃO veem outros tokens fora da sua área iluminada / aliados próximos
+            if (!visMeta.visible) return null;
+
             const rawPos = localTokenPositions[token.id] || { x: token.x, y: token.y };
             const pos = {
               x: Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50,
@@ -2585,14 +2780,20 @@ export function TacticalMapCanvas({
                   top: `${pos.y}%`,
                   width: `${tokenPx}px`,
                   height: `${tokenPx}px`,
+                  opacity: visMeta.opacity,
                   transition:
                     localDraggingId === token.id
-                      ? 'none'
-                      : 'left 0.2s cubic-bezier(0.2, 0, 0, 1), top 0.2s cubic-bezier(0.2, 0, 0, 1)',
+                      ? 'opacity 0.2s ease'
+                      : 'left 0.2s cubic-bezier(0.2, 0, 0, 1), top 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease',
                 }}
                 className={cn(
-                  'absolute -translate-x-1/2 -translate-y-1/2 z-10 select-none group',
-                  isMovable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                  'absolute -translate-x-1/2 -translate-y-1/2 select-none group',
+                  visMeta.isOwn ? 'z-[24]' : 'z-[22]',
+                  activeTool !== 'select'
+                    ? 'pointer-events-none'
+                    : isMovable
+                    ? 'cursor-grab active:cursor-grabbing'
+                    : 'cursor-pointer'
                 )}
               >
                 {/* Condições de Status Ativas com Ícones (escaladas proporcionalmente à resolução exata do mapa) */}
@@ -2684,6 +2885,21 @@ export function TacticalMapCanvas({
                       <ShieldCheck className="h-3 w-3" />
                     </div>
                   )}
+
+                  {/* Selo discreto de Tocha / Luz Individual acesa neste token */}
+                  {typeof token.light_radius === 'number' && token.light_radius > 0 && (
+                    <div
+                      title={`Iluminação individual (${token.light_radius}%)`}
+                      className="absolute -top-1.5 -left-1.5 p-0.5 rounded-full bg-[#0c101b]/95 border shadow-lg"
+                      style={{
+                        borderColor: getTokenLightColorMeta(token.light_color).hex,
+                        color: getTokenLightColorMeta(token.light_color).hex,
+                        transform: `scale(${Math.min(1.8, Math.max(0.85, mapScaleFactor))})`,
+                      }}
+                    >
+                      <GiTorch className="h-3 w-3" />
+                    </div>
+                  )}
                 </div>
 
                 {/* Rótulo de Vida e Nome Flutuante (Abaixo do Círculo, sem afetar o centro geométrico Y do token) */}
@@ -2726,12 +2942,14 @@ export function TacticalMapCanvas({
             );
           })}
 
-          {/* CAMADA ATMOSFÉRICA & VISIBILIDADE (CHUVA, TEMPESTADE, NÉVOA, ESCURIDÃO, TOCHA E OCULTAÇÃO TOTAL) */}
+          {/* CAMADA ATMOSFÉRICA & VISIBILIDADE (ESCURIDÃO >= 60%, TOCHAS POR PROXIMIDADE, NÉVOA, CLIMA E OCULTAÇÃO) */}
           <MapAtmosphereOverlay
             effects={localEffects}
             isMaster={isMaster}
             previewAsPlayer={previewEffectsAsPlayer}
-            heroFocusPct={heroFocusPct}
+            lightingState={lightingState}
+            mapWidth={mapDisplaySize.width}
+            mapHeight={mapDisplaySize.height}
             onRevealForMaster={() => commitMapEffects({ ...localEffects, blackout: false })}
           />
         </div>
@@ -3232,6 +3450,136 @@ export function TacticalMapCanvas({
                     )}
                   </div>
                 )}
+
+                {/* Controle Individual de Iluminação / Tocha do Token (não sobrescrito pelo menu global do mapa!) */}
+                {(() => {
+                  const hasCustomLight =
+                    typeof activeSelectedToken.light_radius === 'number' &&
+                    Number.isFinite(activeSelectedToken.light_radius);
+                  const effectiveLight = hasCustomLight
+                    ? activeSelectedToken.light_radius
+                    : activeSelectedToken.type === 'player'
+                    ? localEffects.torchRadius
+                    : 0;
+                  const activeColorId = activeSelectedToken.light_color || 'warm';
+                  const activeColorMeta = getTokenLightColorMeta(activeColorId);
+
+                  return (
+                    <div className="p-3.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                          <GiTorch className="h-4 w-4 shrink-0" style={{ color: activeColorMeta.hex }} />
+                          Iluminação / Tocha do Token
+                        </span>
+                        <span
+                          className={cn(
+                            'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border',
+                            hasCustomLight
+                              ? effectiveLight > 0
+                                ? 'bg-amber-500/15 border-amber-400/45 text-amber-200'
+                                : 'bg-white/8 border-white/20 text-slate-300'
+                              : 'bg-sky-500/12 border-sky-400/35 text-sky-200'
+                          )}
+                        >
+                          {hasCustomLight
+                            ? effectiveLight > 0
+                              ? `Individual ${effectiveLight}%`
+                              : 'Apagada (Individual)'
+                            : activeSelectedToken.type === 'player'
+                            ? `Global (${localEffects.torchRadius}%)`
+                            : 'Sem Luz'}
+                        </span>
+                      </div>
+
+                      {/* Presets rápidos de alcance da luz */}
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {TOKEN_LIGHT_PRESETS.map((preset) => {
+                          const isSelected =
+                            preset.radius === null
+                              ? !hasCustomLight
+                              : hasCustomLight && activeSelectedToken.light_radius === preset.radius;
+                          return (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              title={preset.desc}
+                              onClick={() =>
+                                onUpdateTokenStats?.(activeSelectedToken.id, {
+                                  light_radius: preset.radius,
+                                })
+                              }
+                              className={cn(
+                                'py-1.5 px-2 rounded-lg border text-[11px] font-semibold transition-all text-center',
+                                isSelected
+                                  ? 'bg-white/16 border-white/35 text-white'
+                                  : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                              )}
+                            >
+                              {preset.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Ajuste fino do raio individual */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-300 font-semibold">Alcance da Luz</span>
+                          <span className="font-mono font-bold text-white tabular-nums">
+                            {effectiveLight}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={75}
+                          step={2}
+                          value={effectiveLight}
+                          onChange={(e) =>
+                            onUpdateTokenStats?.(activeSelectedToken.id, {
+                              light_radius: Number(e.target.value),
+                            })
+                          }
+                          className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
+                        />
+                      </div>
+
+                      {/* Cor / Temperatura da Iluminação */}
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <span className="text-[11px] font-semibold text-slate-300">Cor da Luz:</span>
+                        <div className="flex items-center gap-1.5">
+                          {TOKEN_LIGHT_COLORS.map((col) => {
+                            const selected = activeColorId === col.id;
+                            return (
+                              <button
+                                key={col.id}
+                                type="button"
+                                title={col.label}
+                                aria-label={col.label}
+                                onClick={() =>
+                                  onUpdateTokenStats?.(activeSelectedToken.id, {
+                                    light_color: col.id,
+                                  })
+                                }
+                                className={cn(
+                                  'h-6 w-6 rounded-full border-2 transition-transform',
+                                  selected
+                                    ? 'scale-115 border-white shadow-[0_0_12px_rgba(255,255,255,0.45)]'
+                                    : 'border-white/25 opacity-75 hover:opacity-100'
+                                )}
+                                style={{ backgroundColor: col.hex }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-slate-400 leading-snug">
+                        Iluminação individual tem prioridade e nunca é sobrescrita pela tocha global do menu de Atmosfera.
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* Edição Direta de Vida Máxima e Mana Máxima (Exigência do Usuário) */}
                 <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-2.5">

@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { EyeOff } from 'lucide-react';
 import { cn } from '../../lib/utils';
+
+export const DARKNESS_BLIND_THRESHOLD = 60;
 
 export const DEFAULT_MAP_EFFECTS = {
   weather: 'none', // 'none' | 'rain' | 'storm' | 'snow' | 'embers' | 'ash' | 'sandstorm'
   fog: 0, // 0..100
-  darkness: 0, // 0..100
-  torchRadius: 0, // 0 (off) ou 12..60 (% da menor dimensão como halo de visão ao redor do herói)
+  darkness: 0, // 0..100 (>= 60% isola a visão dos jogadores no escuro)
+  torchRadius: 0, // 0 (off) ou 12..65 (% da menor dimensão como padrão global para heróis sem luz individual)
   blackout: false, // Oculta completamente o mapa para os jogadores
 };
 
@@ -21,6 +23,27 @@ export const MAP_WEATHER_OPTIONS = [
   { id: 'ash', label: 'Cinzas' },
   { id: 'sandstorm', label: 'Areia' },
 ];
+
+export const TOKEN_LIGHT_COLORS = [
+  { id: 'warm', label: 'Tocha Âmbar', hex: '#fbbf24', glow: 'rgba(251, 191, 36, 0.24)', ring: 'rgba(251, 191, 36, 0.62)' },
+  { id: 'holy', label: 'Luz Sagrada', hex: '#fef08a', glow: 'rgba(254, 240, 138, 0.22)', ring: 'rgba(254, 240, 138, 0.58)' },
+  { id: 'arcane', label: 'Arcano Azul', hex: '#60a5fa', glow: 'rgba(96, 165, 250, 0.24)', ring: 'rgba(96, 165, 250, 0.62)' },
+  { id: 'emerald', label: 'Esmeralda', hex: '#34d399', glow: 'rgba(52, 211, 153, 0.22)', ring: 'rgba(52, 211, 153, 0.58)' },
+  { id: 'crimson', label: 'Rubro / Brasa', hex: '#fb7185', glow: 'rgba(251, 113, 133, 0.22)', ring: 'rgba(251, 113, 133, 0.58)' },
+];
+
+export const TOKEN_LIGHT_PRESETS = [
+  { label: 'Seguir Mapa', radius: null, desc: 'Usa a tocha global do mapa' },
+  { label: 'Apagada', radius: 0, desc: 'Sem iluminação própria' },
+  { label: 'Vela', radius: 14, desc: 'Luz curta (14%)' },
+  { label: 'Tocha', radius: 26, desc: 'Luz padrão (26%)' },
+  { label: 'Lanterna', radius: 42, desc: 'Alcance amplo (42%)' },
+  { label: 'Farol', radius: 62, desc: 'Iluminação massiva (62%)' },
+];
+
+export function getTokenLightColorMeta(colorId) {
+  return TOKEN_LIGHT_COLORS.find((c) => c.id === colorId) || TOKEN_LIGHT_COLORS[0];
+}
 
 export const MAP_EFFECT_PRESETS = [
   {
@@ -46,7 +69,7 @@ export const MAP_EFFECT_PRESETS = [
   {
     id: 'dungeon_torch',
     label: 'Masmorra (Tocha)',
-    effects: { weather: 'ash', fog: 25, darkness: 90, torchRadius: 24, blackout: false },
+    effects: { weather: 'ash', fog: 25, darkness: 90, torchRadius: 26, blackout: false },
   },
   {
     id: 'pitch_dark',
@@ -83,26 +106,280 @@ export function normalizeMapEffects(raw) {
 }
 
 /**
- * Camada de Efeitos Atmosféricos e Visibilidade sobre o Mapa Tático (60fps GPU-otimizado).
+ * Motor geométrico único de Visão & Iluminação por Proximidade (escala 1:1 em pixels do mapa).
  *
- * - Partículas climáticas (chuva, tempestade com relâmpagos, neve, brasas, cinzas, areia)
- *   em um único <canvas> que só anima quando há clima ativo.
- * - Névoa volumétrica em camadas suaves reduzindo visibilidade.
- * - Escuridão / Baixa visibilidade com suporte a halo de Tocha centralizado no token do herói.
- * - Cortina de Ocultação Total (Blackout) para esconder o cenário dos jogadores enquanto o Mestre prepara.
+ * Regras táticas:
+ * 1. Escuridão >= 60%: jogadores deixam de se enxergar fora de áreas iluminadas (manto quase opaco + ocultação de tokens).
+ * 2. Iluminação de outros tokens:
+ *    - Longe (fora do campo de visão da sua iluminação): 0% visível (o jogador NÃO vê a luz nem o token do outro).
+ *    - No campo de visão da sua iluminação (mas não andando lado a lado): visão PARCIAL do que o outro ilumina
+ *      (raio reduzido 36%–72% e penumbra parcial 42%–76% — nunca 100%).
+ *    - Andando JUNTOS (proximidade de grupo): compartilham 100% da iluminação um do outro.
+ * 3. Mestre (fora do modo prévia): enxerga sempre todos os tokens e 100% da iluminação dos heróis.
+ */
+export function computeViewerLightingState({
+  tokens = [],
+  localTokenPositions = {},
+  effects = DEFAULT_MAP_EFFECTS,
+  isMaster = false,
+  previewAsPlayer = false,
+  viewerTokenId = null,
+  mapWidth = 1400,
+  mapHeight = 900,
+}) {
+  const safe = normalizeMapEffects(effects);
+  const effectivePlayerView = !isMaster || previewAsPlayer;
+  const safeW = Math.max(64, Number(mapWidth) || 1400);
+  const safeH = Math.max(64, Number(mapHeight) || 900);
+  const baseDim = Math.min(safeW, safeH);
+  const globalTorch = Number(safe.torchRadius) || 0;
+  const isDeepDarkness = safe.darkness >= DARKNESS_BLIND_THRESHOLD;
+
+  const enriched = (Array.isArray(tokens) ? tokens : []).map((tok) => {
+    const rawPos = localTokenPositions[tok.id] || { x: tok.x, y: tok.y };
+    const x = Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50;
+    const y = Number.isFinite(Number(rawPos.y)) ? Number(rawPos.y) : 50;
+    const px = (x / 100) * safeW;
+    const py = (y / 100) * safeH;
+
+    const hasIndividual =
+      typeof tok.light_radius === 'number' && Number.isFinite(tok.light_radius);
+    const radiusPct = hasIndividual
+      ? Math.max(0, Math.min(80, tok.light_radius))
+      : tok.type === 'player'
+      ? globalTorch
+      : 0;
+    const radiusPx = (radiusPct / 100) * baseDim;
+
+    return {
+      tok,
+      id: tok.id,
+      name: tok.name,
+      x,
+      y,
+      px,
+      py,
+      radiusPct,
+      radiusPx,
+      color: tok.light_color || 'warm',
+      isHero: tok.type === 'player',
+      isIndividual: hasIndividual,
+    };
+  });
+
+  // 1. VISÃO DO MESTRE (vê sempre tudo e toda a iluminação dos tokens de herói/luz própria)
+  if (!effectivePlayerView) {
+    const darkOpacity =
+      safe.darkness <= 0 ? 0 : Math.min(0.6, (safe.darkness / 100) * 0.6);
+
+    const visibleLights = enriched
+      .filter((e) => e.radiusPx > 0)
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        x: e.x,
+        y: e.y,
+        px: e.px,
+        py: e.py,
+        radiusPct: e.radiusPct,
+        effectiveRadiusPx: e.radiusPx,
+        cutoutOpacity: 1.0,
+        glowScale: 1.0,
+        color: e.color,
+        isHero: e.isHero,
+        isIndividual: e.isIndividual,
+        visibilityMode: 'master',
+      }));
+
+    const tokenVisibility = {};
+    enriched.forEach((e) => {
+      tokenVisibility[e.id] = { visible: true, opacity: 1, isOwn: false };
+    });
+
+    return {
+      effectivePlayerView: false,
+      isDeepDarkness,
+      darkOpacity,
+      visibleLights,
+      tokenVisibility,
+    };
+  }
+
+  // 2. VISÃO DO JOGADOR (ou Mestre no modo "Ver como Jogador")
+  // Curva de opacidade: 0–59% penumbra gradual; >= 60% escuridão profunda onde não se enxergam fora da luz
+  let darkOpacity = 0;
+  if (safe.darkness > 0) {
+    if (isDeepDarkness) {
+      const t = (safe.darkness - DARKNESS_BLIND_THRESHOLD) / (100 - DARKNESS_BLIND_THRESHOLD);
+      darkOpacity = 0.968 + t * 0.03; // 0.968 em 60% -> 0.998 em 100%
+    } else {
+      darkOpacity = (safe.darkness / (DARKNESS_BLIND_THRESHOLD - 1)) * 0.56;
+    }
+  }
+
+  const viewer = viewerTokenId ? enriched.find((e) => e.id === viewerTokenId) || null : null;
+  const visibleLights = [];
+
+  if (viewer) {
+    const myRadiusPx = viewer.radiusPx;
+
+    // Própria iluminação do jogador: sempre 100% visível
+    if (myRadiusPx > 0) {
+      visibleLights.push({
+        id: viewer.id,
+        name: viewer.name,
+        x: viewer.x,
+        y: viewer.y,
+        px: viewer.px,
+        py: viewer.py,
+        radiusPct: viewer.radiusPct,
+        effectiveRadiusPx: myRadiusPx,
+        cutoutOpacity: 1.0,
+        glowScale: 1.0,
+        color: viewer.color,
+        isHero: viewer.isHero,
+        isIndividual: viewer.isIndividual,
+        visibilityMode: 'self',
+      });
+    }
+
+    // Iluminação de OUTROS tokens: só visível se estiverem JUNTOS (100%) ou dentro do campo de visão da sua luz (PARCIAL)
+    enriched.forEach((other) => {
+      if (other.id === viewer.id || other.radiusPx <= 0) return;
+
+      const dist = Math.hypot(other.px - viewer.px, other.py - viewer.py);
+
+      // Distância de "andando juntos" (lado a lado / grupo colado)
+      const refLight = myRadiusPx > 0 ? Math.min(myRadiusPx, other.radiusPx) : other.radiusPx;
+      const togetherDistPx = Math.max(baseDim * 0.085, refLight * 0.44);
+
+      if (dist <= togetherDistPx) {
+        // ANDANDO JUNTOS: compartilham a iluminação completa um do outro!
+        visibleLights.push({
+          id: other.id,
+          name: other.name,
+          x: other.x,
+          y: other.y,
+          px: other.px,
+          py: other.py,
+          radiusPct: other.radiusPct,
+          effectiveRadiusPx: other.radiusPx,
+          cutoutOpacity: 0.98,
+          glowScale: 0.96,
+          color: other.color,
+          isHero: other.isHero,
+          isIndividual: other.isIndividual,
+          visibilityMode: 'together',
+        });
+        return;
+      }
+
+      // CAMPO DE VISÃO DA ILUMINAÇÃO (sem estar andando juntos): visão PARCIAL do que o outro ilumina
+      const inMyLightField = myRadiusPx > 0 && dist <= myRadiusPx * 0.98;
+      const insideOtherEdge = myRadiusPx <= 0 && dist <= other.radiusPx * 0.88;
+
+      if (inMyLightField || insideOtherEdge) {
+        const maxPartialDist = inMyLightField ? myRadiusPx * 0.98 : other.radiusPx * 0.88;
+        const span = Math.max(1, maxPartialDist - togetherDistPx);
+        const closeness = Math.max(0, Math.min(1, 1 - (dist - togetherDistPx) / span));
+
+        // Raio visível parcial (36% a 72% da luz do outro) e clareza parcial (42% a 76% — nunca 100%)
+        const partialRadiusScale = 0.36 + closeness * 0.36;
+        const partialCutoutOpacity = 0.42 + closeness * 0.34;
+
+        visibleLights.push({
+          id: other.id,
+          name: other.name,
+          x: other.x,
+          y: other.y,
+          px: other.px,
+          py: other.py,
+          radiusPct: other.radiusPct * partialRadiusScale,
+          effectiveRadiusPx: other.radiusPx * partialRadiusScale,
+          cutoutOpacity: partialCutoutOpacity,
+          glowScale: 0.42 + closeness * 0.35,
+          color: other.color,
+          isHero: other.isHero,
+          isIndividual: other.isIndividual,
+          visibilityMode: 'partial',
+        });
+      }
+      // Fora disso: NÃO adiciona à lista (o jogador não vê a iluminação do outro token!)
+    });
+  }
+
+  // Visibilidade de cada token na mesa quando escuridão >= 60%
+  const tokenVisibility = {};
+  enriched.forEach((e) => {
+    const isOwn = Boolean(viewer && e.id === viewer.id);
+    if (!isDeepDarkness) {
+      tokenVisibility[e.id] = { visible: true, opacity: 1, isOwn };
+      return;
+    }
+
+    if (isOwn) {
+      tokenVisibility[e.id] = { visible: true, opacity: 1, isOwn: true };
+      return;
+    }
+
+    let bestCoverage = 0;
+    for (let i = 0; i < visibleLights.length; i += 1) {
+      const L = visibleLights[i];
+      const distToL = Math.hypot(e.px - L.px, e.py - L.py);
+      const reach = L.effectiveRadiusPx * 1.02;
+      if (distToL <= reach) {
+        const inner = reach * 0.6;
+        const radialFalloff =
+          distToL <= inner
+            ? 1.0
+            : Math.max(0, 1 - (distToL - inner) / Math.max(1, reach - inner));
+        const coverage = radialFalloff * L.cutoutOpacity;
+        if (coverage > bestCoverage) bestCoverage = coverage;
+      }
+    }
+
+    if (bestCoverage >= 0.16) {
+      tokenVisibility[e.id] = {
+        visible: true,
+        opacity: Math.max(0.32, Math.min(1, bestCoverage * 1.15)),
+        isOwn: false,
+      };
+    } else {
+      tokenVisibility[e.id] = { visible: false, opacity: 0, isOwn: false };
+    }
+  });
+
+  return {
+    effectivePlayerView: true,
+    isDeepDarkness,
+    darkOpacity,
+    visibleLights,
+    tokenVisibility,
+  };
+}
+
+/**
+ * Camada de Escuridão + Iluminação Dinâmica Multi-Fonte (z-20, sob tokens visíveis)
+ * + Camada de Névoa, Clima & Partículas (z-[25], sobre o cenário e tokens)
+ * + Cortina de Ocultação Total Blackout (z-[35]).
  */
 export function MapAtmosphereOverlay({
   effects,
   isMaster = false,
   previewAsPlayer = false,
-  heroFocusPct = null, // { x: 0..100, y: 0..100 }
+  lightingState = null,
+  mapWidth = 1400,
+  mapHeight = 900,
   onRevealForMaster,
 }) {
   const safe = normalizeMapEffects(effects);
   const canvasRef = useRef(null);
   const [lightningOpacity, setLightningOpacity] = useState(0);
+  const maskId = useId().replace(/:/g, '');
 
-  const effectivePlayerView = !isMaster || previewAsPlayer;
+  const effectivePlayerView = lightingState
+    ? lightingState.effectivePlayerView
+    : !isMaster || previewAsPlayer;
   const hasWeather = safe.weather !== 'none';
 
   // Motor de partículas otimizado (só executa rAF quando há clima ativo e não está em blackout de jogador)
@@ -310,31 +587,19 @@ export function MapAtmosphereOverlay({
     };
   }, [hasWeather, safe.weather, safe.blackout, effectivePlayerView]);
 
-  // Cálculos de opacidade para Visão do Jogador vs Visão do Mestre (Mestre sempre enxerga para mestrar, a menos que ative pré-visualização)
   const fogOpacity =
     safe.fog <= 0
       ? 0
       : effectivePlayerView
-      ? (safe.fog / 100) * 0.92
-      : (safe.fog / 100) * 0.42;
+      ? (safe.fog / 100) * 0.9
+      : (safe.fog / 100) * 0.4;
 
-  const darkOpacity =
-    safe.darkness <= 0
-      ? 0
-      : effectivePlayerView
-      ? (safe.darkness / 100) * 0.97
-      : (safe.darkness / 100) * 0.46;
+  const darkOpacity = lightingState ? lightingState.darkOpacity : 0;
+  const activeLights = lightingState?.visibleLights || [];
 
-  const focusX = Number.isFinite(Number(heroFocusPct?.x)) ? Number(heroFocusPct.x) : 50;
-  const focusY = Number.isFinite(Number(heroFocusPct?.y)) ? Number(heroFocusPct.y) : 50;
-
-  const hasTorchCutout = safe.torchRadius > 0 && darkOpacity > 0;
-  const torchInner = Math.max(4, safe.torchRadius * 0.52);
-  const torchOuter = Math.max(12, safe.torchRadius * 1.45);
-
-  const darknessBackground = hasTorchCutout
-    ? `radial-gradient(circle at ${focusX}% ${focusY}%, rgba(3, 6, 14, 0.04) 0%, rgba(3, 6, 14, ${(darkOpacity * 0.35).toFixed(3)}) ${torchInner}%, rgba(3, 6, 14, ${darkOpacity.toFixed(3)}) ${torchOuter}%)`
-    : `rgba(3, 6, 14, ${darkOpacity.toFixed(3)})`;
+  const safeW = Math.max(64, Number(mapWidth) || 1400);
+  const safeH = Math.max(64, Number(mapHeight) || 900);
+  const baseDim = Math.min(safeW, safeH);
 
   const weatherTint =
     safe.weather === 'storm'
@@ -351,65 +616,158 @@ export function MapAtmosphereOverlay({
 
   return (
     <>
-      {/* Camadas atmosféricas acopladas diretamente sobre o mapa (escala/pan sincronizados) */}
-      <div className="absolute inset-0 pointer-events-none z-20 rounded-lg overflow-hidden">
-        {/* Tinta atmosférica sutil do clima */}
-        {weatherTint !== 'transparent' && (
-          <div className="absolute inset-0 transition-colors duration-500" style={{ backgroundColor: weatherTint }} />
-        )}
+      {/* CAMADA 1 (z-20): Escuridão + Iluminação Dinâmica Multi-Fonte (sob tokens visíveis, sobre o terreno) */}
+      {(darkOpacity > 0 || activeLights.length > 0) && (
+        <div className="absolute inset-0 pointer-events-none z-20 rounded-lg overflow-hidden">
+          <svg
+            viewBox={`0 0 ${safeW} ${safeH}`}
+            preserveAspectRatio="none"
+            className="absolute inset-0 w-full h-full pointer-events-none"
+          >
+            <defs>
+              {activeLights.map((src, idx) => {
+                const colMeta = getTokenLightColorMeta(src.color);
+                const cut = Math.max(0.1, Math.min(1, Number(src.cutoutOpacity) || 1));
+                const gScale = Math.max(0.2, Math.min(1, Number(src.glowScale) || 1));
+                return (
+                  <g key={src.id || idx}>
+                    <radialGradient id={`${maskId}-cut-${idx}`}>
+                      <stop offset="0%" stopColor="#000000" stopOpacity={cut.toFixed(3)} />
+                      <stop offset="48%" stopColor="#000000" stopOpacity={(cut * 0.92).toFixed(3)} />
+                      <stop offset="76%" stopColor="#000000" stopOpacity={(cut * 0.42).toFixed(3)} />
+                      <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+                    </radialGradient>
+                    <radialGradient id={`${maskId}-glow-${idx}`}>
+                      <stop
+                        offset="0%"
+                        stopColor={colMeta.hex}
+                        stopOpacity={((darkOpacity > 0 ? 0.26 : 0.17) * gScale).toFixed(3)}
+                      />
+                      <stop
+                        offset="55%"
+                        stopColor={colMeta.hex}
+                        stopOpacity={((darkOpacity > 0 ? 0.1 : 0.065) * gScale).toFixed(3)}
+                      />
+                      <stop offset="100%" stopColor={colMeta.hex} stopOpacity="0" />
+                    </radialGradient>
+                  </g>
+                );
+              })}
 
-        {/* Névoa volumétrica em movimento (reduz visibilidade gradualmente) */}
-        {fogOpacity > 0 && (
-          <>
+              <mask id={`${maskId}-dark`}>
+                <rect x="0" y="0" width={safeW} height={safeH} fill="#ffffff" />
+                {activeLights.map((src, idx) => {
+                  const radiusPx = Math.max(1, Number(src.effectiveRadiusPx) || 1) * 1.12;
+                  return (
+                    <circle
+                      key={`cut-${src.id || idx}`}
+                      cx={src.px}
+                      cy={src.py}
+                      r={radiusPx}
+                      fill={`url(#${maskId}-cut-${idx})`}
+                    />
+                  );
+                })}
+              </mask>
+            </defs>
+
+            {/* Manto de escuridão recortado apenas pela sua luz e pela luz parcial/completa de aliados próximos */}
+            {darkOpacity > 0 && (
+              <rect
+                x="0"
+                y="0"
+                width={safeW}
+                height={safeH}
+                fill={`rgba(2, 4, 10, ${darkOpacity.toFixed(3)})`}
+                mask={`url(#${maskId}-dark)`}
+              />
+            )}
+
+            {/* Brilho quente/colorido das luzes visíveis + anéis de alcance para o Mestre */}
+            {activeLights.map((src, idx) => {
+              const showGlow = darkOpacity > 0 || !effectivePlayerView;
+              if (!showGlow) return null;
+              const radiusPx = Math.max(1, Number(src.effectiveRadiusPx) || 1);
+              const colMeta = getTokenLightColorMeta(src.color);
+              const strokeW = Math.max(1.5, baseDim * 0.0022);
+              const dashLen = Math.max(6, baseDim * 0.01);
+
+              return (
+                <g key={`vis-${src.id || idx}`}>
+                  <circle
+                    cx={src.px}
+                    cy={src.py}
+                    r={radiusPx * 1.05}
+                    fill={`url(#${maskId}-glow-${idx})`}
+                  />
+                  {!effectivePlayerView && (
+                    <circle
+                      cx={src.px}
+                      cy={src.py}
+                      r={radiusPx}
+                      fill="none"
+                      stroke={colMeta.ring}
+                      strokeWidth={strokeW}
+                      strokeDasharray={src.isIndividual ? undefined : `${dashLen} ${dashLen * 0.7}`}
+                      strokeOpacity={darkOpacity > 0 ? 0.72 : 0.5}
+                    />
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      )}
+
+      {/* CAMADA 2 (z-[25]): Névoa Volumétrica, Clima, Relâmpagos e Partículas (sobre mapa e tokens) */}
+      {(weatherTint !== 'transparent' || fogOpacity > 0 || lightningOpacity > 0 || hasWeather) && (
+        <div className="absolute inset-0 pointer-events-none z-[25] rounded-lg overflow-hidden">
+          {weatherTint !== 'transparent' && (
+            <div className="absolute inset-0 transition-colors duration-500" style={{ backgroundColor: weatherTint }} />
+          )}
+
+          {fogOpacity > 0 && (
+            <>
+              <div
+                className="absolute -inset-[25%] map-fog-drift-slow transition-opacity duration-500"
+                style={{
+                  opacity: fogOpacity,
+                  backgroundImage:
+                    'radial-gradient(ellipse 46% 38% at 22% 30%, rgba(203, 213, 225, 0.78), transparent 72%), radial-gradient(ellipse 52% 44% at 75% 68%, rgba(148, 163, 184, 0.74), transparent 74%), radial-gradient(ellipse 42% 42% at 50% 48%, rgba(226, 232, 240, 0.62), transparent 76%)',
+                }}
+              />
+              <div
+                className="absolute -inset-[25%] map-fog-drift-fast transition-opacity duration-500"
+                style={{
+                  opacity: fogOpacity * 0.85,
+                  backgroundImage:
+                    'radial-gradient(ellipse 48% 36% at 72% 24%, rgba(203, 213, 225, 0.72), transparent 70%), radial-gradient(ellipse 54% 40% at 28% 76%, rgba(148, 163, 184, 0.68), transparent 72%)',
+                  backgroundColor: `rgba(148, 163, 184, ${(fogOpacity * 0.42).toFixed(3)})`,
+                }}
+              />
+            </>
+          )}
+
+          {lightningOpacity > 0 && (
             <div
-              className="absolute -inset-[25%] map-fog-drift-slow transition-opacity duration-500"
-              style={{
-                opacity: fogOpacity,
-                backgroundImage:
-                  'radial-gradient(ellipse 46% 38% at 22% 30%, rgba(203, 213, 225, 0.78), transparent 72%), radial-gradient(ellipse 52% 44% at 75% 68%, rgba(148, 163, 184, 0.74), transparent 74%), radial-gradient(ellipse 42% 42% at 50% 48%, rgba(226, 232, 240, 0.62), transparent 76%)',
-              }}
+              className="absolute inset-0 bg-sky-100 transition-opacity duration-75"
+              style={{ opacity: lightningOpacity }}
             />
-            <div
-              className="absolute -inset-[25%] map-fog-drift-fast transition-opacity duration-500"
-              style={{
-                opacity: fogOpacity * 0.85,
-                backgroundImage:
-                  'radial-gradient(ellipse 48% 36% at 72% 24%, rgba(203, 213, 225, 0.72), transparent 70%), radial-gradient(ellipse 54% 40% at 28% 76%, rgba(148, 163, 184, 0.68), transparent 72%)',
-                backgroundColor: `rgba(148, 163, 184, ${(fogOpacity * 0.42).toFixed(3)})`,
-              }}
+          )}
+
+          {hasWeather && (
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full block pointer-events-none"
             />
-          </>
-        )}
+          )}
+        </div>
+      )}
 
-        {/* Escuridão / Penumbra com recorte opcional de Tocha no token do herói */}
-        {darkOpacity > 0 && (
-          <div
-            className="absolute inset-0 transition-all duration-300"
-            style={{ background: darknessBackground }}
-          />
-        )}
-
-        {/* Relâmpago da Tempestade */}
-        {lightningOpacity > 0 && (
-          <div
-            className="absolute inset-0 bg-sky-100 transition-opacity duration-75"
-            style={{ opacity: lightningOpacity }}
-          />
-        )}
-
-        {/* Canvas leve de partículas climáticas */}
-        {hasWeather && (
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full block pointer-events-none"
-          />
-        )}
-      </div>
-
-      {/* Cortina de Ocultação Total do Mapa (Blackout) */}
+      {/* CAMADA 3 (z-[35]): Cortina de Ocultação Total do Mapa (Blackout) */}
       {safe.blackout && (
         effectivePlayerView ? (
-          <div className="absolute inset-0 z-30 rounded-lg bg-[#05070d]/98 backdrop-blur-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center select-none">
+          <div className="absolute inset-0 z-[35] rounded-lg bg-[#04060c]/99 backdrop-blur-2xl border border-white/10 flex flex-col items-center justify-center p-6 text-center select-none">
             <div className="h-14 w-14 rounded-2xl bg-white/5 border border-white/15 flex items-center justify-center mb-3 text-slate-300 shadow-2xl">
               <EyeOff className="h-7 w-7 text-slate-300" />
             </div>
@@ -421,7 +779,7 @@ export function MapAtmosphereOverlay({
             </p>
           </div>
         ) : (
-          <div className="absolute inset-0 z-30 pointer-events-none rounded-lg border-2 border-dashed border-amber-400/55 bg-black/35">
+          <div className="absolute inset-0 z-[35] pointer-events-none rounded-lg border-2 border-dashed border-amber-400/55 bg-black/35">
             <div className="pointer-events-auto absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#0c101b]/95 border border-amber-400/50 text-xs font-bold text-amber-200 shadow-2xl backdrop-blur-xl">
               <EyeOff className="h-3.5 w-3.5 text-amber-300 shrink-0" />
               <span>Mapa oculto para os jogadores</span>

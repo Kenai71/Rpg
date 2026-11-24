@@ -1419,6 +1419,8 @@ const CROSS_MAP_SYNCED_TOKEN_FIELDS = [
   'avatar',
   'is_ally',
   'name_hidden',
+  'light_radius',
+  'light_color',
 ];
 
 export async function updateMapTokenStats(tokenId, statsData) {
@@ -1445,6 +1447,15 @@ export async function updateMapTokenStats(tokenId, statsData) {
   if (statsData.name_hidden !== undefined) payload.name_hidden = Boolean(statsData.name_hidden);
   if (statsData.monster_id !== undefined) payload.monster_id = statsData.monster_id ? String(statsData.monster_id).slice(0, 128) : null;
   if (statsData.initiative !== undefined) payload.initiative = Number(statsData.initiative);
+  if (statsData.light_radius !== undefined) {
+    payload.light_radius =
+      statsData.light_radius === null
+        ? null
+        : Math.max(0, Math.min(80, Math.round(Number(statsData.light_radius) || 0)));
+  }
+  if (statsData.light_color !== undefined) {
+    payload.light_color = statsData.light_color ? String(statsData.light_color).slice(0, 32) : null;
+  }
 
   await updateDoc(tokenRef, payload);
 
@@ -1581,6 +1592,11 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
       is_ally: item.is_ally !== undefined ? Boolean(item.is_ally) : type === 'player',
       name_hidden: item.name_hidden !== undefined ? Boolean(item.name_hidden) : type === 'monster',
       monster_id: item.monster_id ? String(item.monster_id).slice(0, 128) : null,
+      light_radius:
+        item.light_radius !== undefined && item.light_radius !== null
+          ? Math.max(0, Math.min(80, Math.round(Number(item.light_radius) || 0)))
+          : null,
+      light_color: item.light_color ? String(item.light_color).slice(0, 32) : null,
       updatedAt: serverTimestamp(),
     });
 

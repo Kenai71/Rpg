@@ -22,13 +22,13 @@ export function Modal({
         <Dialog.Content
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2',
-            'rounded-2xl bg-[var(--surface-1)] border border-[var(--border-strong)] shadow-2xl',
+            'rounded-2xl bg-[#0b0e17]/98 backdrop-blur-2xl border border-white/15 shadow-[0_32px_90px_-16px_rgba(0,0,0,0.92),inset_0_1px_0_rgba(255,255,255,0.09)]',
             'max-h-[92dvh] flex flex-col overflow-hidden focus:outline-none',
             maxWidth
           )}
         >
           {(title || !hideClose) && (
-            <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 pb-3 border-b border-[var(--border-subtle)] flex items-start justify-between gap-3 shrink-0">
+            <div className="px-4 sm:px-6 pt-4 pb-3.5 border-b border-white/10 bg-gradient-to-r from-white/[0.035] via-white/[0.015] to-transparent flex items-start justify-between gap-3 shrink-0">
               <div className="space-y-0.5 min-w-0">
                 {title && (
                   <Dialog.Title className="text-base sm:text-lg font-bold text-slate-50 tracking-tight">

@@ -577,6 +577,11 @@ export function MasterMapManager({
         is_ally: t.is_ally !== undefined ? Boolean(t.is_ally) : t.type === 'player',
         name_hidden: t.name_hidden !== undefined ? Boolean(t.name_hidden) : t.type === 'monster',
         monster_id: t.monster_id || null,
+        light_radius:
+          typeof t.light_radius === 'number' && Number.isFinite(t.light_radius)
+            ? t.light_radius
+            : null,
+        light_color: t.light_color || null,
         isOnActiveMap: entry.isOnActiveMap,
         isOnCurrentMap: entry.isOnCurrentMap,
         originMaps: Array.from(entry.originMapTitles),

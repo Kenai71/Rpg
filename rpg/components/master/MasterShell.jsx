@@ -9,12 +9,15 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Scroll,
   ShieldCheck,
-  ShoppingBag,
   Users,
   X,
 } from 'lucide-react';
+import {
+  GiScrollUnfurled,
+  GiSwapBag,
+  GiTreasureMap,
+} from 'react-icons/gi';
 import Logo from '../../app/components/Logo';
 import { Button } from '../ui/Button';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
@@ -25,9 +28,9 @@ import { cn } from '../../lib/utils';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Visão Geral', icon: LayoutDashboard },
-  { id: 'maps', label: 'Mesa & Mapas', icon: Compass },
-  { id: 'missions', label: 'Missões & Contratos', icon: Scroll },
-  { id: 'shop', label: 'Loja & Economia', icon: ShoppingBag },
+  { id: 'maps', label: 'Mesa & Mapas', icon: GiTreasureMap },
+  { id: 'missions', label: 'Missões & Contratos', icon: GiScrollUnfurled },
+  { id: 'shop', label: 'Loja & Economia', icon: GiSwapBag },
   { id: 'players', label: 'Heróis & Grupos', icon: Users },
   { id: 'requests', label: 'Solicitações', icon: Inbox },
   { id: 'permissions', label: 'Permissões', icon: ShieldCheck },
@@ -162,7 +165,7 @@ export function MasterShell({
 
       {/* Main Content Area */}
       <div className="flex-1 lg:pl-56 xl:pl-64 flex flex-col min-w-0">
-        <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[var(--surface-0)]/85 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 border-b border-white/10 bg-[#080a11]/88 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
           <div className="max-w-7xl mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <Button

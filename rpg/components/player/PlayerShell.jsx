@@ -3,23 +3,25 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  Backpack,
   Camera,
-  Coins,
-  Compass,
   Crown,
   Dices,
   Link2,
   LogOut,
   Pencil,
-  Scroll,
   Shield,
-  ShoppingBag,
   Trash2,
   Upload,
   Users,
   Zap,
 } from 'lucide-react';
+import {
+  GiBackpack,
+  GiCoinsPile,
+  GiScrollUnfurled,
+  GiSwapBag,
+  GiTreasureMap,
+} from 'react-icons/gi';
 import { toast } from 'sonner';
 import Logo from '../../app/components/Logo';
 import { getRankMeta, getXpProgress } from '../../lib/constants';
@@ -80,11 +82,11 @@ function compressAvatarFile(file) {
 }
 
 const TABS = [
-  { id: 'map', label: 'Mesa & Mapa', icon: Compass },
-  { id: 'missions', label: 'Mural', icon: Scroll },
-  { id: 'shop', label: 'Loja', icon: ShoppingBag },
+  { id: 'map', label: 'Mesa & Mapa', icon: GiTreasureMap },
+  { id: 'missions', label: 'Mural', icon: GiScrollUnfurled },
+  { id: 'shop', label: 'Loja', icon: GiSwapBag },
   { id: 'players', label: 'Aliados', icon: Users },
-  { id: 'inv', label: 'Personagem', icon: Backpack },
+  { id: 'inv', label: 'Personagem', icon: GiBackpack },
 ];
 
 export function PlayerShell({
@@ -165,7 +167,7 @@ export function PlayerShell({
       )}
     >
       {/* Top Navbar */}
-      <header className="sticky top-0 z-30 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--surface-0)]/85 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-white/10 bg-[#080a11]/88 backdrop-blur-2xl shadow-[0_8px_32px_-12px_rgba(0,0,0,0.75)]">
         <div
           className={cn(
             'mx-auto px-3 sm:px-5 xl:px-8 h-14 xl:h-16 flex items-center justify-between gap-2.5',
@@ -306,24 +308,24 @@ export function PlayerShell({
 
               {/* Stats & Quick Action */}
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 lg:gap-5">
-                <div className="flex items-center gap-4">
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">
+                <div className="flex items-center gap-3.5">
+                  <div className="px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-400/25 space-y-0.5 shrink-0">
+                    <span className="text-[9px] uppercase tracking-wider text-amber-200/75 font-bold block">
                       Ouro
                     </span>
-                    <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-amber-300 tabular-nums">
-                      <Coins className="h-4 w-4 text-amber-400" aria-hidden="true" />
+                    <div className="flex items-center gap-1.5 text-base sm:text-lg font-extrabold font-mono text-amber-300 tabular-nums leading-tight">
+                      <GiCoinsPile className="h-4 w-4 text-amber-400" aria-hidden="true" />
                       {formatNumber(profile?.gold || 0)}
                     </div>
                   </div>
 
-                  <div className="flex-1 sm:w-44 xl:w-52 space-y-1">
+                  <div className="flex-1 sm:w-44 xl:w-52 space-y-1.5">
                     <div className="flex items-center justify-between text-[10px] sm:text-[11px]">
                       <span className="text-slate-400 font-semibold inline-flex items-center gap-1">
                         <Zap className="h-3 w-3 text-slate-300" aria-hidden="true" />
                         Experiência
                       </span>
-                      <span className="font-mono text-slate-300 tabular-nums">{xpData.text}</span>
+                      <span className="font-mono text-slate-200 tabular-nums">{xpData.text}</span>
                     </div>
                     <div
                       role="progressbar"
@@ -331,10 +333,10 @@ export function PlayerShell({
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-label="Progresso de experiência"
-                      className="h-2 w-full rounded-full bg-[var(--surface-0)] border border-[var(--border-subtle)] overflow-hidden"
+                      className="h-2 w-full rounded-full bg-[#090c14] border border-white/10 overflow-hidden"
                     >
                       <div
-                        className="h-full rounded-full bg-slate-200 transition-all duration-500"
+                        className="h-full rounded-full bg-gradient-to-r from-slate-300 to-white transition-all duration-500"
                         style={{ width: `${xpData.percent}%` }}
                       />
                     </div>

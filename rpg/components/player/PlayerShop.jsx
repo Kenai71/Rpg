@@ -3,15 +3,44 @@
 import { useMemo, useState } from 'react';
 import {
   ArrowUpRight,
-  Backpack,
-  Coins,
   Hexagon,
   LayoutGrid,
   List,
   Search,
-  ShoppingBag,
 } from 'lucide-react';
+import {
+  GiBackpack,
+  GiChestArmor,
+  GiCoinsPile,
+  GiCrossedSwords,
+  GiMagicSwirl,
+  GiShield,
+  GiSwapBag,
+} from 'react-icons/gi';
 import { toast } from 'sonner';
+
+function getShopTypeIcon(type) {
+  switch (type) {
+    case 'weapon':
+      return GiCrossedSwords;
+    case 'shield':
+      return GiShield;
+    case 'body':
+    case 'head':
+    case 'hands':
+    case 'feet':
+    case 'waist':
+      return GiChestArmor;
+    case 'ring':
+    case 'neck':
+    case 'face':
+      return GiMagicSwirl;
+    case 'misc':
+      return GiBackpack;
+    default:
+      return GiSwapBag;
+  }
+}
 import {
   ITEM_TYPES,
   RARITIES,
@@ -216,7 +245,7 @@ export function PlayerShop({ shopItems, profile }) {
       {/* Catalog Items */}
       {availableItems.length === 0 ? (
         <EmptyState
-          icon={ShoppingBag}
+          icon={GiSwapBag}
           title="Nenhum item disponível"
           description="Nenhum equipamento corresponde aos filtros atuais ou o estoque esgotou."
         />
@@ -225,7 +254,9 @@ export function PlayerShop({ shopItems, profile }) {
           {availableItems.map((item) => {
             const rarity = getRarityFromItem(item);
             const rarityMeta = getRarityMeta(rarity);
-            const itemTypeLabel = getItemTypeLabel(getItemType(item));
+            const itemType = getItemType(item);
+            const itemTypeLabel = getItemTypeLabel(itemType);
+            const TypeIcon = getShopTypeIcon(itemType);
             return (
               <Card
                 key={item.id}
@@ -240,6 +271,7 @@ export function PlayerShop({ shopItems, profile }) {
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge className="bg-white/5 text-slate-300 border-white/10">
+                      <TypeIcon className="h-3 w-3 text-slate-300" />
                       {itemTypeLabel}
                     </Badge>
                     <h3 className="text-sm font-bold truncate text-white">
@@ -253,7 +285,8 @@ export function PlayerShop({ shopItems, profile }) {
 
                 <div className="flex items-center gap-3 shrink-0 justify-between sm:justify-end">
                   <span className="font-mono text-xs text-slate-400">Est: {item.quantity}</span>
-                  <span className="font-mono text-sm font-bold text-amber-300">
+                  <span className="font-mono text-sm font-bold text-amber-300 inline-flex items-center gap-1">
+                    <GiCoinsPile className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
                     {formatNumber(item.price)} G
                   </span>
                   <Button
@@ -275,7 +308,9 @@ export function PlayerShop({ shopItems, profile }) {
           {availableItems.map((item) => {
             const rarity = getRarityFromItem(item);
             const rarityMeta = getRarityMeta(rarity);
-            const itemTypeLabel = getItemTypeLabel(getItemType(item));
+            const itemType = getItemType(item);
+            const itemTypeLabel = getItemTypeLabel(itemType);
+            const TypeIcon = getShopTypeIcon(itemType);
 
             return (
               <Card
@@ -293,6 +328,7 @@ export function PlayerShop({ shopItems, profile }) {
                     <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge className="bg-white/5 text-slate-300 border-white/10">
+                          <TypeIcon className="h-3 w-3 text-slate-300" />
                           {itemTypeLabel}
                         </Badge>
                       </div>
@@ -314,7 +350,7 @@ export function PlayerShop({ shopItems, profile }) {
 
                 <CardFooter className="justify-between">
                   <span className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-amber-300 tabular-nums">
-                    <Coins className="h-4 w-4 text-amber-400" aria-hidden="true" />
+                    <GiCoinsPile className="h-4 w-4 text-amber-400" aria-hidden="true" />
                     {formatNumber(item.price)} G
                   </span>
                   <Button
@@ -372,7 +408,7 @@ export function PlayerShop({ shopItems, profile }) {
 
             <div className="rounded-xl bg-[var(--surface-0)]/50 border border-[var(--border-subtle)] p-3.5 flex items-center justify-between text-xs">
               <span className="text-slate-400 inline-flex items-center gap-1.5">
-                <Backpack className="h-4 w-4" /> Mochila
+                <GiBackpack className="h-4 w-4" /> Mochila
               </span>
               <span className={`font-mono font-bold ${bagHasSpace ? 'text-emerald-300' : 'text-rose-400'}`}>
                 {bagHasSpace
@@ -430,7 +466,7 @@ export function PlayerShop({ shopItems, profile }) {
                       : 'border-white/10 bg-white/[0.02] opacity-50 cursor-not-allowed'
                   }`}
                 >
-                  <Coins className="h-5 w-5 text-amber-400" />
+                  <GiCoinsPile className="h-5 w-5 text-amber-400" />
                   <div>
                     <span className="block font-mono text-lg font-extrabold text-amber-300">
                       {formatNumber(totalPrice)} G

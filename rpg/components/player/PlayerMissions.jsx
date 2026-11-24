@@ -4,14 +4,13 @@ import { useMemo, useState } from 'react';
 import {
   ArrowUpRight,
   Check,
-  Coins,
   LayoutGrid,
   List,
-  Scroll,
   Search,
   Users,
   Zap,
 } from 'lucide-react';
+import { GiCoinsPile, GiScrollUnfurled } from 'react-icons/gi';
 import { toast } from 'sonner';
 import { RANKS, getRankMeta } from '../../lib/constants';
 import { acceptMissionTx } from '../../lib/rpg-service';
@@ -194,7 +193,7 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
       {/* Mission Catalog */}
       {filtered.length === 0 ? (
         <EmptyState
-          icon={Scroll}
+          icon={GiScrollUnfurled}
           title="Nenhuma missão encontrada"
           description={
             viewMode === 'open'
@@ -283,7 +282,7 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                         {formatNumber(m.xp_reward)} XP
                       </span>
                       <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-xs font-mono font-semibold text-amber-300">
-                        <Coins className="h-3.5 w-3.5" aria-hidden="true" />
+                        <GiCoinsPile className="h-3.5 w-3.5" aria-hidden="true" />
                         {formatNumber(m.gold_reward)} Ouro
                       </span>
                     </div>
@@ -384,7 +383,7 @@ export function PlayerMissions({ missions, profile, hasParty = false }) {
                   Recompensa Ouro
                 </span>
                 <span className="text-lg font-extrabold font-mono text-amber-300 inline-flex items-center gap-1.5">
-                  <Coins className="h-4 w-4" /> {formatNumber(inspectedMission.gold_reward)} G
+                  <GiCoinsPile className="h-4 w-4" /> {formatNumber(inspectedMission.gold_reward)} G
                 </span>
               </div>
             </div>

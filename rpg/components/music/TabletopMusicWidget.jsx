@@ -2,18 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Bell,
   Check,
   ChevronDown,
   ChevronUp,
-  CloudLightning,
-  Coins,
   Compass,
   Disc3,
-  DoorOpen,
-  Flame,
-  Ghost,
-  Gift,
   GripVertical,
   Headphones,
   HeartPulse,
@@ -32,17 +25,32 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
-  Skull,
-  Swords,
   Trash2,
   Upload,
   Volume1,
   Volume2,
   VolumeX,
-  Wind,
   X,
   Zap,
 } from 'lucide-react';
+import {
+  GiArrowFlights,
+  GiCampfire,
+  GiCoinsPile,
+  GiCrossedSwords,
+  GiCrown,
+  GiDragonHead,
+  GiDungeonGate,
+  GiExplosionRays,
+  GiLightningStorm,
+  GiMagicSwirl,
+  GiMusicalNotes,
+  GiOpenTreasureChest,
+  GiRingingBell,
+  GiSpeaker,
+  GiWolfHowl,
+  GiWoodenDoor,
+} from 'react-icons/gi';
 import { toast } from 'sonner';
 import {
   MUSIC_CATEGORIES,
@@ -57,39 +65,39 @@ import { FormField, Input, Select } from '../ui/Input';
 import { useTabletopMusic } from './TabletopMusicProvider';
 
 const SOUNDBOARD_ICON_MAP = {
-  CloudLightning,
-  DoorOpen,
-  Swords,
-  Skull,
-  Coins,
-  Bell,
-  Zap,
-  Wind,
-  Flame,
-  HeartPulse,
-  Ghost,
-  Gift,
+  thunder: GiLightningStorm,
+  door: GiWoodenDoor,
+  sword: GiCrossedSwords,
+  roar: GiDragonHead,
+  coins: GiCoinsPile,
+  bell: GiRingingBell,
+  magic: GiMagicSwirl,
+  arrow: GiArrowFlights,
+  explosion: GiExplosionRays,
+  heartbeat: HeartPulse,
+  wolf: GiWolfHowl,
+  chest: GiOpenTreasureChest,
 };
 
-// Ícone geométrico/temático por categoria musical (zero ícones de estrela)
+// Ícone RPG temático por categoria musical (zero ícones de estrela)
 function getCategoryVisual(categoryId) {
   switch (categoryId) {
     case 'tavern':
-      return { Icon: Flame, label: 'Taverna', color: '#f59e0b' };
+      return { Icon: GiCampfire, label: 'Taverna', color: '#f59e0b' };
     case 'exploration':
       return { Icon: Compass, label: 'Exploração', color: '#10b981' };
     case 'dungeon':
-      return { Icon: Skull, label: 'Masmorra', color: '#94a3b8' };
+      return { Icon: GiDungeonGate, label: 'Masmorra', color: '#94a3b8' };
     case 'combat':
-      return { Icon: Swords, label: 'Combate', color: '#ef4444' };
+      return { Icon: GiCrossedSwords, label: 'Combate', color: '#ef4444' };
     case 'boss':
-      return { Icon: Zap, label: 'Chefe Final', color: '#f43f5e' };
+      return { Icon: GiDragonHead, label: 'Chefe Final', color: '#f43f5e' };
     case 'mystery':
-      return { Icon: Radio, label: 'Mistério', color: '#38bdf8' };
+      return { Icon: GiMagicSwirl, label: 'Mistério', color: '#38bdf8' };
     case 'epic':
-      return { Icon: Disc3, label: 'Épico', color: '#a855f7' };
+      return { Icon: GiCrown, label: 'Épico', color: '#a855f7' };
     default:
-      return { Icon: Music, label: 'Trilha', color: '#cbd5e1' };
+      return { Icon: GiMusicalNotes, label: 'Trilha', color: '#cbd5e1' };
   }
 }
 
@@ -102,10 +110,7 @@ function getSourceBadgeLabel(sourceType) {
 
 function EqualizerBars({ active = false, className = '' }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn('inline-flex items-end gap-[2px] h-3.5', className)}
-    >
+    <span aria-hidden="true" className={cn('inline-flex items-end gap-[2px] h-3.5', className)}>
       <span
         className={cn(
           'w-[2.5px] rounded-full bg-emerald-400 transition-all',
@@ -132,7 +137,7 @@ function EqualizerBars({ active = false, className = '' }) {
 }
 
 /**
- * Slider tátil customizado (mouse + toque + teclado) sem estilos nativos feios do navegador
+ * Slider tátil customizado (mouse + toque + teclado) com acabamento premium
  */
 function InteractiveTrackSlider({
   value = 0,
@@ -244,38 +249,151 @@ function InteractiveTrackSlider({
 }
 
 /**
- * Botão de Ícone de Música para o cabeçalho do Mestre e do Jogador
+ * Canal Individual de Mixer (usado separadamente para Música e para Efeitos Sonoros)
+ */
+function AudioChannelRow({
+  label,
+  sublabel,
+  Icon,
+  volume,
+  muted,
+  onChangeVolume,
+  onToggleMute,
+  onTestSound,
+  fillClassName = 'bg-slate-200',
+}) {
+  const pct = Math.round((muted ? 0 : volume) * 100);
+  const VolStateIcon = muted || volume <= 0.01 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+
+  return (
+    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="h-6 w-6 rounded-lg bg-white/8 border border-white/12 flex items-center justify-center shrink-0 text-slate-300">
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200 block truncate">
+              {label}
+            </span>
+            {sublabel && (
+              <span className="text-[10px] text-slate-400 block truncate">{sublabel}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onTestSound && (
+            <button
+              type="button"
+              onClick={onTestSound}
+              title="Testar volume de efeitos sonoros apenas no seu dispositivo"
+              className="px-2 py-0.5 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-semibold text-slate-300 hover:text-white transition-colors"
+            >
+              Testar
+            </button>
+          )}
+          <span className="px-2 py-0.5 rounded-full bg-[#0c101b] border border-white/12 text-[11px] font-mono font-black text-white tabular-nums min-w-[42px] text-center">
+            {pct}%
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onToggleMute}
+          title={muted ? `Ativar ${label}` : `Silenciar ${label}`}
+          aria-label={muted ? `Ativar ${label}` : `Silenciar ${label}`}
+          className={cn(
+            'h-8 w-8 rounded-xl border flex items-center justify-center shrink-0 transition-colors',
+            muted || volume === 0
+              ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+              : 'bg-white/8 border-white/15 text-slate-200 hover:text-white hover:bg-white/15'
+          )}
+        >
+          <VolStateIcon className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChangeVolume(Math.max(0, (muted ? 0 : volume) - 0.1))}
+          title={`Abaixar ${label} (-10%)`}
+          aria-label={`Abaixar ${label}`}
+          className="h-8 w-7 rounded-xl bg-white/[0.05] border border-white/10 hover:bg-white/14 flex items-center justify-center text-slate-200 hover:text-white shrink-0 transition-colors"
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+
+        <div className="flex-1 min-w-0 px-1">
+          <InteractiveTrackSlider
+            value={muted ? 0 : volume * 100}
+            max={100}
+            ariaLabel={`Volume de ${label}`}
+            fillClassName={fillClassName}
+            onChange={(val) => onChangeVolume(val / 100)}
+            onCommit={(val) => onChangeVolume(val / 100)}
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onChangeVolume(Math.min(1, (muted ? 0 : volume) + 0.1))}
+          title={`Aumentar ${label} (+10%)`}
+          aria-label={`Aumentar ${label}`}
+          className="h-8 w-7 rounded-xl bg-white/[0.05] border border-white/10 hover:bg-white/14 flex items-center justify-center text-slate-200 hover:text-white shrink-0 transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Botão de Ícone de Áudio/Música para o cabeçalho do Mestre e do Jogador
  */
 export function TabletopMusicTriggerButton({ className = '' }) {
   const music = useTabletopMusic();
   if (!music) return null;
 
-  const { isPlaying, panelOpen, togglePanel, isMuted, volume, needsUnlock, currentTrack, isMaster } =
-    music;
+  const {
+    isPlaying,
+    panelOpen,
+    togglePanel,
+    isMuted,
+    volume,
+    sfxMuted,
+    sfxVolume,
+    needsUnlock,
+    currentTrack,
+    isMaster,
+  } = music;
 
   const isAudiblePlaying = isPlaying && !isMuted && volume > 0;
+  const bothMuted = (isMuted || volume === 0) && (sfxMuted || sfxVolume === 0);
 
   return (
     <button
       type="button"
       onClick={togglePanel}
-      aria-label={isMaster ? 'Abrir estúdio musical da mesa' : 'Abrir controle de música e volume'}
+      aria-label={isMaster ? 'Abrir estúdio musical e soundboard da mesa' : 'Abrir mixer de música e efeitos'}
       aria-expanded={panelOpen}
       title={
         currentTrack
           ? `${isPlaying ? 'Tocando' : 'Pausado'}: ${currentTrack.title}`
-          : 'Música da Mesa'
+          : 'Áudio & Música da Mesa'
       }
       className={cn(
         'relative inline-flex items-center gap-2 h-8 sm:h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-semibold transition-all select-none',
         panelOpen
-          ? 'bg-white/15 border-white/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+          ? 'bg-white/15 border-white/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
           : 'bg-white/[0.06] border-white/15 text-slate-200 hover:text-white hover:bg-white/12 hover:border-white/25',
         className
       )}
     >
       <span className="relative flex items-center justify-center">
-        {isMuted || volume === 0 ? (
+        {bothMuted ? (
           <VolumeX className="h-4 w-4 text-slate-400" />
         ) : (
           <Music className="h-4 w-4 text-slate-300" />
@@ -285,7 +403,7 @@ export function TabletopMusicTriggerButton({ className = '' }) {
       {isAudiblePlaying && <EqualizerBars active={true} className="h-3" />}
 
       <span className="hidden md:inline max-w-[125px] truncate text-[11px] font-semibold text-slate-200">
-        {isPlaying && currentTrack ? currentTrack.title : 'Música'}
+        {isPlaying && currentTrack ? currentTrack.title : 'Áudio'}
       </span>
 
       {needsUnlock && isPlaying && (
@@ -299,10 +417,7 @@ export function TabletopMusicTriggerButton({ className = '' }) {
 }
 
 /**
- * Painel Flutuante de Música Sincronizada:
- * - Jogador: visualização limpa do que está tocando + controle de volume intuitivo (aumentar, abaixar, mutar)
- * - Mestre: deck completo (Play/Pause, Retroceder, Pular, Barra de Tempo interativa, Loop, Shuffle, Volume)
- *           + Gerenciador da Playlist (reordenar, arrastar e soltar, editar, remover, adicionar YouTube/URL/Upload)
+ * Painel Flutuante de Áudio Sincronizado (Estúdio Musical + Mixer Independente Música/SFX + Soundboard)
  */
 export function TabletopMusicPanel() {
   const music = useTabletopMusic();
@@ -319,7 +434,7 @@ export function TabletopMusicPanel() {
   const [addCategory, setAddCategory] = useState('tavern');
   const [fetchingYtMeta, setFetchingYtMeta] = useState(false);
   const [submittingTrack, setSubmittingTrack] = useState(false);
-  const [pendingAudioFile, setPendingAudioFile] = useState(null); // { name, dataUrl, mimeType, duration }
+  const [pendingAudioFile, setPendingAudioFile] = useState(null);
   const audioFileInputRef = useRef(null);
 
   // Edição inline de faixa na playlist
@@ -359,7 +474,6 @@ export function TabletopMusicPanel() {
     };
   }, [addUrl, addTab, showAddForm]);
 
-  // Fecha o painel ao pressionar Escape e limpa timer de flash SFX
   useEffect(() => {
     return () => {
       if (sfxFlashTimerRef.current) clearTimeout(sfxFlashTimerRef.current);
@@ -390,10 +504,17 @@ export function TabletopMusicPanel() {
     duration,
     loopMode,
     shuffle,
+    // Canal Música
     volume,
     isMuted,
     setVolume,
     toggleMute,
+    // Canal Efeitos Sonoros (independente)
+    sfxVolume,
+    sfxMuted,
+    setSfxVolume,
+    toggleSfxMute,
+    previewSfxVolume,
     needsUnlock,
     unlockAudio,
     loadingTrack,
@@ -418,13 +539,12 @@ export function TabletopMusicPanel() {
     if (!triggerSoundEffect) return;
     setFlashingSfxId(sfxId);
     if (sfxFlashTimerRef.current) clearTimeout(sfxFlashTimerRef.current);
-    sfxFlashTimerRef.current = setTimeout(() => setFlashingSfxId(null), 550);
+    sfxFlashTimerRef.current = setTimeout(() => setFlashingSfxId(null), 650);
     triggerSoundEffect(sfxId);
   };
 
   const displayedTime = scrubValue !== null ? scrubValue : currentTime;
   const safeDuration = Math.max(1, duration || currentTrack?.duration || 1);
-  const volumePercent = Math.round((isMuted ? 0 : volume) * 100);
   const visual = getCategoryVisual(currentTrack?.category);
   const CategoryIcon = visual.Icon;
 
@@ -446,7 +566,6 @@ export function TabletopMusicPanel() {
       if (typeof dataUrl !== 'string') return;
       const baseName = file.name.replace(/\.[^/.]+$/, '');
 
-      // Descobre duração real do arquivo
       const probe = new Audio();
       probe.preload = 'metadata';
       probe.onloadedmetadata = () => {
@@ -502,33 +621,30 @@ export function TabletopMusicPanel() {
     }
   };
 
-  const VolumeIcon =
-    isMuted || volume <= 0.01 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
-
   return (
     <div
       role="dialog"
-      aria-label={isMaster ? 'Estúdio Musical do Mestre' : 'Controle de Música da Mesa'}
+      aria-label={isMaster ? 'Estúdio de Áudio da Mesa' : 'Mixer de Áudio da Mesa'}
       className={cn(
-        'fixed z-50 right-3 sm:right-5 top-[4.25rem] xl:top-[4.75rem] flex flex-col rounded-2xl border border-white/15 bg-[#0a0d16]/96 backdrop-blur-2xl shadow-[0_24px_64px_rgba(0,0,0,0.85)] overflow-hidden animate-in fade-in zoom-in-95 duration-150',
+        'fixed z-50 right-3 sm:right-5 top-[4.25rem] xl:top-[4.75rem] flex flex-col rounded-2xl border border-white/15 bg-[#090c14]/97 backdrop-blur-2xl shadow-[0_28px_72px_rgba(0,0,0,0.92)] overflow-hidden animate-in fade-in zoom-in-95 duration-150',
         isMaster
-          ? 'w-[min(430px,calc(100vw-1.5rem))] max-h-[calc(100dvh-5.75rem)]'
-          : 'w-[min(350px,calc(100vw-1.5rem))] max-h-[calc(100dvh-5.75rem)]'
+          ? 'w-[min(450px,calc(100vw-1.5rem))] max-h-[calc(100dvh-5.75rem)]'
+          : 'w-[min(370px,calc(100vw-1.5rem))] max-h-[calc(100dvh-5.75rem)]'
       )}
       style={{
         boxShadow:
-          'inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 64px -12px rgba(0, 0, 0, 0.9)',
+          'inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 28px 72px -12px rgba(0, 0, 0, 0.92)',
       }}
     >
-      {/* CABEÇALHO DO PAINEL */}
-      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0 bg-white/[0.02]">
+      {/* CABEÇALHO DO ESTÚDIO DE ÁUDIO */}
+      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0 bg-gradient-to-r from-white/[0.04] via-white/[0.02] to-transparent">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-8 w-8 rounded-xl bg-white/8 border border-white/15 flex items-center justify-center shrink-0">
-            <Headphones className="h-4 w-4 text-slate-300" />
+          <div className="h-9 w-9 rounded-xl bg-white/8 border border-white/15 flex items-center justify-center shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
+            <Headphones className="h-4 w-4 text-slate-200" />
           </div>
           <div className="min-w-0">
             <h2 className="text-xs font-extrabold uppercase tracking-wider text-white truncate">
-              {isMaster ? 'Estúdio Musical da Mesa' : 'Música da Mesa'}
+              {isMaster ? 'Estúdio de Áudio & Soundboard' : 'Mixer de Áudio da Mesa'}
             </h2>
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
               <span
@@ -541,8 +657,8 @@ export function TabletopMusicPanel() {
                 {isPlaying
                   ? isMaster
                     ? 'Sincronizado ao vivo para todos'
-                    : 'Tocando em sincronia com a mesa'
-                  : 'Pausado pelo Mestre'}
+                    : 'Trilha sincronizada com a mesa'
+                  : 'Trilha pausada pelo Mestre'}
               </span>
             </div>
           </div>
@@ -551,8 +667,8 @@ export function TabletopMusicPanel() {
         <button
           type="button"
           onClick={() => setPanelOpen(false)}
-          aria-label="Fechar painel de música"
-          className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+          aria-label="Fechar painel de áudio"
+          className="h-8 w-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
         >
           <X className="h-4 w-4" />
         </button>
@@ -560,7 +676,7 @@ export function TabletopMusicPanel() {
 
       {/* CORPO COM SCROLL SUAVE */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
-        {/* ALERTA DE DESBLOQUEIO DE AUTOPLAY (NAVEGADOR) */}
+        {/* ALERTA DE DESBLOQUEIO DE AUTOPLAY */}
         {needsUnlock && isPlaying && (
           <button
             type="button"
@@ -575,24 +691,29 @@ export function TabletopMusicPanel() {
                 Clique para ativar o áudio da mesa
               </div>
               <div className="text-[11px] text-amber-200/80">
-                O navegador pausou o início automático. Toque para entrar na música sincronizada.
+                O navegador pausou o início automático. Toque para entrar na trilha sincronizada.
               </div>
             </div>
           </button>
         )}
 
         {/* CARD DA FAIXA ATUAL (NOW PLAYING) */}
-        <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/12 space-y-3">
+        <div
+          className="p-3.5 rounded-2xl border border-white/12 space-y-3 relative overflow-hidden"
+          style={{
+            background: `linear-gradient(145deg, ${visual.color}14 0%, rgba(12, 16, 27, 0.92) 55%, rgba(9, 12, 20, 0.96) 100%)`,
+          }}
+        >
           <div className="flex items-center gap-3">
             <div
               className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 border relative"
               style={{
-                backgroundColor: `${visual.color}1c`,
+                backgroundColor: `${visual.color}1f`,
                 borderColor: `${visual.color}55`,
-                boxShadow: isPlaying ? `0 0 22px ${visual.color}33` : undefined,
+                boxShadow: isPlaying ? `0 0 24px ${visual.color}38` : undefined,
               }}
             >
-              <CategoryIcon className="h-5 w-5" style={{ color: visual.color }} />
+              <CategoryIcon className="h-6 w-6" style={{ color: visual.color }} />
               {loadingTrack && (
                 <span className="absolute inset-0 rounded-xl bg-black/60 flex items-center justify-center">
                   <span className="h-4 w-4 rounded-full border-2 border-white/25 border-t-white animate-spin" />
@@ -608,11 +729,11 @@ export function TabletopMusicPanel() {
                 {isPlaying && !loadingTrack && <EqualizerBars active={true} className="shrink-0" />}
               </div>
               <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                <span className="text-[11px] text-slate-400 truncate max-w-[165px]">
+                <span className="text-[11px] text-slate-300/80 truncate max-w-[165px]">
                   {currentTrack?.artist || visual.label}
                 </span>
                 {currentTrack && (
-                  <span className="px-1.5 py-0.2 rounded-md bg-white/8 border border-white/10 text-[9px] font-mono font-bold text-slate-300">
+                  <span className="px-1.5 py-0.2 rounded-md bg-white/10 border border-white/12 text-[9px] font-mono font-bold text-slate-200">
                     {getSourceBadgeLabel(currentTrack.sourceType)}
                   </span>
                 )}
@@ -626,7 +747,7 @@ export function TabletopMusicPanel() {
             </div>
           )}
 
-          {/* BARRA DO TEMPO DA MÚSICA (INTERATIVA PARA O MESTRE | LEITURA SINCRONIZADA PARA JOGADORES) */}
+          {/* BARRA DO TEMPO DA MÚSICA */}
           <div className="space-y-1">
             <InteractiveTrackSlider
               value={displayedTime}
@@ -642,9 +763,7 @@ export function TabletopMusicPanel() {
             />
             <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 tabular-nums">
               <span>{formatAudioTime(displayedTime)}</span>
-              <span>
-                {duration > 0 ? formatAudioTime(duration) : '--:--'}
-              </span>
+              <span>{duration > 0 ? formatAudioTime(duration) : '--:--'}</span>
             </div>
           </div>
 
@@ -693,7 +812,7 @@ export function TabletopMusicPanel() {
                 disabled={playlist.length === 0}
                 title={isPlaying ? 'Pausar música para todos' : 'Tocar música para todos'}
                 aria-label={isPlaying ? 'Pausar' : 'Tocar'}
-                className="h-11 w-11 rounded-full bg-white text-[#07080c] hover:bg-slate-200 disabled:opacity-40 flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.28)] transition-all active:scale-95"
+                className="h-11 w-11 rounded-full bg-white text-[#07080c] hover:bg-slate-200 disabled:opacity-40 flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.3)] transition-all active:scale-95"
               >
                 {isPlaying ? (
                   <Pause className="h-5 w-5 fill-current" />
@@ -745,99 +864,43 @@ export function TabletopMusicPanel() {
           )}
         </div>
 
-        {/* CONTROLE DE VOLUME LOCAL (JOGADORES E MESTRE — INDIVIDUAL POR DISPOSITIVO) */}
-        <div className="p-3.5 rounded-2xl bg-[#0c101b] border border-white/12 space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
-              {isMaster ? 'Seu Volume Local' : 'Controle de Volume'}
+        {/* MIXER INDEPENDENTE: CANAL DE MÚSICA + CANAL DE EFEITOS SONOROS (JOGADOR & MESTRE) */}
+        <div className="p-3 rounded-2xl bg-[#0c101b] border border-white/12 space-y-2.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+              Mixer de Volume (Seu Dispositivo)
             </span>
-            <span className="px-2 py-0.5 rounded-full bg-white/8 border border-white/12 text-[11px] font-mono font-black text-white tabular-nums">
-              {volumePercent}%
-            </span>
+            <span className="text-[10px] font-mono text-slate-500">Canais separados</span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleMute}
-              title={isMuted ? 'Ativar som' : 'Silenciar'}
-              aria-label={isMuted ? 'Ativar som' : 'Silenciar'}
-              className={cn(
-                'h-8 w-8 rounded-xl border flex items-center justify-center shrink-0 transition-colors',
-                isMuted || volume === 0
-                  ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
-                  : 'bg-white/8 border-white/15 text-slate-200 hover:text-white hover:bg-white/15'
-              )}
-            >
-              <VolumeIcon className="h-4 w-4" />
-            </button>
+          <AudioChannelRow
+            label="Música da Mesa"
+            sublabel="Trilha sonora sincronizada"
+            Icon={GiMusicalNotes}
+            volume={volume}
+            muted={isMuted}
+            onChangeVolume={setVolume}
+            onToggleMute={toggleMute}
+            fillClassName="bg-slate-200"
+          />
 
-            <button
-              type="button"
-              onClick={() => setVolume(Math.max(0, (isMuted ? 0 : volume) - 0.1))}
-              title="Abaixar volume (-10%)"
-              aria-label="Abaixar volume"
-              className="h-8 w-8 rounded-xl bg-white/[0.06] border border-white/12 hover:bg-white/15 flex items-center justify-center text-slate-200 hover:text-white shrink-0 transition-colors"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-
-            <div className="flex-1 min-w-0 px-1">
-              <InteractiveTrackSlider
-                value={isMuted ? 0 : volume * 100}
-                max={100}
-                ariaLabel="Volume da música"
-                fillClassName="bg-slate-200"
-                onChange={(val) => setVolume(val / 100)}
-                onCommit={(val) => setVolume(val / 100)}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setVolume(Math.min(1, (isMuted ? 0 : volume) + 0.1))}
-              title="Aumentar volume (+10%)"
-              aria-label="Aumentar volume"
-              className="h-8 w-8 rounded-xl bg-white/[0.06] border border-white/12 hover:bg-white/15 flex items-center justify-center text-slate-200 hover:text-white shrink-0 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          {!isMaster && (
-            <div className="grid grid-cols-5 gap-1 pt-0.5">
-              {[0, 25, 50, 75, 100].map((pctVal) => {
-                const active = volumePercent === pctVal;
-                return (
-                  <button
-                    key={pctVal}
-                    type="button"
-                    onClick={() => {
-                      if (pctVal === 0) {
-                        if (!isMuted) toggleMute();
-                      } else {
-                        setVolume(pctVal / 100);
-                      }
-                    }}
-                    className={cn(
-                      'py-1 rounded-lg text-[10px] font-mono font-bold border transition-all text-center',
-                      active
-                        ? 'bg-white/18 border-white/35 text-white'
-                        : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-                    )}
-                  >
-                    {pctVal === 0 ? 'Mudo' : `${pctVal}%`}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <AudioChannelRow
+            label="Efeitos Sonoros"
+            sublabel="Soundboard, sussurros e baús"
+            Icon={GiSpeaker}
+            volume={sfxVolume}
+            muted={sfxMuted}
+            onChangeVolume={setSfxVolume}
+            onToggleMute={toggleSfxMute}
+            onTestSound={previewSfxVolume}
+            fillClassName="bg-amber-300"
+          />
         </div>
 
         {/* NOTA DISCRETA PARA JOGADORES */}
         {!isMaster && (
           <p className="text-[11px] text-slate-400 text-center leading-relaxed px-1">
-            A trilha sonora e os efeitos sonoros são sincronizados pelo Mestre em tempo real. Ajuste o volume acima apenas para o seu dispositivo.
+            Música e efeitos sonoros têm controles independentes salvos apenas no seu dispositivo.
           </p>
         )}
 
@@ -850,12 +913,12 @@ export function TabletopMusicPanel() {
               className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-white/[0.04] transition-colors"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <Zap className="h-3.5 w-3.5 text-slate-300 shrink-0" />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200 truncate">
+                <GiSpeaker className="h-4 w-4 text-amber-300 shrink-0" />
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-100 truncate">
                   Soundboard Rápido
                 </span>
-                <span className="px-1.5 py-0.2 rounded-full bg-white/8 border border-white/10 text-[9px] font-mono text-slate-400">
-                  Ao vivo
+                <span className="px-1.5 py-0.2 rounded-full bg-white/8 border border-white/12 text-[9px] font-mono text-slate-300">
+                  12 SFX HD
                 </span>
               </div>
               {soundboardOpen ? (
@@ -866,7 +929,7 @@ export function TabletopMusicPanel() {
             </button>
 
             {soundboardOpen && (
-              <div className="px-3 pb-3 pt-1 border-t border-white/10">
+              <div className="px-3 pb-3 pt-2 border-t border-white/10">
                 <div className="grid grid-cols-3 gap-1.5">
                   {SOUNDBOARD_EFFECTS.map((sfx) => {
                     const SfxIcon = SOUNDBOARD_ICON_MAP[sfx.icon] || Zap;
@@ -876,19 +939,27 @@ export function TabletopMusicPanel() {
                         key={sfx.id}
                         type="button"
                         onClick={() => handleFireSfx(sfx.id)}
-                        title={`Tocar "${sfx.label}" para todos agora`}
+                        title={`Disparar "${sfx.label}" para toda a mesa`}
                         className={cn(
-                          'flex items-center gap-1.5 px-2 py-2 rounded-xl border text-left transition-all active:scale-95',
+                          'group relative flex flex-col items-center justify-center gap-1 py-2.5 px-1.5 rounded-xl border text-center transition-all active:scale-95 overflow-hidden',
                           isFlashing
-                            ? 'bg-white/20 border-white/40 text-white shadow-[0_0_16px_rgba(255,255,255,0.2)]'
-                            : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/12 hover:border-white/25 hover:text-white'
+                            ? 'bg-white/20 border-white/50 text-white'
+                            : 'bg-white/[0.03] border-white/10 text-slate-200 hover:bg-white/[0.09] hover:border-white/25 hover:text-white'
                         )}
+                        style={
+                          isFlashing
+                            ? {
+                                borderColor: `${sfx.color}cc`,
+                                boxShadow: `0 0 20px ${sfx.color}44, inset 0 1px 0 rgba(255,255,255,0.2)`,
+                              }
+                            : undefined
+                        }
                       >
                         <SfxIcon
-                          className="h-3.5 w-3.5 shrink-0"
+                          className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110"
                           style={{ color: sfx.color }}
                         />
-                        <span className="text-[11px] font-semibold truncate">
+                        <span className="text-[11px] font-bold leading-tight truncate max-w-full">
                           {sfx.shortLabel}
                         </span>
                       </button>
@@ -938,7 +1009,6 @@ export function TabletopMusicPanel() {
               </div>
             </div>
 
-            {/* FORMULÁRIO PARA ADICIONAR NOVA MÚSICA (YOUTUBE, LINK DIRETO OU ARQUIVO) */}
             {showAddForm && (
               <form
                 onSubmit={handleAddTrackSubmit}
@@ -959,9 +1029,7 @@ export function TabletopMusicPanel() {
                         onClick={() => setAddTab(tab.id)}
                         className={cn(
                           'py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all',
-                          active
-                            ? 'bg-white/15 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-white'
+                          active ? 'bg-white/15 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                         )}
                       >
                         <TabIcon className="h-3 w-3" />
@@ -1033,10 +1101,7 @@ export function TabletopMusicPanel() {
                   </FormField>
 
                   <FormField label="Tema / Clima:">
-                    <Select
-                      value={addCategory}
-                      onChange={(e) => setAddCategory(e.target.value)}
-                    >
+                    <Select value={addCategory} onChange={(e) => setAddCategory(e.target.value)}>
                       {MUSIC_CATEGORIES.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.label}
@@ -1046,18 +1111,12 @@ export function TabletopMusicPanel() {
                   </FormField>
                 </div>
 
-                <Button
-                  type="submit"
-                  size="sm"
-                  loading={submittingTrack}
-                  className="w-full text-xs"
-                >
+                <Button type="submit" size="sm" loading={submittingTrack} className="w-full text-xs">
                   Adicionar à Playlist
                 </Button>
               </form>
             )}
 
-            {/* LISTA INTERATIVA DA PLAYLIST (CLICAR P/ TOCAR, ARRASTAR OU SETAS P/ REORDENAR, EDITAR, EXCLUIR) */}
             {playlist.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400 rounded-xl border border-dashed border-white/12">
                 Playlist vazia. Adicione um link do YouTube, áudio ou restaure as trilhas padrão.
@@ -1171,7 +1230,7 @@ export function TabletopMusicPanel() {
                               {isCurrent && isPlaying ? (
                                 <EqualizerBars active={true} className="h-3" />
                               ) : (
-                                <CatIcon className="h-3.5 w-3.5" style={{ color: cat.color }} />
+                                <CatIcon className="h-4 w-4" style={{ color: cat.color }} />
                               )}
                             </span>
 
@@ -1203,7 +1262,6 @@ export function TabletopMusicPanel() {
                             </div>
                           </button>
 
-                          {/* Controles de Ajeitar Playlist: Subir, Descer, Editar, Excluir */}
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
                               type="button"

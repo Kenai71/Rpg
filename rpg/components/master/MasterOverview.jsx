@@ -13,20 +13,25 @@ import {
 } from 'recharts';
 import {
   Check,
-  Coins,
   Dices,
   Inbox,
-  Scroll,
-  ShoppingBag,
   Users,
   X,
 } from 'lucide-react';
+import {
+  GiCoinsPile,
+  GiHoodedFigure,
+  GiOpenTreasureChest,
+  GiScrollUnfurled,
+  GiTreasureMap,
+} from 'react-icons/gi';
 import { RANKS, RANK_META, MISSION_STATUS_META } from '../../lib/constants';
 import { formatNumber } from '../../lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, StatCard } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { RankBadge } from '../ui/Badge';
 import { EmptyState } from '../ui/EmptyState';
+import { useTabletopSession } from '../tabletop/TabletopSessionProvider';
 
 function CustomChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -49,6 +54,7 @@ export function MasterOverview({
   onResolveRequest,
   onNavigate,
 }) {
+  const tabletopSession = useTabletopSession();
   const openMissions = missions.filter((m) => m.status === 'open').length;
   const activeContracts = missions.filter((m) => m.status === 'in_progress');
   const pendingRequests = requests.filter((r) => !r.status || r.status === 'pending');
@@ -113,7 +119,7 @@ export function MasterOverview({
           label="Missões no Mural"
           value={formatNumber(openMissions)}
           helper={`${activeContracts.length} contrato(s) em andamento`}
-          icon={Scroll}
+          icon={GiScrollUnfurled}
           accentColor="#38bdf8"
         />
         <StatCard
@@ -134,9 +140,65 @@ export function MasterOverview({
           label="Estoque da Loja"
           value={formatNumber(totalShopStock)}
           helper={`${formatNumber(totalGold)} ouro em circulação`}
-          icon={ShoppingBag}
+          icon={GiCoinsPile}
           accentColor="#34d399"
         />
+      </section>
+
+      {/* Atalhos Rápidos da Mesa Narrativa */}
+      <section aria-label="Ações rápidas da sessão" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          {
+            label: 'Abrir Mesa Tática',
+            desc: 'Mapas, clima, tochas e combate',
+            Icon: GiTreasureMap,
+            color: '#38bdf8',
+            onClick: () => onNavigate('maps'),
+          },
+          {
+            label: 'Projetar Handout',
+            desc: 'Cartas, retratos e mapas em tela cheia',
+            Icon: GiScrollUnfurled,
+            color: '#fbbf24',
+            onClick: () => tabletopSession?.openStudio('handouts'),
+          },
+          {
+            label: 'Sussurro Privado',
+            desc: 'Pista secreta para 1 jogador',
+            Icon: GiHoodedFigure,
+            color: '#a78bfa',
+            onClick: () => tabletopSession?.openStudio('whispers'),
+          },
+          {
+            label: 'Gerar Baú de Loot',
+            desc: 'Saque aleatório com IA por raridade',
+            Icon: GiOpenTreasureChest,
+            color: '#34d399',
+            onClick: () => tabletopSession?.openStudio('loot'),
+          },
+        ].map(({ label, desc, Icon, color, onClick }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={onClick}
+            className="group p-3.5 rounded-2xl surface-card surface-card-interactive hover:-translate-y-0.5 text-left flex items-center gap-3 transition-all"
+          >
+            <span
+              className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border transition-transform duration-200 group-hover:scale-105"
+              style={{
+                backgroundColor: `${color}18`,
+                borderColor: `${color}38`,
+                color,
+              }}
+            >
+              <Icon className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs sm:text-sm font-bold text-white truncate">{label}</span>
+              <span className="block text-[11px] text-slate-400 truncate mt-0.5">{desc}</span>
+            </span>
+          </button>
+        ))}
       </section>
 
       {/* Analytics Charts */}
@@ -209,7 +271,7 @@ export function MasterOverview({
           <CardContent className="space-y-3">
             {activeContracts.length === 0 ? (
               <EmptyState
-                icon={Scroll}
+                icon={GiScrollUnfurled}
                 title="Nenhum contrato ativo"
                 description="Quando um jogador aceitar uma missão do mural, ela aparecerá aqui para validação."
               />

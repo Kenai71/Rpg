@@ -29,6 +29,8 @@ const TabletopMusicContext = createContext(null);
 
 const VOLUME_STORAGE_KEY = 'vallen_rpg_music_volume';
 const MUTED_STORAGE_KEY = 'vallen_rpg_music_muted';
+const SFX_VOLUME_STORAGE_KEY = 'vallen_rpg_sfx_volume';
+const SFX_MUTED_STORAGE_KEY = 'vallen_rpg_sfx_muted';
 
 // Carregador singleton da YouTube IFrame Player API
 let ytApiPromise = null;
@@ -104,11 +106,16 @@ export function TabletopMusicProvider({
   const audioStateRef = useRef(audioState);
   audioStateRef.current = audioState;
 
-  // Preferências locais de volume de cada usuário (persiste em localStorage)
+  // Preferências locais independentes de Música e Efeitos Sonoros (persistem em localStorage)
   const [volume, setVolumeState] = useState(0.65);
   const [isMuted, setIsMutedState] = useState(false);
   const volumeRef = useRef(0.65);
   const isMutedRef = useRef(false);
+
+  const [sfxVolume, setSfxVolumeState] = useState(0.8);
+  const [sfxMuted, setSfxMutedState] = useState(false);
+  const sfxVolumeRef = useRef(0.8);
+  const sfxMutedRef = useRef(false);
 
   // Estado local do player em tempo real
   const [currentTime, setCurrentTime] = useState(0);
@@ -136,7 +143,7 @@ export function TabletopMusicProvider({
   const isMasterRef = useRef(isMaster);
   isMasterRef.current = isMaster;
 
-  // Carrega volume salvo do localStorage
+  // Carrega volumes independentes (Música e Efeitos Sonoros) do localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
@@ -149,6 +156,16 @@ export function TabletopMusicProvider({
       if (savedMuted === 'true') {
         setIsMutedState(true);
         isMutedRef.current = true;
+      }
+      const savedSfxVol = Number(window.localStorage.getItem(SFX_VOLUME_STORAGE_KEY));
+      if (Number.isFinite(savedSfxVol) && savedSfxVol >= 0 && savedSfxVol <= 1) {
+        setSfxVolumeState(savedSfxVol);
+        sfxVolumeRef.current = savedSfxVol;
+      }
+      const savedSfxMuted = window.localStorage.getItem(SFX_MUTED_STORAGE_KEY);
+      if (savedSfxMuted === 'true') {
+        setSfxMutedState(true);
+        sfxMutedRef.current = true;
       }
     } catch {}
   }, []);
@@ -274,6 +291,36 @@ export function TabletopMusicProvider({
     } catch {}
     applyLocalVolumeToEngines(volumeRef.current, nextMuted);
   }, [applyLocalVolumeToEngines]);
+
+  // Canal independente de volume para Efeitos Sonoros (Soundboard, Sussurros, Baús)
+  const setSfxVolume = useCallback((nextVol) => {
+    const clamped = Math.max(0, Math.min(1, Math.round(Number(nextVol) * 100) / 100));
+    setSfxVolumeState(clamped);
+    sfxVolumeRef.current = clamped;
+    if (clamped > 0 && sfxMutedRef.current) {
+      setSfxMutedState(false);
+      sfxMutedRef.current = false;
+      try {
+        window.localStorage.setItem(SFX_MUTED_STORAGE_KEY, 'false');
+      } catch {}
+    }
+    try {
+      window.localStorage.setItem(SFX_VOLUME_STORAGE_KEY, String(clamped));
+    } catch {}
+  }, []);
+
+  const toggleSfxMute = useCallback(() => {
+    const nextMuted = !sfxMutedRef.current;
+    setSfxMutedState(nextMuted);
+    sfxMutedRef.current = nextMuted;
+    try {
+      window.localStorage.setItem(SFX_MUTED_STORAGE_KEY, String(nextMuted));
+    } catch {}
+  }, []);
+
+  const previewSfxVolume = useCallback(() => {
+    playSoundboardEffect('sfx_test', sfxVolumeRef.current, sfxMutedRef.current);
+  }, []);
 
   // Para todos os motores que não estão sendo usados pela faixa atual
   const stopInactiveEngines = useCallback((activeType) => {
@@ -711,7 +758,7 @@ export function TabletopMusicProvider({
           const nowSyncedMs = Date.now() + clockOffsetRef.current;
           const triggeredAtMs = Number(incomingSfx.triggeredAtMs) || nowSyncedMs;
           if (Math.abs(nowSyncedMs - triggeredAtMs) <= 15000) {
-            playSoundboardEffect(incomingSfx.sfxId, volumeRef.current, isMutedRef.current);
+            playSoundboardEffect(incomingSfx.sfxId, sfxVolumeRef.current, sfxMutedRef.current);
           }
         }
 
@@ -1223,7 +1270,7 @@ export function TabletopMusicProvider({
       const nowSyncedMs = Date.now() + clockOffsetRef.current;
       lastPlayedSfxIdRef.current = id;
       sfxInitialSeededRef.current = true;
-      playSoundboardEffect(sfxId, volumeRef.current, isMutedRef.current);
+      playSoundboardEffect(sfxId, sfxVolumeRef.current, sfxMutedRef.current);
 
       await commitMasterState(
         {
@@ -1257,10 +1304,17 @@ export function TabletopMusicProvider({
       shuffle: audioState.shuffle,
       lastSfx: audioState.lastSfx || null,
       storageMode,
+      // Canal 1: Música
       volume,
       isMuted,
       setVolume,
       toggleMute,
+      // Canal 2: Efeitos Sonoros (independente da música)
+      sfxVolume,
+      sfxMuted,
+      setSfxVolume,
+      toggleSfxMute,
+      previewSfxVolume,
       needsUnlock,
       unlockAudio,
       loadingTrack,
@@ -1299,6 +1353,11 @@ export function TabletopMusicProvider({
       isMuted,
       setVolume,
       toggleMute,
+      sfxVolume,
+      sfxMuted,
+      setSfxVolume,
+      toggleSfxMute,
+      previewSfxVolume,
       needsUnlock,
       unlockAudio,
       loadingTrack,

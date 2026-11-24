@@ -147,6 +147,8 @@ service cloud.firestore {
     //   - name_hidden: bool (optional - hides monster/NPC name from players until revealed)
     //   - monster_id: string | null (optional, 0..128 chars - Monster Manual bestiary reference)
     //   - sync_group_id: string | null (optional, 0..128 chars - links identical entities across maps for synchronized HP/vitals)
+    //   - light_radius: number | null (optional, 0..85 - per-token light radius, or null/omitted to inherit map global torch setting)
+    //   - light_color: string | null (optional, 0..32 chars - per-token light tint e.g. 'warm', 'arcane', 'holy', 'emerald', 'crimson', or null/omitted)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
     //
@@ -467,6 +469,8 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'name_hidden') &&
         isSafeOptionalString(data, 'monster_id', 0, 128) &&
         isSafeOptionalString(data, 'sync_group_id', 0, 128) &&
+        isSafeOptionalNumber(data, 'light_radius', 0, 85) &&
+        isSafeOptionalString(data, 'light_color', 0, 32) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }

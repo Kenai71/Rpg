@@ -85,10 +85,10 @@ export function TabletopSessionProvider({
   const lootSeededRef = useRef(false);
   const seenChestIdsRef = useRef(new Set());
 
-  const volumeRef = useRef(0.65);
+  const volumeRef = useRef(0.8);
   const mutedRef = useRef(false);
-  volumeRef.current = music?.volume ?? 0.65;
-  mutedRef.current = Boolean(music?.isMuted);
+  volumeRef.current = music?.sfxVolume ?? 0.8;
+  mutedRef.current = Boolean(music?.sfxMuted);
 
   // 1. Subscrição em tempo real aos Handouts
   useEffect(() => {

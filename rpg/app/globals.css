@@ -227,6 +227,52 @@ h4 {
     0 16px 36px -14px rgba(0, 0, 0, 0.72);
 }
 
+/* Sleek custom dark-glass range sliders (Atmosphere, Fog, Darkness, Individual Token Torch) */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  height: 6px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid #0b0e18;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.45), 0 2px 6px rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+input[type='range']::-webkit-slider-thumb:hover {
+  transform: scale(1.16);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.65), 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid #0b0e18;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.45), 0 2px 6px rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  transition: transform 140ms ease;
+}
+
+input[type='range']::-moz-range-track {
+  background: rgba(255, 255, 255, 0.12);
+  height: 6px;
+  border-radius: 9999px;
+}
+
 /* Clean custom scrollbars */
 ::-webkit-scrollbar {
   width: 7px;

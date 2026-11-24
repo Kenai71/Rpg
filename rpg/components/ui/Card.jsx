@@ -63,8 +63,15 @@ export function CardFooter({ className, children, ...props }) {
 
 export function StatCard({ label, value, helper, icon: Icon, accentColor }) {
   return (
-    <Card interactive className="p-5 flex items-start justify-between gap-4">
-      <div className="min-w-0 space-y-1">
+    <Card interactive className="p-5 flex items-start justify-between gap-4 relative overflow-hidden group">
+      {accentColor && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-10 -right-10 h-28 w-28 rounded-full opacity-[0.11] blur-2xl transition-opacity duration-300 group-hover:opacity-[0.18]"
+          style={{ backgroundColor: accentColor }}
+        />
+      )}
+      <div className="min-w-0 space-y-1 relative z-10">
         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 truncate">
           {label}
         </p>
@@ -75,9 +82,10 @@ export function StatCard({ label, value, helper, icon: Icon, accentColor }) {
       </div>
       {Icon && (
         <div
-          className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0 border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+          className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0 border border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] relative z-10 transition-transform duration-200 group-hover:scale-105"
           style={{
-            backgroundColor: accentColor ? `${accentColor}1a` : 'rgba(255, 255, 255, 0.08)',
+            backgroundColor: accentColor ? `${accentColor}1c` : 'rgba(255, 255, 255, 0.08)',
+            borderColor: accentColor ? `${accentColor}38` : 'rgba(255, 255, 255, 0.12)',
             color: accentColor || '#cbd5e1',
           }}
           aria-hidden="true"
