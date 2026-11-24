@@ -368,6 +368,7 @@ export function MapAtmosphereOverlay({
   isMaster = false,
   previewAsPlayer = false,
   lightingState = null,
+  draggingTokenId = null,
   mapWidth = 1400,
   mapHeight = 900,
   onRevealForMaster,
@@ -658,6 +659,7 @@ export function MapAtmosphereOverlay({
                 <rect x="0" y="0" width={safeW} height={safeH} fill="#ffffff" />
                 {activeLights.map((src, idx) => {
                   const radiusPx = Math.max(1, Number(src.effectiveRadiusPx) || 1) * 1.12;
+                  const isLocallyDragged = Boolean(draggingTokenId && src.id === draggingTokenId);
                   return (
                     <circle
                       key={`cut-${src.id || idx}`}
@@ -665,6 +667,11 @@ export function MapAtmosphereOverlay({
                       cy={src.py}
                       r={radiusPx}
                       fill={`url(#${maskId}-cut-${idx})`}
+                      style={
+                        isLocallyDragged
+                          ? undefined
+                          : { transition: 'cx 0.11s linear, cy 0.11s linear, r 0.14s ease' }
+                      }
                     />
                   );
                 })}
@@ -691,6 +698,10 @@ export function MapAtmosphereOverlay({
               const colMeta = getTokenLightColorMeta(src.color);
               const strokeW = Math.max(1.5, baseDim * 0.0022);
               const dashLen = Math.max(6, baseDim * 0.01);
+              const isLocallyDragged = Boolean(draggingTokenId && src.id === draggingTokenId);
+              const lightGlideStyle = isLocallyDragged
+                ? undefined
+                : { transition: 'cx 0.11s linear, cy 0.11s linear, r 0.14s ease' };
 
               return (
                 <g key={`vis-${src.id || idx}`}>
@@ -699,6 +710,7 @@ export function MapAtmosphereOverlay({
                     cy={src.py}
                     r={radiusPx * 1.05}
                     fill={`url(#${maskId}-glow-${idx})`}
+                    style={lightGlideStyle}
                   />
                   {!effectivePlayerView && (
                     <circle
@@ -710,6 +722,7 @@ export function MapAtmosphereOverlay({
                       strokeWidth={strokeW}
                       strokeDasharray={src.isIndividual ? undefined : `${dashLen} ${dashLen * 0.7}`}
                       strokeOpacity={darkOpacity > 0 ? 0.72 : 0.5}
+                      style={lightGlideStyle}
                     />
                   )}
                 </g>

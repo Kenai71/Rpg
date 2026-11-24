@@ -1,13 +1,16 @@
 'use client';
 
 /**
- * Soundboard Procedural Cinematográfico de Efeitos Sonoros de RPG (Web Audio API)
+ * Soundboard Híbrido Cinematográfico de Efeitos Sonoros de RPG (Samples de Estúdio + Web Audio API)
  *
- * Motor de síntese física/acústica de alta fidelidade em tempo real:
- * - Compressor dinâmico mestre (DynamicsCompressorNode) para impacto forte sem clipping
- * - Reverbs espaciais estéreo por convolução (Catedral/Caverna e Taverna/Sala de Pedra)
- * - Ruído branco, rosa e marrom filtrados, modelagem de formantes vocais,
- *   fricção stick-slip de dobradiça, harmônicos campanológicos de bronze e panorâmica estéreo.
+ * Arquitetura de máxima fidelidade em tempo real:
+ * - 9 efeitos de estúdio reais (MP3 locais em /public/sfx/, zero CORS/404, pré-carregados em RAM e
+ *   decodificados em AudioBuffer para latência mínima): Trovão, Porta Rangendo, Espada, Rugido,
+ *   Moedas, Magia Arcana, Flecha, Explosão e Uivo Sombrio.
+ * - 3 efeitos preservados exatamente em síntese procedural acústica: Suspense/Pulso (heartbeat),
+ *   Baú/Tesouro (chest_open) e Sino da Taverna (tavern_bell), além de Sussurro e Teste.
+ * - Compressor dinâmico mestre (DynamicsCompressorNode) + Reverbs estéreo por convolução + fallback
+ *   procedural automático caso um sample não possa ser carregado.
  * - Canal de volume independente da trilha musical.
  */
 
@@ -26,9 +29,135 @@ export const SOUNDBOARD_EFFECTS = [
   { id: 'chest_open', label: 'Baú / Tesouro', shortLabel: 'Tesouro', color: '#eab308', icon: 'chest', category: 'Tesouro' },
 ];
 
+// Samples de estúdio locais (heartbeat/Pulso, chest_open/Tesouro e tavern_bell/Sino mantêm a síntese original intacta)
+const SAMPLE_SFX_PATHS = {
+  thunder: '/sfx/thunder.mp3',
+  creaky_door: '/sfx/creaky_door.mp3',
+  sword: '/sfx/sword.mp3',
+  roar: '/sfx/roar.mp3',
+  coins: '/sfx/coins.mp3',
+  magic: '/sfx/magic.mp3',
+  arrow: '/sfx/arrow.mp3',
+  explosion: '/sfx/explosion.mp3',
+  wolf_howl: '/sfx/wolf_howl.mp3',
+};
+
+// Calibração de ganho por sample para volume uniforme e impactante no Soundboard
+const SAMPLE_SFX_GAINS = {
+  thunder: 1.0,
+  creaky_door: 1.08,
+  sword: 0.94,
+  roar: 1.0,
+  coins: 1.05,
+  magic: 1.0,
+  arrow: 1.06,
+  explosion: 0.94,
+  wolf_howl: 1.02,
+};
+
 let sfxCtx = null;
 let sfxGraph = null;
 let cachedNoiseBuffers = null;
+let preloadStarted = false;
+
+const rawSampleBytesCache = new Map(); // sfxId -> ArrayBuffer
+const rawSamplePromises = new Map(); // sfxId -> Promise<ArrayBuffer | null>
+const decodedSampleCache = new Map(); // sfxId -> AudioBuffer
+const decodeSamplePromises = new Map(); // sfxId -> Promise<AudioBuffer | null>
+
+function fetchSampleBytes(sfxId) {
+  const url = SAMPLE_SFX_PATHS[sfxId];
+  if (!url || typeof window === 'undefined' || typeof fetch !== 'function') {
+    return Promise.resolve(null);
+  }
+  if (rawSampleBytesCache.has(sfxId)) {
+    return Promise.resolve(rawSampleBytesCache.get(sfxId));
+  }
+  if (rawSamplePromises.has(sfxId)) {
+    return rawSamplePromises.get(sfxId);
+  }
+
+  const promise = fetch(url, { cache: 'force-cache' })
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.arrayBuffer();
+    })
+    .then((buf) => {
+      if (buf && buf.byteLength > 256) {
+        rawSampleBytesCache.set(sfxId, buf);
+        return buf;
+      }
+      return null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      rawSamplePromises.delete(sfxId);
+    });
+
+  rawSamplePromises.set(sfxId, promise);
+  return promise;
+}
+
+/**
+ * Pré-carrega os arquivos de áudio do soundboard em memória em segundo plano
+ * (sem inicializar AudioContext antes de um gesto do usuário).
+ */
+export function preloadSoundboardSamples() {
+  if (preloadStarted || typeof window === 'undefined') return;
+  preloadStarted = true;
+  Object.keys(SAMPLE_SFX_PATHS).forEach((id) => {
+    fetchSampleBytes(id).catch(() => {});
+  });
+}
+
+function getDecodedSampleBuffer(ctx, sfxId) {
+  if (!ctx || !SAMPLE_SFX_PATHS[sfxId]) return Promise.resolve(null);
+  if (decodedSampleCache.has(sfxId)) {
+    return Promise.resolve(decodedSampleCache.get(sfxId));
+  }
+  if (decodeSamplePromises.has(sfxId)) {
+    return decodeSamplePromises.get(sfxId);
+  }
+
+  const promise = fetchSampleBytes(sfxId)
+    .then((raw) => {
+      if (!raw) return null;
+      // Copia o ArrayBuffer para evitar detachment em decodificações paralelas/Safari
+      return ctx.decodeAudioData(raw.slice(0));
+    })
+    .then((decoded) => {
+      if (decoded) {
+        decodedSampleCache.set(sfxId, decoded);
+      }
+      return decoded || null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      decodeSamplePromises.delete(sfxId);
+    });
+
+  decodeSamplePromises.set(sfxId, promise);
+  return promise;
+}
+
+function playDecodedSample(eng, buffer, sfxId, safeVol) {
+  const { ctx, compressor } = eng;
+  const now = ctx.currentTime + 0.005;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+
+  const gainNode = ctx.createGain();
+  const trim = SAMPLE_SFX_GAINS[sfxId] ?? 1.0;
+  const targetGain = Math.max(0.02, Math.min(1.25, safeVol * trim));
+
+  // Micro ramp de 4ms para evitar estalos digitais na saída
+  gainNode.gain.setValueAtTime(0.001, now);
+  gainNode.gain.linearRampToValueAtTime(targetGain, now + 0.004);
+
+  source.connect(gainNode);
+  gainNode.connect(compressor);
+  source.start(now);
+}
 
 function createStereoImpulse(ctx, durationSec, decayRate, lowpassHz = 6000) {
   const sr = ctx.sampleRate;
@@ -198,9 +327,52 @@ export function playSoundboardEffect(sfxId, volume = 0.8, muted = false) {
     const eng = getSfxAudioEngine();
     if (!eng) return false;
 
+    const safeVol = Math.max(0.05, Math.min(1, Number(volume) || 0.8));
+
+    // Para os 9 efeitos com sample real de estúdio, reproduz o AudioBuffer de alta fidelidade
+    // (Pulso/heartbeat, Tesouro/chest_open e Sino/tavern_bell permanecem 100% na síntese original)
+    if (SAMPLE_SFX_PATHS[sfxId]) {
+      const cached = decodedSampleCache.get(sfxId);
+      if (cached) {
+        if (eng.ctx.state === 'suspended') {
+          eng.ctx
+            .resume()
+            .then(() => playDecodedSample(eng, cached, sfxId, safeVol))
+            .catch(() => {});
+        } else {
+          playDecodedSample(eng, cached, sfxId, safeVol);
+        }
+        return true;
+      }
+
+      const resumePromise =
+        eng.ctx.state === 'suspended' ? eng.ctx.resume().catch(() => {}) : Promise.resolve();
+
+      Promise.all([resumePromise, getDecodedSampleBuffer(eng.ctx, sfxId)])
+        .then(([, decoded]) => {
+          if (decoded) {
+            playDecodedSample(eng, decoded, sfxId, safeVol);
+          } else {
+            playProceduralSoundboardEffect(eng, sfxId, safeVol);
+          }
+        })
+        .catch(() => {
+          playProceduralSoundboardEffect(eng, sfxId, safeVol);
+        });
+
+      return true;
+    }
+
+    return playProceduralSoundboardEffect(eng, sfxId, safeVol);
+  } catch {
+    return false;
+  }
+}
+
+function playProceduralSoundboardEffect(eng, sfxId, safeVol) {
+  try {
     const { ctx, compressor, hallSend, roomSend, noise } = eng;
     const now = ctx.currentTime + 0.01;
-    const safeVol = Math.max(0.05, Math.min(1, Number(volume) || 0.8));
 
     // Bus dedicado da instância para mixagem Dry + Reverb com controle limpo de ganho
     const dryBus = ctx.createGain();

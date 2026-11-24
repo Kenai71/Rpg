@@ -15,7 +15,7 @@ import {
   RpgSynthEngine,
   extractYouTubeVideoId,
 } from '../../lib/rpg-music-synth';
-import { playSoundboardEffect } from '../../lib/rpg-soundboard';
+import { playSoundboardEffect, preloadSoundboardSamples } from '../../lib/rpg-soundboard';
 import {
   deleteTableAudioTrackChunks,
   loadTableAudioTrackUrl,
@@ -321,6 +321,15 @@ export function TabletopMusicProvider({
   const previewSfxVolume = useCallback(() => {
     playSoundboardEffect('sfx_test', sfxVolumeRef.current, sfxMutedRef.current);
   }, []);
+
+  // Pré-carrega os 9 samples de estúdio do Soundboard em RAM após a montagem para latência zero
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const timer = setTimeout(() => {
+      preloadSoundboardSamples();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [enabled]);
 
   // Para todos os motores que não estão sendo usados pela faixa atual
   const stopInactiveEngines = useCallback((activeType) => {

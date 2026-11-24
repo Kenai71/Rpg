@@ -758,6 +758,60 @@ export function TacticalMapCanvas({
     }
   }, [tokens, localDraggingId]);
 
+  // Detecta tokens movidos ao vivo por outros jogadores/Mestre para exibir halo suave de movimento em tempo real
+  const [remoteMovingTokens, setRemoteMovingTokens] = useState({});
+  const prevRemotePosRef = useRef(new Map());
+  const remoteMoveTimersRef = useRef(new Map());
+
+  useEffect(() => {
+    const prevMap = prevRemotePosRef.current;
+    const activeIds = new Set();
+
+    tokens.forEach((t) => {
+      activeIds.add(t.id);
+      const nx = Number(t.x);
+      const ny = Number(t.y);
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
+
+      const prev = prevMap.get(t.id);
+      if (
+        prev &&
+        localDraggingId !== t.id &&
+        (Math.abs(nx - prev.x) >= 0.05 || Math.abs(ny - prev.y) >= 0.05)
+      ) {
+        setRemoteMovingTokens((cur) => (cur[t.id] ? cur : { ...cur, [t.id]: true }));
+        const existingTimer = remoteMoveTimersRef.current.get(t.id);
+        if (existingTimer) clearTimeout(existingTimer);
+        const timer = setTimeout(() => {
+          remoteMoveTimersRef.current.delete(t.id);
+          setRemoteMovingTokens((cur) => {
+            if (!cur[t.id]) return cur;
+            const next = { ...cur };
+            delete next[t.id];
+            return next;
+          });
+        }, 420);
+        remoteMoveTimersRef.current.set(t.id, timer);
+      }
+      prevMap.set(t.id, { x: nx, y: ny });
+    });
+
+    for (const id of Array.from(prevMap.keys())) {
+      if (!activeIds.has(id)) prevMap.delete(id);
+    }
+  }, [tokens, localDraggingId]);
+
+  useEffect(() => {
+    const timersMap = remoteMoveTimersRef.current;
+    return () => {
+      if (draggingTokenRef.current?.trailingTimer) {
+        clearTimeout(draggingTokenRef.current.trailingTimer);
+      }
+      timersMap.forEach((timer) => clearTimeout(timer));
+      timersMap.clear();
+    };
+  }, []);
+
   // Controle de Zoom (suporta escalas exatas de imagens pequenas até mapas 4K/8K)
   const handleZoomIn = () => {
     const { min, max } = zoomBoundsRef.current;
@@ -900,6 +954,74 @@ export function TacticalMapCanvas({
     [activeTool, isMaster, currentUserId]
   );
 
+  // Transmissão contínua ao vivo da posição do token enquanto o usuário segura e arrasta (sem precisar soltar o mouse)
+  const LIVE_DRAG_INTERVAL_MS = 85;
+  const LIVE_DRAG_MIN_DELTA_PCT = 0.08;
+
+  const flushLiveTokenDrag = useCallback(
+    (dragState) => {
+      if (!dragState || dragState.cancelled || !onUpdateTokenPosition) return;
+
+      const dx = Math.abs(dragState.latestX - dragState.lastSentX);
+      const dy = Math.abs(dragState.latestY - dragState.lastSentY);
+      if (dx < LIVE_DRAG_MIN_DELTA_PCT && dy < LIVE_DRAG_MIN_DELTA_PCT) return;
+
+      if (dragState.inFlight) {
+        if (!dragState.trailingTimer) {
+          dragState.trailingTimer = setTimeout(() => {
+            dragState.trailingTimer = null;
+            flushLiveTokenDrag(dragState);
+          }, LIVE_DRAG_INTERVAL_MS);
+        }
+        return;
+      }
+
+      const nowMs = Date.now();
+      const elapsed = nowMs - dragState.lastSentAt;
+      if (dragState.lastSentAt > 0 && elapsed < LIVE_DRAG_INTERVAL_MS) {
+        if (!dragState.trailingTimer) {
+          dragState.trailingTimer = setTimeout(() => {
+            dragState.trailingTimer = null;
+            flushLiveTokenDrag(dragState);
+          }, LIVE_DRAG_INTERVAL_MS - elapsed);
+        }
+        return;
+      }
+
+      if (dragState.trailingTimer) {
+        clearTimeout(dragState.trailingTimer);
+        dragState.trailingTimer = null;
+      }
+
+      const sendX = dragState.latestX;
+      const sendY = dragState.latestY;
+      dragState.inFlight = true;
+      dragState.lastSentAt = nowMs;
+      dragState.lastSentX = sendX;
+      dragState.lastSentY = sendY;
+
+      Promise.resolve(
+        onUpdateTokenPosition(dragState.tokenId, {
+          x: sendX,
+          y: sendY,
+        })
+      )
+        .catch(() => {})
+        .finally(() => {
+          dragState.inFlight = false;
+          if (
+            !dragState.cancelled &&
+            draggingTokenRef.current === dragState &&
+            (Math.abs(dragState.latestX - dragState.lastSentX) >= LIVE_DRAG_MIN_DELTA_PCT ||
+              Math.abs(dragState.latestY - dragState.lastSentY) >= LIVE_DRAG_MIN_DELTA_PCT)
+          ) {
+            flushLiveTokenDrag(dragState);
+          }
+        });
+    },
+    [onUpdateTokenPosition]
+  );
+
   const handleTokenPointerDown = (token, e) => {
     // Proteção absoluta: em modo Régua ou Ping, nunca move nem captura o token
     if (activeTool !== 'select') return;
@@ -923,6 +1045,10 @@ export function TacticalMapCanvas({
     const grabOffsetX = clickPctX - curX;
     const grabOffsetY = clickPctY - curY;
 
+    if (draggingTokenRef.current?.trailingTimer) {
+      clearTimeout(draggingTokenRef.current.trailingTimer);
+    }
+
     draggingTokenRef.current = {
       tokenId: token.id,
       grabOffsetX,
@@ -930,21 +1056,30 @@ export function TacticalMapCanvas({
       startX: e.clientX,
       startY: e.clientY,
       hasMoved: false,
+      latestX: curX,
+      latestY: curY,
+      lastSentX: curX,
+      lastSentY: curY,
+      lastSentAt: 0,
+      inFlight: false,
+      trailingTimer: null,
+      cancelled: false,
     };
     setLocalDraggingId(token.id);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
   const handleTokenPointerMove = (token, e) => {
-    if (!draggingTokenRef.current || draggingTokenRef.current.tokenId !== token.id) return;
+    const dragState = draggingTokenRef.current;
+    if (!dragState || dragState.tokenId !== token.id) return;
     e.stopPropagation();
 
     const rect = mapImageRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
-    const { grabOffsetX, grabOffsetY, startX, startY } = draggingTokenRef.current;
+    const { grabOffsetX, grabOffsetY, startX, startY } = dragState;
     if (Math.abs(e.clientX - startX) > 2 || Math.abs(e.clientY - startY) > 2) {
-      draggingTokenRef.current.hasMoved = true;
+      dragState.hasMoved = true;
     }
 
     // Posição atual do cursor em % real do mapa neste frame
@@ -967,26 +1102,48 @@ export function TacticalMapCanvas({
     newPctX = Math.max(0, Math.min(100, Math.round(newPctX * 10000) / 10000));
     newPctY = Math.max(0, Math.min(100, Math.round(newPctY * 10000) / 10000));
 
+    dragState.latestX = newPctX;
+    dragState.latestY = newPctY;
+
     setLocalTokenPositions((prev) => ({
       ...prev,
       [token.id]: { x: newPctX, y: newPctY },
     }));
+
+    // Assim que começar a arrastar (mesmo sem soltar o mouse), transmite ao vivo para todos na mesa!
+    if (dragState.hasMoved) {
+      flushLiveTokenDrag(dragState);
+    }
   };
 
   const handleTokenPointerUp = async (token, e) => {
-    if (!draggingTokenRef.current || draggingTokenRef.current.tokenId !== token.id) return;
+    const dragState = draggingTokenRef.current;
+    if (!dragState || dragState.tokenId !== token.id) return;
     e.stopPropagation();
 
-    const hasMoved = draggingTokenRef.current.hasMoved;
+    const hasMoved = dragState.hasMoved;
+    if (dragState.trailingTimer) {
+      clearTimeout(dragState.trailingTimer);
+      dragState.trailingTimer = null;
+    }
+    dragState.cancelled = true;
 
     try {
       e.currentTarget.releasePointerCapture?.(e.pointerId);
     } catch {}
 
-    const finalPos = localTokenPositions[token.id];
+    const finalPos = {
+      x: dragState.latestX,
+      y: dragState.latestY,
+    };
+    const needsFinalSync =
+      Math.abs(finalPos.x - dragState.lastSentX) > 0.0001 ||
+      Math.abs(finalPos.y - dragState.lastSentY) > 0.0001 ||
+      dragState.inFlight ||
+      dragState.lastSentAt === 0;
     draggingTokenRef.current = null;
 
-    if (hasMoved && finalPos && onUpdateTokenPosition) {
+    if (hasMoved && onUpdateTokenPosition) {
       justDraggedRef.current = true;
       setTimeout(() => {
         justDraggedRef.current = false;
@@ -996,10 +1153,12 @@ export function TacticalMapCanvas({
       const exactY = Math.max(0, Math.min(100, Math.round(Number(finalPos.y) * 10000) / 10000));
 
       try {
-        await onUpdateTokenPosition(token.id, {
-          x: exactX,
-          y: exactY,
-        });
+        if (needsFinalSync) {
+          await onUpdateTokenPosition(token.id, {
+            x: exactX,
+            y: exactY,
+          });
+        }
       } catch (err) {
         toast.error('Erro ao sincronizar movimento do token.');
       } finally {
@@ -2767,6 +2926,8 @@ export function TacticalMapCanvas({
               Math.min(100, Math.round(((token.hp || 0) / (token.max_hp || 1)) * 100))
             );
 
+            const isRemoteMoving = Boolean(remoteMovingTokens[token.id]) && localDraggingId !== token.id;
+
             return (
               <div
                 key={token.id}
@@ -2774,6 +2935,7 @@ export function TacticalMapCanvas({
                 onPointerDown={(e) => handleTokenPointerDown(token, e)}
                 onPointerMove={(e) => handleTokenPointerMove(token, e)}
                 onPointerUp={(e) => handleTokenPointerUp(token, e)}
+                onPointerCancel={(e) => handleTokenPointerUp(token, e)}
                 onClick={(e) => handleTokenClick(token, e)}
                 style={{
                   left: `${pos.x}%`,
@@ -2784,7 +2946,7 @@ export function TacticalMapCanvas({
                   transition:
                     localDraggingId === token.id
                       ? 'opacity 0.2s ease'
-                      : 'left 0.2s cubic-bezier(0.2, 0, 0, 1), top 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease',
+                      : 'left 0.11s linear, top 0.11s linear, opacity 0.22s ease',
                 }}
                 className={cn(
                   'absolute -translate-x-1/2 -translate-y-1/2 select-none group',
@@ -2796,6 +2958,16 @@ export function TacticalMapCanvas({
                     : 'cursor-pointer'
                 )}
               >
+                {/* Halo visual suave indicando movimentação ao vivo de outro participante */}
+                {isRemoteMoving && (
+                  <div
+                    className="absolute -inset-1.5 rounded-full border-2 pointer-events-none animate-pulse"
+                    style={{
+                      borderColor: `${ringColor}cc`,
+                      boxShadow: `0 0 18px ${ringColor}88`,
+                    }}
+                  />
+                )}
                 {/* Condições de Status Ativas com Ícones (escaladas proporcionalmente à resolução exata do mapa) */}
                 {Array.isArray(token.conditions) && token.conditions.length > 0 && (
                   <div
@@ -2948,6 +3120,7 @@ export function TacticalMapCanvas({
             isMaster={isMaster}
             previewAsPlayer={previewEffectsAsPlayer}
             lightingState={lightingState}
+            draggingTokenId={localDraggingId}
             mapWidth={mapDisplaySize.width}
             mapHeight={mapDisplaySize.height}
             onRevealForMaster={() => commitMapEffects({ ...localEffects, blackout: false })}
