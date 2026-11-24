@@ -254,22 +254,9 @@ export function TacticalMapCanvas({
   const [resolvedImageUrl, setResolvedImageUrl] = useState(map?.imageUrl || '');
   const [loadingHd, setLoadingHd] = useState(false);
   const [imageStatus, setImageStatus] = useState('loading'); // 'loading' | 'loaded' | 'error'
-  const zoomBoundsRef = useRef({ min: 0.1, max: 4.5 });
+  const zoomBoundsRef = useRef({ min: 0.1, max: 6.0 });
 
-  // Sincroniza configurações de grade ao trocar de mapa
-  useEffect(() => {
-    setShowGrid(map?.gridType !== 'none');
-    setGridOpacity(map?.gridOpacity ?? 0.25);
-    if (map?.autoGrid) {
-      setGridSize(computeAutoGridSize(naturalDimensions.width, naturalDimensions.height));
-    } else if (Number.isFinite(Number(map?.gridSize)) && Number(map?.gridSize) >= 10) {
-      setGridSize(Number(map.gridSize));
-    } else {
-      setGridSize(computeAutoGridSize(naturalDimensions.width, naturalDimensions.height));
-    }
-  }, [map?.id, map?.gridType, map?.gridSize, map?.gridOpacity, map?.autoGrid, naturalDimensions.width, naturalDimensions.height]);
-
-  // Carrega imagem do mapa preservando dimensões exatas em pixels (com upgrade automático de chunks HD)
+  // Carrega imagem do mapa preservando proporção exata (com upgrade progressivo para chunks HD sem salto de layout)
   useEffect(() => {
     let cancelled = false;
     const baseUrl = map?.imageUrl || '';
@@ -300,11 +287,12 @@ export function TacticalMapCanvas({
 
     const probeUrl = (url, allowDimUpdate) => {
       const probe = new Image();
+      probe.decoding = 'async';
       probe.onload = () => {
         if (cancelled) return;
         const w = probe.naturalWidth || 1400;
         const h = probe.naturalHeight || 900;
-        if (allowDimUpdate || !hasSavedDims) {
+        if (allowDimUpdate && !hasSavedDims) {
           setNaturalDimensions({ width: w, height: h });
         }
         setImageStatus('loaded');
@@ -330,7 +318,7 @@ export function TacticalMapCanvas({
           if (cancelled) return;
           if (hdUrl && hdUrl !== baseUrl) {
             setResolvedImageUrl(hdUrl);
-            probeUrl(hdUrl, true);
+            probeUrl(hdUrl, !hasSavedDims);
           }
         })
         .catch(() => {})
@@ -344,37 +332,59 @@ export function TacticalMapCanvas({
     };
   }, [map?.id, map?.imageUrl, map?.hd_chunk_count, map?.hd_mime_type, map?.naturalWidth, map?.naturalHeight]);
 
-  // Dimensões EXATAS em pixels reais da imagem (sem redução artificial para 1400px e sem distorcer proporções extremas)
+  // Palco lógico GPU-safe (até 4096px no maior lado) preservando 100% da proporção exata (0% achatamento).
+  // Em mapas imensos (ex: 8K/12K/16K), o <img> interno mantém a textura Ultra HD supersampled para zoom nítido sem estourar VRAM!
   const mapDisplaySize = useMemo(() => {
-    const w = Math.max(32, Math.round(Number(naturalDimensions.width) || 1400));
-    const h = Math.max(32, Math.round(Number(naturalDimensions.height) || 900));
-    return { width: w, height: h };
+    const rawW = Math.max(32, Math.round(Number(naturalDimensions.width) || 1400));
+    const rawH = Math.max(32, Math.round(Number(naturalDimensions.height) || 900));
+    const MAX_STAGE_SIDE = 4096;
+    if (rawW <= MAX_STAGE_SIDE && rawH <= MAX_STAGE_SIDE) {
+      return { width: rawW, height: rawH };
+    }
+    const ratio = Math.min(MAX_STAGE_SIDE / rawW, MAX_STAGE_SIDE / rawH);
+    return {
+      width: Math.max(32, Math.round(rawW * ratio)),
+      height: Math.max(32, Math.round(rawH * ratio)),
+    };
   }, [naturalDimensions]);
 
-  // Fator proporcional para manter tokens, rótulos, pings e régua nítidos e proporcionais em mapas de qualquer resolução (600px a 8K)
+  // Sincroniza configurações de grade ao trocar de mapa calibradas ao palco lógico GPU-safe
+  useEffect(() => {
+    setShowGrid(map?.gridType !== 'none');
+    setGridOpacity(map?.gridOpacity ?? 0.25);
+    if (map?.autoGrid) {
+      setGridSize(computeAutoGridSize(mapDisplaySize.width, mapDisplaySize.height));
+    } else if (Number.isFinite(Number(map?.gridSize)) && Number(map?.gridSize) >= 10) {
+      setGridSize(Number(map.gridSize));
+    } else {
+      setGridSize(computeAutoGridSize(mapDisplaySize.width, mapDisplaySize.height));
+    }
+  }, [map?.id, map?.gridType, map?.gridSize, map?.gridOpacity, map?.autoGrid, mapDisplaySize.width, mapDisplaySize.height]);
+
+  // Fator proporcional para manter tokens, rótulos, pings e régua nítidos e proporcionais em mapas de qualquer resolução (600px a 20K+)
   const mapScaleFactor = useMemo(() => {
     const w = mapDisplaySize.width || 1400;
     const h = mapDisplaySize.height || 900;
     const ratio = w / Math.max(1, h);
     const refFactor = ratio < 0.75 ? h / 1200 : w / 1400;
-    return Math.max(0.55, Math.min(4.0, Math.round(refFactor * 1000) / 1000));
+    return Math.max(0.55, Math.min(3.5, Math.round(refFactor * 1000) / 1000));
   }, [mapDisplaySize]);
 
-  // Calcula limites de zoom dinâmicos compatíveis com resoluções exatas (ex: 4K/8K em telas menores)
+  // Calcula limites de zoom dinâmicos compatíveis com mapas pequenos, 4K e mapas colossais (permite zoom profundo nos detalhes)
   const computeFitAndBounds = useCallback(() => {
     const container = containerRef.current;
     if (!container || !mapDisplaySize.width || !mapDisplaySize.height) {
-      return { fitScale: 1.0, minZoom: 0.1, maxZoom: 4.5 };
+      return { fitScale: 1.0, minZoom: 0.1, maxZoom: 6.0 };
     }
     const cWidth = Math.max(240, container.clientWidth - 24);
     const cHeight = Math.max(200, container.clientHeight - 24);
     const scaleW = cWidth / mapDisplaySize.width;
     const scaleH = cHeight / mapDisplaySize.height;
     const rawFit = Math.min(scaleW, scaleH);
-    const minZoom = Math.min(0.25, Math.max(0.04, Math.round(rawFit * 0.6 * 1000) / 1000));
+    const minZoom = Math.min(0.25, Math.max(0.05, Math.round(rawFit * 0.6 * 1000) / 1000));
     const maxZoom = Math.max(
-      4.0,
-      Math.min(8.0, Math.round(Math.max(1, 2400 / Math.max(mapDisplaySize.width, mapDisplaySize.height)) * 3.5 * 10) / 10)
+      5.5,
+      Math.min(10.0, Math.round(Math.max(1.5, rawFit * 10) * 10) / 10)
     );
     const fitScale = Math.max(minZoom, Math.min(maxZoom, Math.round(rawFit * 1000) / 1000));
     zoomBoundsRef.current = { min: minZoom, max: maxZoom };
@@ -2760,7 +2770,12 @@ export function TacticalMapCanvas({
                   onLoad={(e) => {
                     const nw = e.currentTarget?.naturalWidth;
                     const nh = e.currentTarget?.naturalHeight;
-                    if (nw > 0 && nh > 0 && (!map?.hd_chunk_count || (resolvedImageUrl && resolvedImageUrl !== map.imageUrl))) {
+                    const hasSaved =
+                      Number.isFinite(Number(map?.naturalWidth)) &&
+                      Number(map?.naturalWidth) > 0 &&
+                      Number.isFinite(Number(map?.naturalHeight)) &&
+                      Number(map?.naturalHeight) > 0;
+                    if (!hasSaved && nw > 0 && nh > 0) {
                       setNaturalDimensions((prev) =>
                         prev.width === nw && prev.height === nh ? prev : { width: nw, height: nh }
                       );

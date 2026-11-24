@@ -1042,10 +1042,11 @@ export async function persistGeneratedDailyContent({ missions = [], shop_items =
 // SERVIÇOS DE MAPAS TÁTICOS E MESA VTT (D&D 5.5e / 5e)
 // =========================================================================
 
-const HD_MAP_CHUNK_SIZE = 720000;
-const HD_MAP_MAX_CHUNKS = 16;
+const HD_MAP_CHUNK_SIZE = 740000; // Múltiplo exato de 4 (decodificação base64 bloco a bloco sem concatenar string gigante)
+const HD_MAP_MAX_CHUNKS = 30; // Até ~16,6 MB binários (~22,2 MB base64), seguro dentro do limite de 32 chunks das regras Firestore
 const SINGLE_DOC_IMAGE_LIMIT = 885000;
 const mapHdUrlCache = new Map();
+const mapHdLoadingPromises = new Map();
 
 export function computeAutoGridSize(width, height) {
   const w = Number(width) || 1400;
@@ -1065,24 +1066,77 @@ function parseDataUrlParts(dataUrl) {
   return { mime, isBase64, body };
 }
 
-function base64ToBlobUrl(base64Str, mimeType = 'image/webp') {
+function blobToBase64Parts(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseDataUrlParts(reader.result);
+      if (parsed && parsed.isBase64 && parsed.body.length > 0) {
+        resolve({ mime: blob.type || parsed.mime || 'image/webp', body: parsed.body });
+      } else {
+        reject(new Error('Falha ao preparar blocos HD da imagem.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Erro ao ler dados HD da imagem.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function decodeBase64ChunksToBlobUrl(chunkStrings, mimeType = 'image/webp') {
   if (typeof window === 'undefined' || typeof atob === 'undefined') {
-    return `data:${mimeType};base64,${base64Str}`;
+    return `data:${mimeType};base64,${chunkStrings.join('')}`;
   }
-  const binary = atob(base64Str);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+
+  const byteParts = [];
+  let carry = '';
+
+  for (let c = 0; c < chunkStrings.length; c += 1) {
+    const combined = carry + chunkStrings[c];
+    const isLast = c === chunkStrings.length - 1;
+    const usableLen = isLast ? combined.length : combined.length - (combined.length % 4);
+    const slice = combined.slice(0, usableLen);
+    carry = isLast ? '' : combined.slice(usableLen);
+
+    if (slice.length > 0) {
+      const binary = atob(slice);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      byteParts.push(bytes);
+    }
   }
-  const blob = new Blob([bytes], { type: mimeType });
+
+  const blob = new Blob(byteParts, { type: mimeType });
   return URL.createObjectURL(blob);
+}
+
+async function writeChunkWithRetry(chunkRef, payload, maxAttempts = 3) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await setDoc(chunkRef, payload);
+      return;
+    } catch (err) {
+      lastErr = err;
+      // Erro de permissão não adianta repetir — dispara fallback imediatamente
+      if (err?.code === 'permission-denied') {
+        throw err;
+      }
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 350 * Math.pow(2, attempt - 1)));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
  * Carrega a imagem em resolução máxima (HD) de um mapa, reassemblando os chunks
  * da subcoleção `maps/{mapId}/image_chunks` quando o mapa excede 1 MiB.
- * Mantém cache em memória (Blob URL) para trocas instantâneas sem releitura.
+ * Mantém cache em memória (Blob URL), desduplica carregamentos simultâneos e
+ * decodifica bloco-a-bloco para baixo consumo de RAM mesmo em mapas de 15+ MB.
  */
 export async function loadMapHdImageUrl(map) {
   if (!map) return null;
@@ -1094,36 +1148,55 @@ export async function loadMapHdImageUrl(map) {
   if (mapHdUrlCache.has(cacheKey)) {
     return mapHdUrlCache.get(cacheKey);
   }
-
-  try {
-    const firestore = requireDb();
-    const chunksSnap = await getDocs(collection(firestore, 'maps', map.id, 'image_chunks'));
-    if (chunksSnap.empty) return fallback;
-
-    const ordered = chunksSnap.docs
-      .map((d) => d.data())
-      .filter((d) => typeof d?.data === 'string' && d.data.length > 0)
-      .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
-
-    if (ordered.length === 0) return fallback;
-
-    const fullBody = ordered.map((c) => c.data).join('');
-    const mime = map.hd_mime_type || 'image/webp';
-    const resolvedUrl = fullBody.startsWith('data:')
-      ? fullBody
-      : base64ToBlobUrl(fullBody, mime);
-
-    mapHdUrlCache.set(cacheKey, resolvedUrl);
-    return resolvedUrl;
-  } catch (err) {
-    console.warn('Usando imagem base do mapa (chunks HD indisponíveis):', err?.message || err);
-    return fallback;
+  if (mapHdLoadingPromises.has(cacheKey)) {
+    return mapHdLoadingPromises.get(cacheKey);
   }
+
+  const loadPromise = (async () => {
+    try {
+      const firestore = requireDb();
+      const chunksSnap = await getDocs(collection(firestore, 'maps', map.id, 'image_chunks'));
+      if (chunksSnap.empty) return fallback;
+
+      const ordered = chunksSnap.docs
+        .map((d) => d.data())
+        .filter((d) => typeof d?.data === 'string' && d.data.length > 0)
+        .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+
+      if (ordered.length < chunkCount) {
+        console.warn(
+          `Mapa ${map.id} possui chunks HD incompletos (${ordered.length}/${chunkCount}); mantendo imagem base.`
+        );
+        return fallback;
+      }
+
+      const mime = map.hd_mime_type || 'image/webp';
+      const firstData = ordered[0]?.data || '';
+      const resolvedUrl = firstData.startsWith('data:')
+        ? ordered.map((c) => c.data).join('')
+        : decodeBase64ChunksToBlobUrl(
+            ordered.map((c) => c.data),
+            mime
+          );
+
+      mapHdUrlCache.set(cacheKey, resolvedUrl);
+      return resolvedUrl;
+    } catch (err) {
+      console.warn('Usando imagem base do mapa (chunks HD indisponíveis):', err?.message || err);
+      return fallback;
+    } finally {
+      mapHdLoadingPromises.delete(cacheKey);
+    }
+  })();
+
+  mapHdLoadingPromises.set(cacheKey, loadPromise);
+  return loadPromise;
 }
 
 export async function createMap({
   title,
   imageUrl,
+  hdBlob = null,
   hdDataUrl = null,
   fallbackImageUrl = null,
   naturalWidth = null,
@@ -1135,20 +1208,37 @@ export async function createMap({
   scale = 1.0,
   is_active = false,
   is_locked = false,
+  onProgress = null,
 }) {
+  const report = (percent, label) => {
+    if (typeof onProgress === 'function') {
+      onProgress({ percent: Math.max(0, Math.min(100, Math.round(percent))), label });
+    }
+  };
+
   const firestore = requireDb();
   const mapsRef = collection(firestore, 'maps');
   const mapRef = doc(mapsRef);
   const cleanTitle = String(title || 'Mapa Sem Nome').trim().slice(0, 150);
 
-  const safeNaturalW =
+  // Preserva a proporção EXATA mesmo se a imagem original exceder 32768px em algum eixo
+  let safeNaturalW =
     Number.isFinite(Number(naturalWidth)) && Number(naturalWidth) >= 1
-      ? Math.min(32768, Math.round(Number(naturalWidth)))
+      ? Math.round(Number(naturalWidth))
       : null;
-  const safeNaturalH =
+  let safeNaturalH =
     Number.isFinite(Number(naturalHeight)) && Number(naturalHeight) >= 1
-      ? Math.min(32768, Math.round(Number(naturalHeight)))
+      ? Math.round(Number(naturalHeight))
       : null;
+
+  if (safeNaturalW && safeNaturalH && (safeNaturalW > 32768 || safeNaturalH > 32768)) {
+    const r = Math.min(32768 / safeNaturalW, 32768 / safeNaturalH);
+    safeNaturalW = Math.max(1, Math.round(safeNaturalW * r));
+    safeNaturalH = Math.max(1, Math.round(safeNaturalH * r));
+  } else {
+    if (safeNaturalW) safeNaturalW = Math.min(32768, safeNaturalW);
+    if (safeNaturalH) safeNaturalH = Math.min(32768, safeNaturalH);
+  }
 
   const resolvedGridSize =
     Number.isFinite(Number(gridSize)) && Number(gridSize) >= 10
@@ -1159,56 +1249,85 @@ export async function createMap({
   let hdChunkCount = 0;
   let hdMimeType = null;
 
-  // Se houver versão HD maior que 1 documento Firestore, grava chunks na subcoleção dedicada
-  // com fallback transparente e sem erro para single-doc de alta qualidade caso as regras ainda não tenham sido publicadas.
-  if (typeof hdDataUrl === 'string' && hdDataUrl.length > SINGLE_DOC_IMAGE_LIMIT) {
+  // Resolve payload HD a partir de hdBlob (preferido, menor uso de RAM) ou hdDataUrl legado
+  let hdParts = null;
+  if (hdBlob && typeof Blob !== 'undefined' && hdBlob instanceof Blob && hdBlob.size > 0) {
+    report(6, 'Preparando blocos Ultra HD...');
+    hdParts = await blobToBase64Parts(hdBlob);
+  } else if (typeof hdDataUrl === 'string' && hdDataUrl.length > SINGLE_DOC_IMAGE_LIMIT) {
     const parsed = parseDataUrlParts(hdDataUrl);
     if (parsed && parsed.isBase64 && parsed.body.length > 0) {
-      const totalChunks = Math.ceil(parsed.body.length / HD_MAP_CHUNK_SIZE);
-      if (totalChunks >= 1 && totalChunks <= HD_MAP_MAX_CHUNKS) {
-        const chunks = [];
-        for (let i = 0; i < totalChunks; i += 1) {
-          chunks.push({
-            index: i,
-            data: parsed.body.slice(i * HD_MAP_CHUNK_SIZE, (i + 1) * HD_MAP_CHUNK_SIZE),
-          });
+      hdParts = { mime: parsed.mime, body: parsed.body };
+    }
+  }
+
+  // Se houver versão HD maior que 1 documento Firestore, grava chunks com retry automático e progresso ao vivo
+  if (hdParts && hdParts.body.length > SINGLE_DOC_IMAGE_LIMIT) {
+    const totalChunks = Math.ceil(hdParts.body.length / HD_MAP_CHUNK_SIZE);
+    if (totalChunks >= 1 && totalChunks <= HD_MAP_MAX_CHUNKS) {
+      const chunks = [];
+      for (let i = 0; i < totalChunks; i += 1) {
+        chunks.push({
+          index: i,
+          data: hdParts.body.slice(i * HD_MAP_CHUNK_SIZE, (i + 1) * HD_MAP_CHUNK_SIZE),
+        });
+      }
+
+      const uploadedChunkRefs = [];
+      try {
+        let completed = 0;
+        // Lotes de 2 chunks em paralelo (estável em conexões lentas e seguro contra limite de 10 MiB/req)
+        for (let i = 0; i < chunks.length; i += 2) {
+          const slice = chunks.slice(i, i + 2);
+          await Promise.all(
+            slice.map(async (chunk) => {
+              const chunkRef = doc(firestore, 'maps', mapRef.id, 'image_chunks', String(chunk.index));
+              await writeChunkWithRetry(chunkRef, {
+                map_id: mapRef.id,
+                index: chunk.index,
+                data: chunk.data,
+                createdAt: serverTimestamp(),
+              });
+              uploadedChunkRefs.push(chunkRef);
+              completed += 1;
+              const pct = 10 + Math.round((completed / chunks.length) * 80);
+              report(pct, `Enviando mapa Ultra HD (${completed}/${chunks.length} blocos)...`);
+            })
+          );
         }
 
-        try {
-          // Grava em pequenos lotes paralelos de 3 chunks (respeita limite de 10 MiB por requisição)
-          for (let i = 0; i < chunks.length; i += 3) {
-            const slice = chunks.slice(i, i + 3);
-            await Promise.all(
-              slice.map((chunk) =>
-                setDoc(doc(firestore, 'maps', mapRef.id, 'image_chunks', String(chunk.index)), {
-                  map_id: mapRef.id,
-                  index: chunk.index,
-                  data: chunk.data,
-                  createdAt: serverTimestamp(),
-                })
-              )
-            );
-          }
-          hdChunkCount = chunks.length;
-          hdMimeType = parsed.mime;
+        hdChunkCount = chunks.length;
+        hdMimeType = hdParts.mime;
 
-          // Já popula o cache local para exibição instantânea sem esperar releitura
-          try {
-            const localBlobUrl = base64ToBlobUrl(parsed.body, parsed.mime);
-            mapHdUrlCache.set(`${mapRef.id}_${hdChunkCount}`, localBlobUrl);
-          } catch {}
-        } catch (chunkErr) {
-          console.warn(
-            'Subcoleção HD indisponível; salvando mapa em alta qualidade otimizada no documento principal:',
-            chunkErr?.message || chunkErr
-          );
-          hdChunkCount = 0;
-          hdMimeType = null;
-          if (fallbackImageUrl && fallbackImageUrl.length <= SINGLE_DOC_IMAGE_LIMIT) {
-            finalImageUrl = fallbackImageUrl;
-          }
+        // Já popula o cache local com Blob URL para exibição instantânea sem esperar releitura
+        try {
+          const localBlobUrl =
+            hdBlob && typeof URL !== 'undefined'
+              ? URL.createObjectURL(hdBlob)
+              : decodeBase64ChunksToBlobUrl(
+                  chunks.map((c) => c.data),
+                  hdParts.mime
+                );
+          mapHdUrlCache.set(`${mapRef.id}_${hdChunkCount}`, localBlobUrl);
+        } catch {}
+      } catch (chunkErr) {
+        console.warn(
+          'Subcoleção HD indisponível ou interrompida; salvando mapa em alta qualidade otimizada no documento principal:',
+          chunkErr?.message || chunkErr
+        );
+        // Limpa blocos órfãos se o upload foi interrompido no meio
+        if (uploadedChunkRefs.length > 0) {
+          Promise.all(uploadedChunkRefs.map((ref) => deleteDoc(ref).catch(() => {}))).catch(() => {});
+        }
+        hdChunkCount = 0;
+        hdMimeType = null;
+        if (fallbackImageUrl && fallbackImageUrl.length <= SINGLE_DOC_IMAGE_LIMIT) {
+          finalImageUrl = fallbackImageUrl;
         }
       }
+    } else if (fallbackImageUrl && fallbackImageUrl.length <= SINGLE_DOC_IMAGE_LIMIT) {
+      // Se exceder o teto de chunks, usa sempre o fallback de alta qualidade (nunca a miniatura de 1100px!)
+      finalImageUrl = fallbackImageUrl;
     }
   }
 
@@ -1219,6 +1338,8 @@ export async function createMap({
       throw new Error('A imagem do mapa excede o limite suportado. Tente outro formato (WebP/JPG/PNG).');
     }
   }
+
+  report(94, 'Registrando mapa na mesa...');
 
   const mapDocPayload = {
     title: cleanTitle,
@@ -1245,6 +1366,7 @@ export async function createMap({
   }
 
   await setDoc(mapRef, mapDocPayload);
+  report(100, 'Mapa pronto na mesa!');
   return mapRef.id;
 }
 
@@ -1280,11 +1402,15 @@ export async function deleteMapWithTokens(mapId) {
   if (!mapId) return;
   const firestore = requireDb();
 
-  // Remove chunks HD associados (se existirem) antes de apagar o mapa
+  // Remove chunks HD associados em lotes controlados (suporta mapas grandes de até 30 chunks)
   try {
     const chunksSnap = await getDocs(collection(firestore, 'maps', mapId, 'image_chunks'));
     if (!chunksSnap.empty) {
-      await Promise.all(chunksSnap.docs.map((c) => deleteDoc(c.ref).catch(() => {})));
+      const docs = chunksSnap.docs;
+      for (let i = 0; i < docs.length; i += 5) {
+        const slice = docs.slice(i, i + 5);
+        await Promise.all(slice.map((c) => deleteDoc(c.ref).catch(() => {})));
+      }
     }
   } catch {}
 

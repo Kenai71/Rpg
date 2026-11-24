@@ -39,6 +39,7 @@ import {
   updateMapTokenStats,
 } from '../../lib/rpg-service';
 import { MAP_PRESETS } from '../../lib/map-presets';
+import { formatBytesCompact, processHugeMapImage } from '../../lib/map-image-processor';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { FormField, Input, Select } from '../ui/Input';
@@ -72,9 +73,11 @@ export function MasterMapManager({
   const [mapSourceTab, setMapSourceTab] = useState('upload');
   const fileInputRef = useRef(null);
   const [uploadedPreview, setUploadedPreview] = useState(null);
-  const [uploadedAsset, setUploadedAsset] = useState(null); // { imageUrl, hdDataUrl, fallbackImageUrl, width, height, qualityLabel }
+  const [uploadedAsset, setUploadedAsset] = useState(null); // { imageUrl, hdBlob, hdDataUrl, fallbackImageUrl, width, height, encodedWidth, encodedHeight, fileSizeBytes, encodedSizeBytes, estimatedChunks, wasDownscaled, qualityLabel }
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [compressingFile, setCompressingFile] = useState(false);
+  const [processProgress, setProcessProgress] = useState(null); // { percent, label }
+  const [uploadProgress, setUploadProgress] = useState(null); // { percent, label }
   const [isDragOver, setIsDragOver] = useState(false);
 
   const [selectedPreset, setSelectedPreset] = useState(MAP_PRESETS[0]);
@@ -154,238 +157,34 @@ export function MasterMapManager({
     return tokens.filter((t) => t.map_id === currentMap.id);
   }, [tokens, currentMap]);
 
-  // Processador de imagem em MÁXIMA QUALIDADE preservando dimensões exatas em pixels originais
-  const processMapImageFile = (file) => {
-    const SINGLE_DOC_BUDGET = 880000; // Seguro dentro do limite de 1 MiB do Firestore
-    const HD_CHUNK_MAX_DATA_LEN = 10800000; // Até ~8 MB binários em chunks HD (ex: mapas 4K/8K)
-    const PREVIEW_BUDGET = 175000; // Prévia leve instantânea para o carrossel enquanto o HD carrega
-
-    const detectWebPSupport = () => {
-      try {
-        const test = document.createElement('canvas');
-        test.width = 2;
-        test.height = 2;
-        return test.toDataURL('image/webp', 0.8).startsWith('data:image/webp');
-      } catch {
-        return false;
-      }
-    };
-
-    const drawToDataUrl = (img, targetW, targetH, mime, quality) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, targetW, targetH);
-      return canvas.toDataURL(mime, quality);
-    };
-
-    const binarySearchQuality = (img, targetW, targetH, mime, minQ, maxQ, budget) => {
-      // Testa primeiro qualidade máxima direto
-      const maxAttempt = drawToDataUrl(img, targetW, targetH, mime, maxQ);
-      if (maxAttempt.length <= budget) {
-        return { dataUrl: maxAttempt, quality: maxQ };
-      }
-      // Testa qualidade mínima para saber se cabe nesta resolução
-      const minAttempt = drawToDataUrl(img, targetW, targetH, mime, minQ);
-      if (minAttempt.length > budget) {
-        return null;
-      }
-
-      let lo = minQ;
-      let hi = maxQ;
-      let bestUrl = minAttempt;
-      let bestQ = minQ;
-
-      for (let step = 0; step < 6; step += 1) {
-        const mid = Math.round(((lo + hi) / 2) * 1000) / 1000;
-        const candidate = drawToDataUrl(img, targetW, targetH, mime, mid);
-        if (candidate.length <= budget) {
-          bestUrl = candidate;
-          bestQ = mid;
-          lo = mid;
-        } else {
-          hi = mid;
-        }
-      }
-
-      return { dataUrl: bestUrl, quality: bestQ };
-    };
-
-    const buildBestSingleDocFallback = (img, origW, origH, bestMime) => {
-      // Tenta primeiro manter exatamente 100% dos pixels originais
-      const fullRes = binarySearchQuality(img, origW, origH, bestMime, 0.72, 0.98, SINGLE_DOC_BUDGET);
-      if (fullRes) {
-        return { dataUrl: fullRes.dataUrl, width: origW, height: origH, quality: fullRes.quality };
-      }
-
-      // Redução suave progressiva apenas se a imagem for gigantesca e precisar caber em 1 documento
-      const scales = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.32];
-      for (const scale of scales) {
-        const w = Math.max(16, Math.round(origW * scale));
-        const h = Math.max(16, Math.round(origH * scale));
-        const attempt = binarySearchQuality(img, w, h, bestMime, 0.68, 0.92, SINGLE_DOC_BUDGET);
-        if (attempt) {
-          return { dataUrl: attempt.dataUrl, width: w, height: h, quality: attempt.quality };
-        }
-      }
-
-      const safeW = Math.min(origW, 1600);
-      const safeH = Math.max(16, Math.round((origH * safeW) / origW));
-      return {
-        dataUrl: drawToDataUrl(img, safeW, safeH, bestMime, 0.65),
-        width: safeW,
-        height: safeH,
-        quality: 0.65,
-      };
-    };
-
-    const buildFastPreview = (img, origW, origH, bestMime) => {
-      const maxPreviewDim = 1100;
-      let pW = origW;
-      let pH = origH;
-      if (pW > maxPreviewDim || pH > maxPreviewDim) {
-        const r = Math.min(maxPreviewDim / pW, maxPreviewDim / pH);
-        pW = Math.max(16, Math.round(pW * r));
-        pH = Math.max(16, Math.round(pH * r));
-      }
-      const attempt = binarySearchQuality(img, pW, pH, bestMime, 0.6, 0.84, PREVIEW_BUDGET);
-      return attempt ? attempt.dataUrl : drawToDataUrl(img, pW, pH, bestMime, 0.6);
-    };
-
-    return new Promise((resolve, reject) => {
-      if (!file || !file.type.startsWith('image/')) {
-        reject(new Error('Selecione um arquivo de imagem válido (PNG, JPG, WebP).'));
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const rawDataUrl = e.target.result;
-        const img = new Image();
-        img.onload = () => {
-          const origW = img.naturalWidth || img.width || 1400;
-          const origH = img.naturalHeight || img.height || 900;
-          const baseName = file.name.replace(/\.[^/.]+$/, '');
-          const bestMime = detectWebPSupport() ? 'image/webp' : 'image/jpeg';
-
-          // CAMINHO 1: Arquivo original já cabe em 1 documento -> 100% ORIGINAL INTACTO (zero recompressão)
-          if (typeof rawDataUrl === 'string' && rawDataUrl.length <= SINGLE_DOC_BUDGET) {
-            resolve({
-              previewUrl: rawDataUrl,
-              imageUrl: rawDataUrl,
-              hdDataUrl: null,
-              fallbackImageUrl: rawDataUrl,
-              width: origW,
-              height: origH,
-              qualityLabel: 'Original sem perdas',
-              name: baseName,
-            });
-            return;
-          }
-
-          // Limite seguro de canvas do navegador (8192px) mantendo proporção exata caso exceda
-          const MAX_CANVAS_DIM = 8192;
-          let canvasW = origW;
-          let canvasH = origH;
-          if (canvasW > MAX_CANVAS_DIM || canvasH > MAX_CANVAS_DIM) {
-            const ratio = Math.min(MAX_CANVAS_DIM / canvasW, MAX_CANVAS_DIM / canvasH);
-            canvasW = Math.round(canvasW * ratio);
-            canvasH = Math.round(canvasH * ratio);
-          }
-
-          // CAMINHO 2: Tenta WebP de altíssima qualidade (84% a 98%) mantendo 100% dos pixels exatos em 1 documento
-          const exactSingleDoc = binarySearchQuality(
-            img,
-            canvasW,
-            canvasH,
-            bestMime,
-            0.84,
-            0.98,
-            SINGLE_DOC_BUDGET
-          );
-          if (exactSingleDoc) {
-            resolve({
-              previewUrl: exactSingleDoc.dataUrl,
-              imageUrl: exactSingleDoc.dataUrl,
-              hdDataUrl: null,
-              fallbackImageUrl: exactSingleDoc.dataUrl,
-              width: origW,
-              height: origH,
-              qualityLabel: `Máxima (${Math.round(exactSingleDoc.quality * 100)}% HD)`,
-              name: baseName,
-            });
-            return;
-          }
-
-          // CAMINHO 3: Mapa ultra-detalhado / 4K+ -> preserva 100% dos pixels originais em chunks HD
-          let hdDataUrl = null;
-          let qualityLabel = 'Original Ultra HD';
-
-          if (typeof rawDataUrl === 'string' && rawDataUrl.length <= HD_CHUNK_MAX_DATA_LEN) {
-            hdDataUrl = rawDataUrl;
-            qualityLabel = 'Original Ultra HD';
-          } else {
-            const hdEncoded = binarySearchQuality(
-              img,
-              canvasW,
-              canvasH,
-              bestMime,
-              0.86,
-              0.96,
-              HD_CHUNK_MAX_DATA_LEN
-            );
-            if (hdEncoded) {
-              hdDataUrl = hdEncoded.dataUrl;
-              qualityLabel = `Ultra HD (${Math.round(hdEncoded.quality * 100)}%)`;
-            } else {
-              hdDataUrl = drawToDataUrl(img, canvasW, canvasH, bestMime, 0.84);
-              qualityLabel = 'Ultra HD Otimizado';
-            }
-          }
-
-          const previewUrl = buildFastPreview(img, origW, origH, bestMime);
-          const fallback = buildBestSingleDocFallback(img, canvasW, canvasH, bestMime);
-
-          resolve({
-            previewUrl,
-            imageUrl: previewUrl,
-            hdDataUrl,
-            fallbackImageUrl: fallback.dataUrl,
-            width: origW,
-            height: origH,
-            qualityLabel,
-            name: baseName,
-          });
-        };
-        img.onerror = () => reject(new Error('Falha ao processar arquivo de imagem.'));
-        img.src = rawDataUrl;
-      };
-      reader.onerror = () => reject(new Error('Falha ao ler arquivo.'));
-      reader.readAsDataURL(file);
-    });
-  };
-
   const processSelectedFile = async (file) => {
     if (!file) return;
     setCompressingFile(true);
+    setProcessProgress({ percent: 5, label: 'Analisando arquivo do mapa...' });
     try {
-      const result = await processMapImageFile(file);
+      const result = await processHugeMapImage(file, (prog) => {
+        setProcessProgress(prog);
+      });
       setUploadedPreview(result.previewUrl);
       setUploadedAsset(result);
       setUploadedFileName(file.name);
       if (!mapTitle.trim()) {
         setMapTitle(result.name);
       }
+      const sizeNote =
+        result.fileSizeBytes && result.encodedSizeBytes && result.encodedSizeBytes < result.fileSizeBytes * 0.9
+          ? ` • ${formatBytesCompact(result.fileSizeBytes)} → ${formatBytesCompact(result.encodedSizeBytes)}`
+          : result.fileSizeBytes
+          ? ` • ${formatBytesCompact(result.fileSizeBytes)}`
+          : '';
       toast.success(
-        `Mapa "${file.name}" carregado em ${result.width}×${result.height} px (${result.qualityLabel})!`
+        `Mapa "${file.name}" pronto em ${result.width}×${result.height} px (${result.qualityLabel}${sizeNote})!`
       );
     } catch (err) {
-      toast.error(err.message || 'Erro ao carregar arquivo de imagem.');
+      toast.error(err?.message || 'Erro ao carregar arquivo de imagem.');
     } finally {
       setCompressingFile(false);
+      setProcessProgress(null);
     }
   };
 
@@ -399,13 +198,20 @@ export function MasterMapManager({
     setUploadedPreview(null);
     setUploadedAsset(null);
     setUploadedFileName('');
+    setProcessProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Criar / Inserir Mapa (dimensões exatas automáticas, máxima qualidade, sem input manual de px)
+  // Criar / Inserir Mapa (suporta desde imagens leves até mapas colossais 8K/16K+ com progresso ao vivo)
   const handleCreateMap = async (e) => {
     e.preventDefault();
+    if (compressingFile) {
+      toast.info('Aguarde o processamento da imagem terminar.');
+      return;
+    }
+
     let finalUrl = '';
+    let hdBlob = null;
     let hdDataUrl = null;
     let fallbackImageUrl = null;
     let naturalWidth = null;
@@ -413,7 +219,8 @@ export function MasterMapManager({
 
     if (mapSourceTab === 'upload' && uploadedAsset) {
       finalUrl = uploadedAsset.imageUrl;
-      hdDataUrl = uploadedAsset.hdDataUrl;
+      hdBlob = uploadedAsset.hdBlob || null;
+      hdDataUrl = uploadedAsset.hdDataUrl || null;
       fallbackImageUrl = uploadedAsset.fallbackImageUrl;
       naturalWidth = uploadedAsset.width;
       naturalHeight = uploadedAsset.height;
@@ -427,7 +234,8 @@ export function MasterMapManager({
       naturalHeight = 800;
     } else if (uploadedAsset) {
       finalUrl = uploadedAsset.imageUrl;
-      hdDataUrl = uploadedAsset.hdDataUrl;
+      hdBlob = uploadedAsset.hdBlob || null;
+      hdDataUrl = uploadedAsset.hdDataUrl || null;
       fallbackImageUrl = uploadedAsset.fallbackImageUrl;
       naturalWidth = uploadedAsset.width;
       naturalHeight = uploadedAsset.height;
@@ -447,10 +255,18 @@ export function MasterMapManager({
     }
 
     setCreating(true);
+    setUploadProgress({
+      percent: 5,
+      label: uploadedAsset?.estimatedChunks > 0
+        ? `Iniciando envio Ultra HD (${uploadedAsset.estimatedChunks} blocos)...`
+        : 'Salvando mapa na mesa...',
+    });
+
     try {
       const newId = await createMap({
         title: finalTitle,
         imageUrl: finalUrl,
+        hdBlob,
         hdDataUrl,
         fallbackImageUrl,
         naturalWidth,
@@ -461,6 +277,7 @@ export function MasterMapManager({
         scale: 1.0,
         is_active: maps.length === 0, // Se for o primeiro, ativa automaticamente
         is_locked: false,
+        onProgress: (prog) => setUploadProgress(prog),
       });
 
       setSelectedMapId(newId);
@@ -472,11 +289,12 @@ export function MasterMapManager({
       setUploadedAsset(null);
       setUploadedFileName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
-      toast.success('Mapa tático adicionado na qualidade máxima!');
+      toast.success('Mapa tático adicionado na máxima qualidade!');
     } catch (err) {
       toast.error(err?.message || 'Erro ao criar mapa.');
     } finally {
       setCreating(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1039,20 +857,20 @@ export function MasterMapManager({
             </button>
           </div>
 
-          {/* ABA 1: SUBIR ARQUIVO DO DISPOSITIVO (MÁXIMA QUALIDADE + DIMENSÕES EXATAS) */}
+          {/* ABA 1: SUBIR ARQUIVO DO DISPOSITIVO (MÁXIMA QUALIDADE + SUPORTE A MAPAS IMENSOS 4K/8K/16K+) */}
           {mapSourceTab === 'upload' && (
             <div className="space-y-3">
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/jpg"
+                accept="image/*"
                 onChange={handleFileChange}
                 className="hidden"
               />
 
               {!uploadedPreview ? (
                 <div
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => !compressingFile && fileInputRef.current?.click()}
                   onDragOver={(e) => {
                     e.preventDefault();
                     setIsDragOver(true);
@@ -1061,14 +879,16 @@ export function MasterMapManager({
                   onDrop={async (e) => {
                     e.preventDefault();
                     setIsDragOver(false);
+                    if (compressingFile) return;
                     const dropped = e.dataTransfer?.files?.[0];
                     if (dropped) await processSelectedFile(dropped);
                   }}
                   className={cn(
-                    'group rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3',
+                    'group rounded-2xl border-2 border-dashed p-7 text-center transition-all flex flex-col items-center justify-center gap-3',
+                    compressingFile ? 'cursor-wait border-white/25 bg-white/[0.06]' : 'cursor-pointer',
                     isDragOver
                       ? 'border-white/50 bg-white/15 scale-[1.01]'
-                      : 'border-white/20 hover:border-white/40 bg-white/5 hover:bg-white/10'
+                      : !compressingFile && 'border-white/20 hover:border-white/40 bg-white/5 hover:bg-white/10'
                   )}
                 >
                   <div className="h-12 w-12 rounded-xl bg-white/10 flex items-center justify-center text-slate-300 group-hover:scale-105 transition-transform">
@@ -1078,19 +898,35 @@ export function MasterMapManager({
                     <p className="text-sm font-bold text-white">
                       Clique ou arraste a imagem do seu mapa aqui
                     </p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      PNG, JPG ou WebP — preserva a resolução exata em pixels e a maior qualidade possível
+                    <p className="text-xs text-slate-400 mt-0.5 max-w-md mx-auto leading-relaxed">
+                      PNG, JPG, WebP ou AVIF — suporta inclusive mapas gigantes (4K, 8K, 16K+ e arquivos pesados) mantendo proporção exata e máxima nitidez
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    loading={compressingFile}
-                    className="pointer-events-none mt-1"
-                  >
-                    {compressingFile ? 'Processando em Máxima Qualidade...' : 'Selecionar Arquivo'}
-                  </Button>
+
+                  {compressingFile && processProgress ? (
+                    <div className="w-full max-w-sm space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-200">
+                        <span className="truncate pr-2">{processProgress.label}</span>
+                        <span className="font-bold shrink-0">{processProgress.percent}%</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-black/60 border border-white/15 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-400 transition-all duration-200"
+                          style={{ width: `${Math.max(6, processProgress.percent)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      loading={compressingFile}
+                      className="pointer-events-none mt-1"
+                    >
+                      Selecionar Arquivo
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-white/20 bg-[#0c101b] overflow-hidden">
@@ -1101,8 +937,17 @@ export function MasterMapManager({
                       className="max-h-56 w-auto max-w-full object-contain"
                     />
                     {uploadedAsset?.width && uploadedAsset?.height && (
-                      <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/80 border border-white/15 text-[10px] font-mono font-bold text-slate-100 backdrop-blur-md">
+                      <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/85 border border-white/15 text-[10px] font-mono font-bold text-slate-100 backdrop-blur-md">
                         {uploadedAsset.width} × {uploadedAsset.height} px
+                      </span>
+                    )}
+                    {uploadedAsset?.fileSizeBytes > 0 && (
+                      <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-black/85 border border-white/15 text-[10px] font-mono text-slate-200 backdrop-blur-md">
+                        {formatBytesCompact(uploadedAsset.fileSizeBytes)}
+                        {uploadedAsset.encodedSizeBytes &&
+                        uploadedAsset.encodedSizeBytes < uploadedAsset.fileSizeBytes * 0.92
+                          ? ` → ${formatBytesCompact(uploadedAsset.encodedSizeBytes)}`
+                          : ''}
                       </span>
                     )}
                   </div>
@@ -1114,9 +959,9 @@ export function MasterMapManager({
                       <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <Check className="h-3 w-3 shrink-0" />
                         <span>{uploadedAsset?.qualityLabel || 'Qualidade Máxima'}</span>
-                        {uploadedAsset?.width && uploadedAsset?.height && (
+                        {uploadedAsset?.estimatedChunks > 0 && (
                           <span className="text-slate-400 font-mono">
-                            • Tamanho real automático ({uploadedAsset.width}×{uploadedAsset.height}px)
+                            • {uploadedAsset.estimatedChunks} bloco(s) Ultra HD
                           </span>
                         )}
                       </div>
@@ -1126,6 +971,7 @@ export function MasterMapManager({
                         type="button"
                         variant="ghost"
                         size="sm"
+                        disabled={creating || compressingFile}
                         onClick={() => fileInputRef.current?.click()}
                         className="text-xs"
                       >
@@ -1135,6 +981,7 @@ export function MasterMapManager({
                         type="button"
                         variant="ghost"
                         size="sm"
+                        disabled={creating || compressingFile}
                         onClick={handleClearUploadedFile}
                         className="text-slate-400 hover:text-rose-400 h-8 w-8 p-0"
                         title="Remover arquivo"
@@ -1143,6 +990,21 @@ export function MasterMapManager({
                       </Button>
                     </div>
                   </div>
+
+                  {compressingFile && processProgress && (
+                    <div className="px-3 pb-3 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-300">
+                        <span className="truncate pr-2">{processProgress.label}</span>
+                        <span className="font-bold shrink-0">{processProgress.percent}%</span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-black/60 border border-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-400 transition-all duration-200"
+                          style={{ width: `${Math.max(6, processProgress.percent)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1239,12 +1101,32 @@ export function MasterMapManager({
             </FormField>
           </div>
 
+          {creating && uploadProgress && (
+            <div className="p-3 rounded-xl bg-white/[0.04] border border-white/12 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono text-slate-200">
+                <span className="truncate pr-2">{uploadProgress.label}</span>
+                <span className="font-bold text-emerald-300 shrink-0">{uploadProgress.percent}%</span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-black/60 border border-white/15 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-400 transition-all duration-200"
+                  style={{ width: `${Math.max(5, uploadProgress.percent)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
-            <Button type="button" variant="ghost" onClick={() => setCreateModalOpen(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={creating}
+              onClick={() => setCreateModalOpen(false)}
+            >
               Cancelar
             </Button>
-            <Button type="submit" loading={creating}>
-              Adicionar Mapa à Mesa
+            <Button type="submit" loading={creating} disabled={compressingFile}>
+              {creating ? 'Enviando Mapa...' : 'Adicionar Mapa à Mesa'}
             </Button>
           </div>
         </form>

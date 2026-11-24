@@ -399,9 +399,14 @@ export function MapAtmosphereOverlay({
     const resize = () => {
       const parent = canvas.parentElement;
       if (!parent) return;
-      width = Math.max(320, parent.clientWidth);
-      height = Math.max(240, parent.clientHeight);
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const rawW = Math.max(320, parent.clientWidth);
+      const rawH = Math.max(240, parent.clientHeight);
+      // Limita o buffer interno de partículas a 1920px no maior lado (CSS estica 100% mantendo proporção e zero estouro de VRAM em mapas 4K–16K+)
+      const MAX_FX_SIDE = 1920;
+      const fxScale = Math.min(1, MAX_FX_SIDE / Math.max(rawW, rawH));
+      width = Math.max(320, Math.round(rawW * fxScale));
+      height = Math.max(240, Math.round(rawH * fxScale));
+      const dpr = fxScale < 1 ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
