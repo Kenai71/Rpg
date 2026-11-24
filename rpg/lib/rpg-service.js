@@ -1515,7 +1515,7 @@ export async function createMapToken(data) {
   return tokenRef.id;
 }
 
-export async function updateMapTokenPosition(tokenId, { x, y }) {
+export async function updateMapTokenPosition(tokenId, { x, y, move_used }) {
   if (!tokenId) return;
   const firestore = requireDb();
   const tokenRef = doc(firestore, 'map_tokens', tokenId);
@@ -1524,11 +1524,17 @@ export async function updateMapTokenPosition(tokenId, { x, y }) {
   const numY = Number(y);
   if (!Number.isFinite(numX) || !Number.isFinite(numY)) return;
 
-  await updateDoc(tokenRef, {
+  const payload = {
     x: Math.max(0, Math.min(100, Math.round(numX * 10000) / 10000)),
     y: Math.max(0, Math.min(100, Math.round(numY * 10000) / 10000)),
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  if (move_used !== undefined && Number.isFinite(Number(move_used))) {
+    payload.move_used = Math.max(0, Math.min(500, Math.round(Number(move_used) * 100) / 100));
+  }
+
+  await updateDoc(tokenRef, payload);
 }
 
 // Campos de vitalidade/combate sincronizados automaticamente entre todos os mapas para o mesmo token
@@ -1547,6 +1553,7 @@ const CROSS_MAP_SYNCED_TOKEN_FIELDS = [
   'name_hidden',
   'light_radius',
   'light_color',
+  'move_limit',
 ];
 
 export async function updateMapTokenStats(tokenId, statsData) {
@@ -1581,6 +1588,15 @@ export async function updateMapTokenStats(tokenId, statsData) {
   }
   if (statsData.light_color !== undefined) {
     payload.light_color = statsData.light_color ? String(statsData.light_color).slice(0, 32) : null;
+  }
+  if (statsData.move_limit !== undefined) {
+    payload.move_limit =
+      statsData.move_limit === null
+        ? null
+        : Math.max(0, Math.min(200, Math.round(Number(statsData.move_limit) * 10) / 10));
+  }
+  if (statsData.move_used !== undefined) {
+    payload.move_used = Math.max(0, Math.min(500, Math.round((Number(statsData.move_used) || 0) * 100) / 100));
   }
 
   await updateDoc(tokenRef, payload);
@@ -1723,6 +1739,11 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
           ? Math.max(0, Math.min(80, Math.round(Number(item.light_radius) || 0)))
           : null,
       light_color: item.light_color ? String(item.light_color).slice(0, 32) : null,
+      move_limit:
+        item.move_limit !== undefined && item.move_limit !== null && Number.isFinite(Number(item.move_limit))
+          ? Math.max(0, Math.min(200, Math.round(Number(item.move_limit) * 10) / 10))
+          : null,
+      move_used: 0,
       updatedAt: serverTimestamp(),
     });
 

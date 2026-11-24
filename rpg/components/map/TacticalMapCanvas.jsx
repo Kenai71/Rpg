@@ -80,6 +80,23 @@ import { cn } from '../../lib/utils';
 const DICE_QUICK_COUNTS = [1, 2, 3, 4, 6, 8];
 const DICE_SIDES_LIST = [4, 6, 8, 10, 12, 20];
 
+// Escala da régua e movimentação: 5x menor que o antigo fator 0.3 (antes 5m -> agora 1m)
+const RULER_METERS_PER_PCT = 0.06;
+const DEFAULT_PLAYER_MOVE_LIMIT_M = 9;
+const MOVE_LIMIT_PRESETS = [4.5, 6, 9, 12, 15, 18, 30];
+
+function computeDistanceMeters(x1, y1, x2, y2) {
+  const dx = (Number(x2) || 0) - (Number(x1) || 0);
+  const dy = (Number(y2) || 0) - (Number(y1) || 0);
+  return Math.hypot(dx, dy) * RULER_METERS_PER_PCT;
+}
+
+function formatMeters(val) {
+  const num = Math.max(0, Number(val) || 0);
+  const rounded = Math.round(num * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
 // Ícones geométricos minimalistas dos poliedros D&D (zero ícones de estrela)
 function PolyhedronGlyph({ sides, className = 'h-4 w-4' }) {
   if (sides === 4) {
@@ -202,14 +219,21 @@ export function TacticalMapCanvas({
   onInspectMonsterId,
 }) {
   const containerRef = useRef(null);
+  const viewportRef = useRef(null);
   const mapImageRef = useRef(null);
   const tabletopMusic = useTabletopMusic();
 
-  // Zoom e Pan
+  // Zoom e Pan (com ref síncrono para zoom ancorado 100% no cursor sem drift em rolagem rápida)
   const [zoom, setZoom] = useState(map?.scale || 1.0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [isWheelZooming, setIsWheelZooming] = useState(false);
+  const viewTransformRef = useRef({ zoom: map?.scale || 1.0, pan: { x: 0, y: 0 } });
+  const wheelZoomTimerRef = useRef(null);
   const panStartRef = useRef({ x: 0, y: 0 });
+
+  viewTransformRef.current.zoom = zoom;
+  viewTransformRef.current.pan = pan;
 
   // Ferramentas ativas
   const [activeTool, setActiveTool] = useState('select'); // 'select' | 'ruler' | 'ping'
@@ -421,26 +445,56 @@ export function TacticalMapCanvas({
     return () => ro.disconnect();
   }, [computeFitAndBounds]);
 
-  // Zoom suave proporcional com Scroll do Mouse dentro do mapa sem rolar a página externa
+  // Zoom suave ancorado exatamente onde está o cursor do mouse (sem rolar a página externa)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleWheel = (e) => {
-      // Permite rolagem natural dentro dos painéis laterais da sidebar (Histórico de Dados / Iniciativa)
+      // Permite rolagem natural dentro dos painéis laterais da sidebar (Histórico de Dados / Iniciativa / Movimento)
       if (e.target?.closest?.('[data-map-overlay-scroll]')) return;
 
       // Impede a rolagem vertical/horizontal da página
       e.preventDefault();
 
       const { min, max } = zoomBoundsRef.current;
-      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-      setZoom((z) => Math.min(max, Math.max(min, Math.round(z * factor * 1000) / 1000)));
+      const prevZoom = viewTransformRef.current.zoom || 1;
+      const prevPan = viewTransformRef.current.pan || { x: 0, y: 0 };
+
+      // Suporta tanto rodinha discreta do mouse quanto trackpad contínuo (deltaMode 1 = linhas)
+      const normalizedDeltaY = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
+      const rawFactor = Math.exp(-normalizedDeltaY * 0.0014);
+      const factor = Math.max(0.76, Math.min(1.3, rawFactor));
+      const nextZoom = Math.min(max, Math.max(min, Math.round(prevZoom * factor * 1000) / 1000));
+
+      if (Math.abs(nextZoom - prevZoom) < 0.0001) return;
+
+      // Calcula a posição do cursor relativa ao centro do viewport do mapa para manter o ponto sob o mouse fixo
+      const vpEl = viewportRef.current || container;
+      const rect = vpEl.getBoundingClientRect();
+      const cursorX = e.clientX - (rect.left + rect.width / 2);
+      const cursorY = e.clientY - (rect.top + rect.height / 2);
+      const scaleRatio = nextZoom / prevZoom;
+
+      const nextPan = {
+        x: Math.round((cursorX - (cursorX - prevPan.x) * scaleRatio) * 100) / 100,
+        y: Math.round((cursorY - (cursorY - prevPan.y) * scaleRatio) * 100) / 100,
+      };
+
+      // Atualiza ref síncrono antes do React commit para evitar drift em múltiplos ticks rápidos da rodinha
+      viewTransformRef.current = { zoom: nextZoom, pan: nextPan };
+      setIsWheelZooming(true);
+      if (wheelZoomTimerRef.current) clearTimeout(wheelZoomTimerRef.current);
+      wheelZoomTimerRef.current = setTimeout(() => setIsWheelZooming(false), 120);
+
+      setZoom(nextZoom);
+      setPan(nextPan);
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => {
       container.removeEventListener('wheel', handleWheel);
+      if (wheelZoomTimerRef.current) clearTimeout(wheelZoomTimerRef.current);
     };
   }, []);
 
@@ -953,6 +1007,55 @@ export function TacticalMapCanvas({
     }
   };
 
+  // Limite de movimentação dos jogadores (padrão 9m, ajustável pelo Mestre em tempo real)
+  const mapMoveLimitMeters = useMemo(() => {
+    const raw = Number(map?.player_move_limit);
+    if (Number.isFinite(raw) && raw >= 0.5) {
+      return Math.max(0.5, Math.min(200, Math.round(raw * 10) / 10));
+    }
+    return DEFAULT_PLAYER_MOVE_LIMIT_M;
+  }, [map?.player_move_limit]);
+
+  const [moveLimitInput, setMoveLimitInput] = useState(String(mapMoveLimitMeters));
+  const [activeMovePreview, setActiveMovePreview] = useState(null);
+  const [resettingMovement, setResettingMovement] = useState(false);
+  const lastMoveBlockedToastRef = useRef(0);
+
+  useEffect(() => {
+    setMoveLimitInput(String(mapMoveLimitMeters));
+  }, [mapMoveLimitMeters]);
+
+  const getTokenMoveState = useCallback(
+    (token) => {
+      const hasCustom =
+        typeof token?.move_limit === 'number' && Number.isFinite(token.move_limit);
+      const maxMeters = hasCustom
+        ? Math.max(0, Math.min(200, Math.round(token.move_limit * 10) / 10))
+        : mapMoveLimitMeters;
+      const usedMeters =
+        Number.isFinite(Number(token?.move_used)) && Number(token?.move_used) > 0
+          ? Math.round(Number(token.move_used) * 100) / 100
+          : 0;
+      const remainingMeters = Math.max(0, Math.round((maxMeters - usedMeters) * 100) / 100);
+      return { maxMeters, usedMeters, remainingMeters, hasCustom };
+    },
+    [mapMoveLimitMeters]
+  );
+
+  const commitMapMoveLimit = useCallback(
+    async (nextMeters) => {
+      if (!isMaster || !onUpdateMap || !map?.id) return;
+      const clamped = Math.max(0.5, Math.min(200, Math.round((Number(nextMeters) || DEFAULT_PLAYER_MOVE_LIMIT_M) * 10) / 10));
+      setMoveLimitInput(String(clamped));
+      try {
+        await onUpdateMap(map.id, { player_move_limit: clamped });
+      } catch (err) {
+        toast.error(err?.message || 'Erro ao atualizar limite de movimentação.');
+      }
+    },
+    [isMaster, onUpdateMap, map?.id]
+  );
+
   // Drag and Drop de Tokens
   const canMoveToken = useCallback(
     (token) => {
@@ -1044,6 +1147,22 @@ export function TacticalMapCanvas({
     const rect = mapImageRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
+    const enforceMoveLimit = !isMaster;
+    const moveState = getTokenMoveState(token);
+
+    if (enforceMoveLimit && moveState.remainingMeters <= 0.02) {
+      const nowMs = Date.now();
+      if (nowMs - lastMoveBlockedToastRef.current > 2200) {
+        lastMoveBlockedToastRef.current = nowMs;
+        toast.warning(
+          `Limite de deslocamento atingido (${formatMeters(moveState.usedMeters)}m / ${formatMeters(
+            moveState.maxMeters
+          )}m). Aguarde o Mestre liberar ou aumentar sua distância.`
+        );
+      }
+      return;
+    }
+
     // Posição exata do clique em % do mapa (0 a 100%)
     const clickPctX = ((e.clientX - rect.left) / rect.width) * 100;
     const clickPctY = ((e.clientY - rect.top) / rect.height) * 100;
@@ -1065,7 +1184,15 @@ export function TacticalMapCanvas({
       grabOffsetY,
       startX: e.clientX,
       startY: e.clientY,
+      originX: curX,
+      originY: curY,
       hasMoved: false,
+      enforceMoveLimit,
+      moveMaxMeters: moveState.maxMeters,
+      moveUsedBase: moveState.usedMeters,
+      moveRemainingMeters: moveState.remainingMeters,
+      currentDragMeters: 0,
+      hitMoveLimit: false,
       latestX: curX,
       latestY: curY,
       lastSentX: curX,
@@ -1075,6 +1202,23 @@ export function TacticalMapCanvas({
       trailingTimer: null,
       cancelled: false,
     };
+
+    if (enforceMoveLimit) {
+      setActiveMovePreview({
+        tokenId: token.id,
+        originX: curX,
+        originY: curY,
+        currentX: curX,
+        currentY: curY,
+        maxRadiusPct: moveState.remainingMeters / RULER_METERS_PER_PCT,
+        dragMeters: 0,
+        totalUsed: moveState.usedMeters,
+        maxMeters: moveState.maxMeters,
+        remainingAfter: moveState.remainingMeters,
+        hitLimit: false,
+      });
+    }
+
     setLocalDraggingId(token.id);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
@@ -1108,7 +1252,57 @@ export function TacticalMapCanvas({
       newPctY = Math.round(newPctY / gridPctH) * gridPctH;
     }
 
-    // Permite alcançar qualquer ponto e canto exato do mapa (0% a 100%) com 4 casas decimais de precisão
+    // Permite alcançar qualquer ponto e canto exato do mapa (0% a 100%)
+    newPctX = Math.max(0, Math.min(100, newPctX));
+    newPctY = Math.max(0, Math.min(100, newPctY));
+
+    // Limita rigidamente a movimentação do jogador ao raio máximo definido pelo Mestre (padrão 9m)
+    if (dragState.enforceMoveLimit) {
+      const maxDeltaPct = dragState.moveRemainingMeters / RULER_METERS_PER_PCT;
+      const dx = newPctX - dragState.originX;
+      const dy = newPctY - dragState.originY;
+      const distPct = Math.hypot(dx, dy);
+
+      let hitLimit = false;
+      if (distPct > maxDeltaPct) {
+        const ratio = distPct > 0 ? maxDeltaPct / distPct : 0;
+        newPctX = Math.max(0, Math.min(100, dragState.originX + dx * ratio));
+        newPctY = Math.max(0, Math.min(100, dragState.originY + dy * ratio));
+        hitLimit = true;
+      }
+
+      const dragMeters = Math.min(
+        dragState.moveRemainingMeters,
+        computeDistanceMeters(dragState.originX, dragState.originY, newPctX, newPctY)
+      );
+      dragState.currentDragMeters = dragMeters;
+      dragState.hitMoveLimit = hitLimit;
+
+      const totalUsed = Math.min(
+        dragState.moveMaxMeters,
+        Math.round((dragState.moveUsedBase + dragMeters) * 100) / 100
+      );
+      const remainingAfter = Math.max(
+        0,
+        Math.round((dragState.moveMaxMeters - totalUsed) * 100) / 100
+      );
+
+      setActiveMovePreview({
+        tokenId: token.id,
+        originX: dragState.originX,
+        originY: dragState.originY,
+        currentX: Math.round(newPctX * 10000) / 10000,
+        currentY: Math.round(newPctY * 10000) / 10000,
+        maxRadiusPct: maxDeltaPct,
+        dragMeters,
+        totalUsed,
+        maxMeters: dragState.moveMaxMeters,
+        remainingAfter,
+        hitLimit,
+      });
+    }
+
+    // 4 casas decimais de precisão
     newPctX = Math.max(0, Math.min(100, Math.round(newPctX * 10000) / 10000));
     newPctY = Math.max(0, Math.min(100, Math.round(newPctY * 10000) / 10000));
 
@@ -1137,6 +1331,7 @@ export function TacticalMapCanvas({
       dragState.trailingTimer = null;
     }
     dragState.cancelled = true;
+    setActiveMovePreview(null);
 
     try {
       e.currentTarget.releasePointerCapture?.(e.pointerId);
@@ -1146,9 +1341,21 @@ export function TacticalMapCanvas({
       x: dragState.latestX,
       y: dragState.latestY,
     };
+    const exactX = Math.max(0, Math.min(100, Math.round(Number(finalPos.x) * 10000) / 10000));
+    const exactY = Math.max(0, Math.min(100, Math.round(Number(finalPos.y) * 10000) / 10000));
+
+    const movedMeters = computeDistanceMeters(dragState.originX, dragState.originY, exactX, exactY);
+    const nextMoveUsed = dragState.enforceMoveLimit
+      ? Math.min(
+          dragState.moveMaxMeters,
+          Math.round((dragState.moveUsedBase + movedMeters) * 100) / 100
+        )
+      : undefined;
+
     const needsFinalSync =
-      Math.abs(finalPos.x - dragState.lastSentX) > 0.0001 ||
-      Math.abs(finalPos.y - dragState.lastSentY) > 0.0001 ||
+      (dragState.enforceMoveLimit && movedMeters > 0.005) ||
+      Math.abs(exactX - dragState.lastSentX) > 0.0001 ||
+      Math.abs(exactY - dragState.lastSentY) > 0.0001 ||
       dragState.inFlight ||
       dragState.lastSentAt === 0;
     draggingTokenRef.current = null;
@@ -1159,15 +1366,22 @@ export function TacticalMapCanvas({
         justDraggedRef.current = false;
       }, 150);
 
-      const exactX = Math.max(0, Math.min(100, Math.round(Number(finalPos.x) * 10000) / 10000));
-      const exactY = Math.max(0, Math.min(100, Math.round(Number(finalPos.y) * 10000) / 10000));
-
       try {
         if (needsFinalSync) {
           await onUpdateTokenPosition(token.id, {
             x: exactX,
             y: exactY,
+            ...(nextMoveUsed !== undefined ? { move_used: nextMoveUsed } : {}),
           });
+        }
+        if (
+          dragState.enforceMoveLimit &&
+          nextMoveUsed !== undefined &&
+          nextMoveUsed >= dragState.moveMaxMeters - 0.02
+        ) {
+          toast.info(
+            `Deslocamento máximo atingido (${formatMeters(dragState.moveMaxMeters)}m).`
+          );
         }
       } catch (err) {
         toast.error('Erro ao sincronizar movimento do token.');
@@ -1353,16 +1567,66 @@ export function TacticalMapCanvas({
     const currentIdx = initiativeOrder.findIndex((t) => t.id === map?.current_turn_token_id);
     const nextToken = initiativeOrder[(currentIdx + 1) % initiativeOrder.length];
     await onUpdateMap(map.id, { current_turn_token_id: nextToken?.id || null });
-    toast.info(`Turno de: ${nextToken?.name || 'Próximo'}`);
+    // Renova automaticamente o orçamento de movimento do personagem cujo turno começou
+    if (nextToken?.id && onUpdateTokenStats && Number(nextToken.move_used) > 0) {
+      onUpdateTokenStats(nextToken.id, { move_used: 0 }).catch(() => {});
+    }
+    toast.info(`Turno de: ${nextToken?.name || 'Próximo'} (movimento renovado)`);
   };
 
-  // Distância da régua em metros/pés
+  const handleResetAllPlayersMovement = async () => {
+    if (!isMaster || !onUpdateTokenStats || resettingMovement) return;
+    if (heroTokensOnMap.length === 0) {
+      toast.info('Nenhum herói no mapa atual para resetar.');
+      return;
+    }
+    setResettingMovement(true);
+    try {
+      await Promise.all(
+        heroTokensOnMap.map((t) => onUpdateTokenStats(t.id, { move_used: 0 }))
+      );
+      toast.success(`Movimento renovado para ${heroTokensOnMap.length} jogador(es)!`);
+    } catch {
+      toast.error('Erro ao resetar deslocamento dos jogadores.');
+    } finally {
+      setResettingMovement(false);
+    }
+  };
+
+  // Token do próprio jogador para HUD de deslocamento ao vivo
+  const ownPlayerToken = useMemo(() => {
+    if (isMaster) return null;
+    return (
+      visibleTokens.find(
+        (t) => t.owner_id === currentUserId || t.character_id === currentUserId
+      ) || null
+    );
+  }, [isMaster, visibleTokens, currentUserId]);
+
+  const ownPlayerMoveHud = useMemo(() => {
+    if (!ownPlayerToken) return null;
+    const base = getTokenMoveState(ownPlayerToken);
+    if (activeMovePreview && activeMovePreview.tokenId === ownPlayerToken.id) {
+      return {
+        maxMeters: activeMovePreview.maxMeters,
+        usedMeters: activeMovePreview.totalUsed,
+        remainingMeters: activeMovePreview.remainingAfter,
+        dragging: true,
+        hitLimit: activeMovePreview.hitLimit,
+      };
+    }
+    return {
+      maxMeters: base.maxMeters,
+      usedMeters: base.usedMeters,
+      remainingMeters: base.remainingMeters,
+      dragging: false,
+      hitLimit: base.remainingMeters <= 0.02,
+    };
+  }, [ownPlayerToken, getTokenMoveState, activeMovePreview]);
+
+  // Distância da régua em metros/pés (5x menor que a escala antiga: antigo 5m = novo 1m)
   const rulerDistance = rulerStart && rulerCurrent
-    ? Math.round(
-        Math.sqrt(
-          Math.pow(rulerCurrent.x - rulerStart.x, 2) + Math.pow(rulerCurrent.y - rulerStart.y, 2)
-        ) * 0.3 * 10
-      ) / 10
+    ? Math.round(computeDistanceMeters(rulerStart.x, rulerStart.y, rulerCurrent.x, rulerCurrent.y) * 10) / 10
     : 0;
 
   return (
@@ -1579,6 +1843,32 @@ export function TacticalMapCanvas({
                 </button>
                 <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
                   Atmosfera &amp; Visibilidade
+                </span>
+              </div>
+            )}
+
+            {isMaster && (
+              <div className="relative group flex justify-center w-full">
+                <button
+                  type="button"
+                  onClick={() => toggleSidebarPanel('movement')}
+                  aria-label="Limite de deslocamento dos jogadores"
+                  aria-expanded={sidebarPanel === 'movement'}
+                  title={`Limite de Movimento dos Jogadores (${formatMeters(mapMoveLimitMeters)}m)`}
+                  className={cn(
+                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                    sidebarPanel === 'movement'
+                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <Footprints className="h-4 w-4 text-slate-300" />
+                  <span className="absolute -bottom-0.5 -right-1 px-1 h-4 rounded-full bg-[#0c101b] border border-white/20 text-[8px] font-mono font-bold text-slate-200 flex items-center justify-center leading-none">
+                    {formatMeters(mapMoveLimitMeters)}m
+                  </span>
+                </button>
+                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                  Movimento dos Jogadores ({formatMeters(mapMoveLimitMeters)}m)
                 </span>
               </div>
             )}
@@ -2547,6 +2837,241 @@ export function TacticalMapCanvas({
                 </div>
               </>
             )}
+
+            {/* PAINEL DE CONTROLE DE MOVIMENTAÇÃO DOS JOGADORES (EXCLUSIVO DO MESTRE) */}
+            {sidebarPanel === 'movement' && isMaster && (
+              <>
+                <div className="px-3.5 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Footprints className="h-4 w-4 text-slate-300 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-100 truncate">
+                      Movimento dos Jogadores
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarPanel(null)}
+                    aria-label="Fechar painel de movimentação"
+                    className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
+                  {/* Limite Global do Mapa */}
+                  <div className="p-3 rounded-xl bg-white/[0.04] border border-white/12 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200 block">
+                          Distância Máxima (Padrão)
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {Math.round(mapMoveLimitMeters * 3.28)} ft •{' '}
+                          {Math.round((mapMoveLimitMeters / 1.5) * 10) / 10}q
+                        </span>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg bg-[#0c101b] border border-white/20 text-sm font-mono font-black text-white tabular-nums">
+                        {formatMeters(mapMoveLimitMeters)}m
+                      </span>
+                    </div>
+
+                    {/* Ajuste Stepper + Input Direto */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => commitMapMoveLimit(Math.max(1.5, mapMoveLimitMeters - 1.5))}
+                        aria-label="Diminuir 1.5 metros"
+                        className="h-8 px-2.5 rounded-lg bg-white/8 border border-white/15 hover:bg-white/15 text-xs font-mono font-bold text-white transition-colors"
+                      >
+                        -1.5m
+                      </button>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        max="200"
+                        value={moveLimitInput}
+                        onChange={(e) => setMoveLimitInput(e.target.value)}
+                        onBlur={() => commitMapMoveLimit(moveLimitInput)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            commitMapMoveLimit(moveLimitInput);
+                          }
+                        }}
+                        aria-label="Limite de movimento em metros"
+                        className="flex-1 min-w-0 h-8 rounded-lg bg-[#0c101b] border border-white/15 text-center text-xs font-mono font-black text-white focus:outline-none focus:border-white/35 tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => commitMapMoveLimit(Math.min(200, mapMoveLimitMeters + 1.5))}
+                        aria-label="Aumentar 1.5 metros"
+                        className="h-8 px-2.5 rounded-lg bg-white/8 border border-white/15 hover:bg-white/15 text-xs font-mono font-bold text-white transition-colors"
+                      >
+                        +1.5m
+                      </button>
+                    </div>
+
+                    {/* Atalhos Rápidos de Distância */}
+                    <div className="grid grid-cols-4 gap-1">
+                      {MOVE_LIMIT_PRESETS.map((preset) => {
+                        const active = Math.abs(mapMoveLimitMeters - preset) < 0.05;
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => commitMapMoveLimit(preset)}
+                            className={cn(
+                              'py-1.5 rounded-lg border text-[10px] font-mono font-bold transition-all',
+                              active
+                                ? 'bg-white/18 border-white/35 text-white'
+                                : 'bg-[#0c101b] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            )}
+                          >
+                            {formatMeters(preset)}m
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-snug">
+                      Jogadores ficam sempre limitados à distância definida acima (ou ao limite individual do herói). Você pode aumentar a qualquer momento ou resetar o movimento para o próximo turno.
+                    </p>
+                  </div>
+
+                  {/* Ação 1-clique para renovar movimento de todos os jogadores */}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    loading={resettingMovement}
+                    disabled={heroTokensOnMap.length === 0}
+                    onClick={handleResetAllPlayersMovement}
+                    className="w-full text-xs gap-1.5"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 text-slate-300" />
+                    Resetar Movimento de Todos ({heroTokensOnMap.length})
+                  </Button>
+
+                  {/* Controle Ao Vivo por Herói no Mapa */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-0.5">
+                      Heróis no Mapa ({heroTokensOnMap.length})
+                    </span>
+
+                    {heroTokensOnMap.length === 0 ? (
+                      <div className="py-5 px-3 text-center text-[11px] text-slate-400 rounded-xl border border-dashed border-white/12">
+                        Nenhum herói posicionado neste mapa ainda.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {heroTokensOnMap.map((hero) => {
+                          const st = getTokenMoveState(hero);
+                          const pct =
+                            st.maxMeters > 0
+                              ? Math.min(100, Math.round((st.usedMeters / st.maxMeters) * 100))
+                              : 100;
+                          return (
+                            <div
+                              key={hero.id}
+                              className="p-2.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-2"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold text-white truncate">
+                                    {hero.name}
+                                  </div>
+                                  <div className="text-[10px] font-mono text-slate-400">
+                                    {formatMeters(st.usedMeters)}m / {formatMeters(st.maxMeters)}m
+                                    {st.hasCustom ? ' (individual)' : ''}
+                                  </div>
+                                </div>
+                                <span
+                                  className={cn(
+                                    'px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border shrink-0',
+                                    st.remainingMeters <= 0.02
+                                      ? 'bg-rose-500/15 border-rose-400/35 text-rose-300'
+                                      : 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
+                                  )}
+                                >
+                                  {formatMeters(st.remainingMeters)}m livre
+                                </span>
+                              </div>
+
+                              <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                <div
+                                  className={cn(
+                                    'h-full transition-all duration-200',
+                                    pct >= 100
+                                      ? 'bg-rose-500'
+                                      : pct >= 70
+                                      ? 'bg-amber-400'
+                                      : 'bg-sky-400'
+                                  )}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateTokenStats?.(hero.id, {
+                                      move_limit: Math.min(200, Math.round((st.maxMeters + 3) * 10) / 10),
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
+                                  title="Aumentar limite individual em +3m"
+                                >
+                                  +3m
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateTokenStats?.(hero.id, {
+                                      move_limit: Math.min(200, Math.round((st.maxMeters + 9) * 10) / 10),
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
+                                  title="Disparada (+9m no limite individual)"
+                                >
+                                  +9m
+                                </button>
+                                {st.hasCustom && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onUpdateTokenStats?.(hero.id, { move_limit: null })
+                                    }
+                                    className="px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 hover:bg-white/12 text-[10px] font-semibold text-slate-400 hover:text-white transition-colors"
+                                    title="Voltar a seguir o limite global do mapa"
+                                  >
+                                    Padrão
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateTokenStats?.(hero.id, { move_used: 0 })
+                                  }
+                                  disabled={st.usedMeters <= 0}
+                                  className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/8 border border-white/15 hover:bg-white/15 disabled:opacity-35 text-[10px] font-bold text-white transition-colors"
+                                  title="Zerar metros gastos deste jogador"
+                                >
+                                  <RotateCcw className="h-3 w-3 text-slate-300" />
+                                  Resetar
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -2649,6 +3174,64 @@ export function TacticalMapCanvas({
         );
       })()}
 
+      {/* HUD COMPACTO DE DESLOCAMENTO RESTANTE PARA O JOGADOR */}
+      {!isMaster && ownPlayerMoveHud && (
+        <div
+          className={cn(
+            'pointer-events-none absolute bottom-3 left-3 z-30 flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-xl shadow-lg transition-all',
+            ownPlayerMoveHud.hitLimit
+              ? 'bg-rose-950/90 border-rose-400/45 text-rose-100'
+              : ownPlayerMoveHud.dragging
+              ? 'bg-[#0c101b]/95 border-sky-400/50 text-white'
+              : 'bg-[#0c101b]/88 border-white/15 text-slate-200'
+          )}
+        >
+          <Footprints
+            className={cn(
+              'h-3.5 w-3.5 shrink-0',
+              ownPlayerMoveHud.hitLimit ? 'text-rose-300' : 'text-sky-300'
+            )}
+          />
+          <div className="space-y-0.5">
+            <div className="text-[11px] font-mono font-bold leading-none flex items-center gap-1.5">
+              <span>
+                Movimento: {formatMeters(ownPlayerMoveHud.remainingMeters)}m /{' '}
+                {formatMeters(ownPlayerMoveHud.maxMeters)}m
+              </span>
+              {ownPlayerMoveHud.hitLimit && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-500/25 border border-rose-400/40 text-[9px] font-extrabold uppercase text-rose-200">
+                  Limite
+                </span>
+              )}
+            </div>
+            <div className="w-32 h-1 rounded-full bg-white/15 overflow-hidden">
+              <div
+                className={cn(
+                  'h-full transition-all duration-100',
+                  ownPlayerMoveHud.hitLimit
+                    ? 'bg-rose-400'
+                    : ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters) <= 0.3
+                    ? 'bg-amber-400'
+                    : 'bg-sky-400'
+                )}
+                style={{
+                  width: `${Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Math.round(
+                        (ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters)) *
+                          100
+                      )
+                    )
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Indicador discreto durante upgrade progressivo de textura HD */}
       {loadingHd && (
         <div className="pointer-events-none absolute bottom-3 right-3 z-30 flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0c101b]/90 border border-white/15 text-[10px] font-mono text-slate-300 backdrop-blur-xl shadow-lg">
@@ -2688,6 +3271,7 @@ export function TacticalMapCanvas({
 
       {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM — ZERO ACHATAMENTO / PROPORÇÃO 1:1 EXATA) */}
       <div
+        ref={viewportRef}
         className={cn(
           'w-full h-full flex items-center justify-center overflow-hidden',
           activeTool === 'ruler' || activeTool === 'ping'
@@ -2702,7 +3286,10 @@ export function TacticalMapCanvas({
       >
         <div
           ref={mapImageRef}
-          className="relative shrink-0 transition-transform duration-75 will-change-transform"
+          className={cn(
+            'relative shrink-0 will-change-transform',
+            isPanning || isWheelZooming ? 'transition-none' : 'transition-transform duration-100'
+          )}
           style={{
             width: `${mapDisplaySize.width}px`,
             height: `${mapDisplaySize.height}px`,
@@ -2820,6 +3407,73 @@ export function TacticalMapCanvas({
             />
           )}
 
+          {/* Círculo Visual de Limite de Movimento do Jogador durante o Arraste */}
+          {activeMovePreview && (
+            <>
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className="absolute inset-0 w-full h-full pointer-events-none z-[29]"
+                style={{ overflow: 'visible' }}
+              >
+                <circle
+                  cx={activeMovePreview.originX}
+                  cy={activeMovePreview.originY}
+                  r={activeMovePreview.maxRadiusPct}
+                  fill={
+                    activeMovePreview.hitLimit
+                      ? 'rgba(244, 63, 94, 0.08)'
+                      : 'rgba(56, 189, 248, 0.07)'
+                  }
+                  stroke={
+                    activeMovePreview.hitLimit
+                      ? 'rgba(251, 113, 133, 0.85)'
+                      : 'rgba(56, 189, 248, 0.72)'
+                  }
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={activeMovePreview.originX}
+                  y1={activeMovePreview.originY}
+                  x2={activeMovePreview.currentX}
+                  y2={activeMovePreview.currentY}
+                  stroke={activeMovePreview.hitLimit ? '#fb7185' : '#38bdf8'}
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <circle
+                  cx={activeMovePreview.originX}
+                  cy={activeMovePreview.originY}
+                  r={0.45}
+                  fill={activeMovePreview.hitLimit ? '#fb7185' : '#38bdf8'}
+                />
+              </svg>
+
+              {activeMovePreview.dragMeters > 0.05 && (
+                <div
+                  className={cn(
+                    'absolute pointer-events-none z-30 px-2 py-0.5 rounded-full border text-[11px] font-mono font-extrabold whitespace-nowrap shadow-xl backdrop-blur-md',
+                    activeMovePreview.hitLimit
+                      ? 'bg-rose-950/95 border-rose-400/70 text-rose-100'
+                      : 'bg-[#0c101b]/95 border-sky-400/60 text-sky-100'
+                  )}
+                  style={{
+                    left: `${(activeMovePreview.originX + activeMovePreview.currentX) / 2}%`,
+                    top: `${(activeMovePreview.originY + activeMovePreview.currentY) / 2}%`,
+                    transform: `translate(-50%, -140%) scale(${mapScaleFactor})`,
+                    transformOrigin: 'center bottom',
+                  }}
+                >
+                  {formatMeters(activeMovePreview.totalUsed)}m / {formatMeters(activeMovePreview.maxMeters)}m
+                  {activeMovePreview.hitLimit ? ' • Limite!' : ''}
+                </div>
+              )}
+            </>
+          )}
+
           {/* Linha da Régua Ativa (com etiqueta nítida em metros, pés e quadrados) */}
           {rulerStart && rulerCurrent && (
             <svg
@@ -2860,7 +3514,7 @@ export function TacticalMapCanvas({
                 dy={-10 * mapScaleFactor}
                 className="font-mono"
               >
-                {rulerDistance}m ({Math.round(rulerDistance * 3.28)} ft • {Math.max(0, Math.round((rulerDistance / 1.5) * 10) / 10)}q)
+                {formatMeters(rulerDistance)}m ({Math.round(rulerDistance * 3.28)} ft • {Math.max(0, Math.round((rulerDistance / 1.5) * 10) / 10)}q)
               </text>
             </svg>
           )}
@@ -3765,6 +4419,102 @@ export function TacticalMapCanvas({
                       <p className="text-[10px] text-slate-400 leading-snug">
                         Iluminação individual tem prioridade e nunca é sobrescrita pela tocha global do menu de Atmosfera.
                       </p>
+                    </div>
+                  );
+                })()}
+
+                {/* Controle Individual de Limite de Movimento do Jogador */}
+                {activeSelectedToken.type === 'player' && (() => {
+                  const st = getTokenMoveState(activeSelectedToken);
+                  return (
+                    <div className="p-3.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                          <Footprints className="h-4 w-4 text-slate-300 shrink-0" />
+                          Limite de Movimento
+                        </span>
+                        <span
+                          className={cn(
+                            'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border',
+                            st.remainingMeters <= 0.02
+                              ? 'bg-rose-500/15 border-rose-400/40 text-rose-200'
+                              : 'bg-sky-500/12 border-sky-400/35 text-sky-200'
+                          )}
+                        >
+                          {formatMeters(st.usedMeters)}m / {formatMeters(st.maxMeters)}m
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: null })
+                          }
+                          className={cn(
+                            'py-1.5 px-2 rounded-lg border text-[10px] font-semibold transition-all text-center',
+                            !st.hasCustom
+                              ? 'bg-white/16 border-white/35 text-white'
+                              : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                          )}
+                        >
+                          Mapa ({formatMeters(mapMoveLimitMeters)}m)
+                        </button>
+                        {[6, 9, 12, 15, 18, 24, 30].map((mVal) => {
+                          const isSelected = st.hasCustom && Math.abs(st.maxMeters - mVal) < 0.05;
+                          return (
+                            <button
+                              key={mVal}
+                              type="button"
+                              onClick={() =>
+                                onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: mVal })
+                              }
+                              className={cn(
+                                'py-1.5 px-2 rounded-lg border text-[10px] font-mono font-bold transition-all text-center',
+                                isSelected
+                                  ? 'bg-white/16 border-white/35 text-white'
+                                  : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                              )}
+                            >
+                              {mVal}m
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <FormField label="Distância individual (metros):">
+                          <Input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="200"
+                            value={st.maxMeters}
+                            onChange={(e) => {
+                              const parsed = Number(e.target.value);
+                              if (Number.isFinite(parsed) && parsed >= 0) {
+                                onUpdateTokenStats?.(activeSelectedToken.id, {
+                                  move_limit: Math.min(200, Math.round(parsed * 10) / 10),
+                                });
+                              }
+                            }}
+                            className="h-8 text-xs font-mono"
+                          />
+                        </FormField>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() =>
+                            onUpdateTokenStats?.(activeSelectedToken.id, { move_used: 0 })
+                          }
+                          disabled={st.usedMeters <= 0}
+                          className="h-8 text-xs shrink-0 self-end gap-1"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 text-slate-300" />
+                          Resetar Mov.
+                        </Button>
+                      </div>
                     </div>
                   );
                 })()}

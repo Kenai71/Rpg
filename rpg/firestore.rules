@@ -110,6 +110,7 @@ service cloud.firestore {
     //   - fog_enabled: bool (optional)
     //   - combat_active: bool (optional)
     //   - current_turn_token_id: string | null (optional, 0..128 chars)
+    //   - player_move_limit: number | null (optional, 0.5..200 - global max player movement distance in meters configured by the Master; defaults to 9m in app)
     //   - effects: map | null (optional, size <= 30 - atmosphere overlays: weather, fog, darkness, blackout, torchRadius)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
@@ -149,6 +150,8 @@ service cloud.firestore {
     //   - sync_group_id: string | null (optional, 0..128 chars - links identical entities across maps for synchronized HP/vitals)
     //   - light_radius: number | null (optional, 0..85 - per-token light radius, or null/omitted to inherit map global torch setting)
     //   - light_color: string | null (optional, 0..32 chars - per-token light tint e.g. 'warm', 'arcane', 'holy', 'emerald', 'crimson', or null/omitted)
+    //   - move_limit: number | null (optional, 0..200 - per-token custom max movement distance in meters, or null/omitted to inherit map player_move_limit)
+    //   - move_used: number | null (optional, 0..500 - meters already moved by this token in the current turn/cycle)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
     //
@@ -434,6 +437,7 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'fog_enabled') &&
         isSafeOptionalBool(data, 'combat_active') &&
         isSafeOptionalString(data, 'current_turn_token_id', 0, 128) &&
+        isSafeOptionalNumber(data, 'player_move_limit', 0.5, 200) &&
         isSafeOptionalMap(data, 'effects', 30) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
@@ -471,6 +475,8 @@ service cloud.firestore {
         isSafeOptionalString(data, 'sync_group_id', 0, 128) &&
         isSafeOptionalNumber(data, 'light_radius', 0, 85) &&
         isSafeOptionalString(data, 'light_color', 0, 32) &&
+        isSafeOptionalNumber(data, 'move_limit', 0, 200) &&
+        isSafeOptionalNumber(data, 'move_used', 0, 500) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }
