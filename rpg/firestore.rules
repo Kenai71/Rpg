@@ -110,6 +110,7 @@ service cloud.firestore {
     //   - fog_enabled: bool (optional)
     //   - combat_active: bool (optional)
     //   - current_turn_token_id: string | null (optional, 0..128 chars)
+    //   - effects: map | null (optional, size <= 30 - atmosphere overlays: weather, fog, darkness, blackout, torchRadius)
     //   - createdAt: timestamp (optional)
     //   - updatedAt: timestamp (optional)
     //
@@ -204,6 +205,7 @@ service cloud.firestore {
     //   - loopMode: string | null (optional, 'playlist' | 'one' | 'off')
     //   - shuffle: bool | null (optional)
     //   - syncVersion: int | null (optional, 0..100000000)
+    //   - lastSfx: map | null (optional, size <= 20 - synchronized soundboard trigger payload)
     //   - updatedBy: string | null (optional, 0..128 chars)
     //   - updatedByName: string | null (optional, 0..60 chars)
     //   - serverUpdatedAt: timestamp | null (optional)
@@ -216,6 +218,49 @@ service cloud.firestore {
     //   - index: int (required, 0..32)
     //   - data: string (required, 1..850000 chars - base64 audio chunk payload)
     //   - createdAt: timestamp | null (optional)
+    //
+    // Collection: table_handouts
+    // Document ID: {handoutId} (auto-generated - synchronized table handouts/letters/clues)
+    // Fields:
+    //   - title: string (required, 1..150 chars)
+    //   - subtitle: string | null (optional, 0..120 chars)
+    //   - content: string | null (optional, 0..8000 chars)
+    //   - imageUrl: string | null (optional, 0..850000 chars)
+    //   - style: string | null (optional, 'parchment' | 'image' | 'combined')
+    //   - is_active: bool | null (optional)
+    //   - visible_to: list | null (optional, size <= 60)
+    //   - created_by: string | null (optional, 0..128 chars)
+    //   - shownAt: timestamp | null (optional)
+    //   - createdAt: timestamp | null (optional)
+    //   - updatedAt: timestamp | null (optional)
+    //
+    // Collection: table_whispers
+    // Document ID: {whisperId} (auto-generated - strict private Master-to-Player whispers)
+    // Fields:
+    //   - target_uid: string (required, 1..128 chars, immutable for recipient)
+    //   - target_name: string | null (optional, 0..60 chars, immutable for recipient)
+    //   - sender_uid: string | null (optional, 0..128 chars, immutable for recipient)
+    //   - sender_name: string | null (optional, 0..60 chars, immutable for recipient)
+    //   - message: string (required, 1..2000 chars, immutable for recipient)
+    //   - category: string | null (optional, 'secret' | 'perception' | 'lore' | 'warning', immutable for recipient)
+    //   - read: bool | null (optional, mutable by recipient)
+    //   - createdAt: timestamp | null (optional, immutable for recipient)
+    //   - readAt: timestamp | null (optional, mutable by recipient)
+    //   - updatedAt: timestamp | null (optional)
+    //
+    // Collection: loot_chests
+    // Document ID: {chestId} (auto-generated - shared post-combat loot chests with selective visibility)
+    // Fields:
+    //   - title: string (required, 1..120 chars, immutable for players)
+    //   - theme: string | null (optional, 0..120 chars, immutable for players)
+    //   - status: string (required, 'open' | 'closed', immutable for players)
+    //   - gold: int (required, 0..2000000000, non-increasing for players)
+    //   - visible_to: list (required, size <= 60, immutable for players; 'all' or player UIDs)
+    //   - items: list (required, size <= 40, size non-increasing for players)
+    //   - logs: list | null (optional, size <= 80)
+    //   - created_by: string | null (optional, 0..128 chars, immutable for players)
+    //   - createdAt: timestamp | null (optional, immutable for players)
+    //   - updatedAt: timestamp | null (optional)
     //
     // ===============================================================
 
@@ -277,6 +322,11 @@ service cloud.firestore {
     function isSafeOptionalList(data, field, maxSize) {
       return !(field in data) || data[field] == null ||
         (data[field] is list && data[field].size() <= maxSize);
+    }
+
+    function isSafeOptionalMap(data, field, maxSize) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is map && data[field].size() <= maxSize);
     }
 
     function isSafeOptionalTimestamp(data, field) {
@@ -382,6 +432,7 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'fog_enabled') &&
         isSafeOptionalBool(data, 'combat_active') &&
         isSafeOptionalString(data, 'current_turn_token_id', 0, 128) &&
+        isSafeOptionalMap(data, 'effects', 30) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }
@@ -470,6 +521,7 @@ service cloud.firestore {
         (!('loopMode' in data) || data.loopMode == null || data.loopMode in ['playlist', 'one', 'off']) &&
         isSafeOptionalBool(data, 'shuffle') &&
         isSafeOptionalInt(data, 'syncVersion', 0, 100000000) &&
+        isSafeOptionalMap(data, 'lastSfx', 20) &&
         isSafeOptionalString(data, 'updatedBy', 0, 128) &&
         isSafeOptionalString(data, 'updatedByName', 0, 60) &&
         isSafeOptionalTimestamp(data, 'serverUpdatedAt') &&
@@ -481,6 +533,46 @@ service cloud.firestore {
         'index' in data && data.index is int && data.index >= 0 && data.index <= 32 &&
         'data' in data && data.data is string && data.data.size() >= 1 && data.data.size() <= 850000 &&
         isSafeOptionalTimestamp(data, 'createdAt');
+    }
+
+    function isValidTableHandout(data) {
+      return 'title' in data && isSafeString(data.title, 1, 150) &&
+        isSafeOptionalString(data, 'subtitle', 0, 120) &&
+        isSafeOptionalString(data, 'content', 0, 8000) &&
+        isSafeOptionalString(data, 'imageUrl', 0, 850000) &&
+        (!('style' in data) || data.style == null || data.style in ['parchment', 'image', 'combined']) &&
+        isSafeOptionalBool(data, 'is_active') &&
+        isSafeOptionalList(data, 'visible_to', 60) &&
+        isSafeOptionalString(data, 'created_by', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'shownAt') &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidTableWhisper(data) {
+      return 'target_uid' in data && isSafeString(data.target_uid, 1, 128) &&
+        isSafeOptionalString(data, 'target_name', 0, 60) &&
+        isSafeOptionalString(data, 'sender_uid', 0, 128) &&
+        isSafeOptionalString(data, 'sender_name', 0, 60) &&
+        'message' in data && isSafeString(data.message, 1, 2000) &&
+        (!('category' in data) || data.category == null || data.category in ['secret', 'perception', 'lore', 'warning']) &&
+        isSafeOptionalBool(data, 'read') &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'readAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidLootChest(data) {
+      return 'title' in data && isSafeString(data.title, 1, 120) &&
+        isSafeOptionalString(data, 'theme', 0, 120) &&
+        'status' in data && data.status in ['open', 'closed'] &&
+        'gold' in data && isSafeInt(data.gold, 0, 2000000000) &&
+        'visible_to' in data && data.visible_to is list && data.visible_to.size() <= 60 &&
+        'items' in data && data.items is list && data.items.size() <= 40 &&
+        isSafeOptionalList(data, 'logs', 80) &&
+        isSafeOptionalString(data, 'created_by', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
     }
 
     // ===============================================================
@@ -749,6 +841,65 @@ service cloud.firestore {
         allow create, update: if isMaster() && isValidAudioChunk(request.resource.data);
         allow delete: if isMaster();
       }
+    }
+
+    // Synchronized Table Handouts (Letters, Clues, Visual Props shown by Master)
+    match /table_handouts/{handoutId} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isMaster() && isValidTableHandout(request.resource.data);
+
+      allow delete: if isMaster();
+    }
+
+    // Strict Private Master-to-Player Whispers
+    match /table_whispers/{whisperId} {
+      allow read: if isMaster() ||
+        (isAuthenticated() && resource.data.target_uid == request.auth.uid);
+
+      allow create: if isMaster() && isValidTableWhisper(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+        isValidTableWhisper(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            resource.data.target_uid == request.auth.uid &&
+            request.resource.data.target_uid == resource.data.target_uid &&
+            request.resource.data.message == resource.data.message &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isMaster();
+    }
+
+    // Shared Post-Combat Loot Chests (Selective Visibility)
+    match /loot_chests/{chestId} {
+      allow read: if isMaster() ||
+        (
+          isAuthenticated() &&
+          ('all' in resource.data.visible_to || request.auth.uid in resource.data.visible_to)
+        );
+
+      allow create: if isMaster() && isValidLootChest(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+        isValidLootChest(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            resource.data.status == 'open' &&
+            ('all' in resource.data.visible_to || request.auth.uid in resource.data.visible_to) &&
+            request.resource.data.status == resource.data.status &&
+            request.resource.data.visible_to == resource.data.visible_to &&
+            request.resource.data.gold <= resource.data.gold &&
+            request.resource.data.items.size() <= resource.data.items.size() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['gold', 'items', 'logs', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isMaster();
     }
 
     // Default deny catch-all for any unmatched paths or collections

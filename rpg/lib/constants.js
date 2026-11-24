@@ -31,6 +31,7 @@ export const ITEM_TYPES = [
   { value: 'feet', label: 'Pés' },
   { value: 'ring', label: 'Anel' },
   { value: 'consumable', label: 'Consumível' },
+  { value: 'misc', label: 'Objeto / Material' },
 ];
 
 export const EQUIPMENT_SLOTS = [

@@ -278,3 +278,38 @@ h4 {
   transform-origin: bottom center;
   animation: musicEqBar 0.85s ease-in-out infinite;
 }
+
+/* Drifting atmospheric fog layers over the tactical map */
+@keyframes mapFogDriftSlow {
+  0% {
+    transform: translate3d(-4%, -2%, 0) scale(1.04);
+  }
+  50% {
+    transform: translate3d(4%, 3%, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-4%, -2%, 0) scale(1.04);
+  }
+}
+
+@keyframes mapFogDriftFast {
+  0% {
+    transform: translate3d(5%, -3%, 0) scale(1.02);
+  }
+  50% {
+    transform: translate3d(-5%, 2%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(5%, -3%, 0) scale(1.02);
+  }
+}
+
+.map-fog-drift-slow {
+  animation: mapFogDriftSlow 24s ease-in-out infinite;
+  will-change: transform;
+}
+
+.map-fog-drift-fast {
+  animation: mapFogDriftFast 16s ease-in-out infinite;
+  will-change: transform;
+}

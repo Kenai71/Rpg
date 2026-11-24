@@ -20,6 +20,7 @@ import { Button } from '../ui/Button';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { RoleBadge } from '../ui/Badge';
 import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
+import { MasterNarrationToolbar } from '../tabletop/TabletopImmersionModals';
 import { cn } from '../../lib/utils';
 
 const NAV_ITEMS = [
@@ -183,7 +184,8 @@ export function MasterShell({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <MasterNarrationToolbar />
               <TabletopMusicTriggerButton />
               <ThemeSwitcher className="hidden sm:inline-flex" />
             </div>

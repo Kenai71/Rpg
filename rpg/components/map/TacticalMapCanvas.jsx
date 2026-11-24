@@ -6,9 +6,12 @@ import {
   ArrowDown,
   BookOpen,
   ChevronRight,
+  CloudLightning,
+  CloudRain,
   Compass,
   Crosshair,
   Dices,
+  DoorOpen,
   Droplet,
   Eye,
   EyeOff,
@@ -31,6 +34,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Skull,
+  Swords,
   Trash2,
   Unlock,
   User,
@@ -44,6 +48,12 @@ import { Badge } from '../ui/Badge';
 import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { TacticalDice3D } from './TacticalDice3D';
+import {
+  MAP_EFFECT_PRESETS,
+  MAP_WEATHER_OPTIONS,
+  MapAtmosphereOverlay,
+  normalizeMapEffects,
+} from './MapAtmosphereOverlay';
 import { useTabletopMusic } from '../music/TabletopMusicProvider';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import { computeAutoGridSize, loadMapHdImageUrl } from '../../lib/rpg-service';
@@ -455,10 +465,57 @@ export function TacticalMapCanvas({
     return deduped;
   }, [pings, localPings, now, map?.id]);
 
-  // Sidebar do Mapa: Painéis contextuais integrados ('dice' | 'initiative' | null) & collapse mobile
+  // Sidebar do Mapa: Painéis contextuais integrados ('dice' | 'initiative' | 'effects' | null) & collapse mobile
   const MAX_ROLL_HISTORY = 15;
   const [sidebarPanel, setSidebarPanel] = useState(map?.combat_active ? 'initiative' : null);
   const [mobileRailOpen, setMobileRailOpen] = useState(true);
+
+  // Atmosfera & Visibilidade do Mapa (Clima, Névoa, Escuridão, Tocha, Blackout)
+  const [localEffects, setLocalEffects] = useState(() => normalizeMapEffects(map?.effects));
+  const [previewEffectsAsPlayer, setPreviewEffectsAsPlayer] = useState(false);
+  const effectsSaveTimerRef = useRef(null);
+
+  useEffect(() => {
+    setLocalEffects(normalizeMapEffects(map?.effects));
+  }, [map?.id, map?.effects]);
+
+  useEffect(() => {
+    return () => {
+      if (effectsSaveTimerRef.current) clearTimeout(effectsSaveTimerRef.current);
+    };
+  }, []);
+
+  const hasAnyMapEffect =
+    localEffects.weather !== 'none' ||
+    localEffects.fog > 0 ||
+    localEffects.darkness > 0 ||
+    localEffects.blackout;
+
+  const commitMapEffects = useCallback(
+    (nextEffects, debounceMs = 0) => {
+      const normalized = normalizeMapEffects(nextEffects);
+      setLocalEffects(normalized);
+      if (!isMaster || !onUpdateMap || !map?.id) return;
+
+      if (effectsSaveTimerRef.current) {
+        clearTimeout(effectsSaveTimerRef.current);
+        effectsSaveTimerRef.current = null;
+      }
+
+      const persist = () => {
+        onUpdateMap(map.id, { effects: normalized }).catch((err) => {
+          toast.error(err?.message || 'Erro ao sincronizar efeitos do mapa.');
+        });
+      };
+
+      if (debounceMs > 0) {
+        effectsSaveTimerRef.current = setTimeout(persist, debounceMs);
+      } else {
+        persist();
+      }
+    },
+    [isMaster, onUpdateMap, map?.id]
+  );
   const [diceCount, setDiceCount] = useState(1);
   const [diceCountInput, setDiceCountInput] = useState('1');
   const [recentRoll, setRecentRoll] = useState(null);
@@ -1021,6 +1078,19 @@ export function TacticalMapCanvas({
   // Tokens visíveis (Mestre vê todos; jogadores não veem tokens com hidden === true)
   const visibleTokens = tokens.filter((t) => (isMaster ? true : !t.hidden));
 
+  // Posição de foco da Tocha / Baixa Visibilidade (acompanha o token do jogador em tempo real durante o arraste)
+  const heroFocusPct = useMemo(() => {
+    const heroTok = !isMaster
+      ? visibleTokens.find((t) => t.owner_id === currentUserId || t.character_id === currentUserId)
+      : visibleTokens.find((t) => t.type === 'player');
+    if (!heroTok) return { x: 50, y: 50 };
+    const rawPos = localTokenPositions[heroTok.id] || { x: heroTok.x, y: heroTok.y };
+    return {
+      x: Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50,
+      y: Number.isFinite(Number(rawPos.y)) ? Number(rawPos.y) : 50,
+    };
+  }, [isMaster, visibleTokens, currentUserId, localTokenPositions]);
+
   // Ordenação de iniciativa para combate
   const initiativeOrder = [...visibleTokens].sort((a, b) => (b.initiative || 0) - (a.initiative || 0));
 
@@ -1227,6 +1297,37 @@ export function TacticalMapCanvas({
                 Ajustar à Tela
               </span>
             </div>
+
+            {isMaster && (
+              <div className="relative group flex justify-center w-full">
+                <button
+                  type="button"
+                  onClick={() => toggleSidebarPanel('effects')}
+                  aria-label="Atmosfera, clima e visibilidade do mapa"
+                  aria-expanded={sidebarPanel === 'effects'}
+                  title="Efeitos do Mapa (Chuva, Tempestade, Névoa, Escuridão, Ocultar Mapa)"
+                  className={cn(
+                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                    sidebarPanel === 'effects'
+                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <CloudRain className="h-4 w-4 text-slate-300" />
+                  {hasAnyMapEffect && (
+                    <span
+                      className={cn(
+                        'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0a0d16]',
+                        localEffects.blackout ? 'bg-amber-400 animate-pulse' : 'bg-sky-400'
+                      )}
+                    />
+                  )}
+                </button>
+                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                  Atmosfera &amp; Visibilidade
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="w-7 h-px bg-white/10 my-0.5 shrink-0" />
@@ -1872,6 +1973,263 @@ export function TacticalMapCanvas({
                 </div>
               </>
             )}
+
+            {sidebarPanel === 'effects' && isMaster && (
+              <>
+                <div className="px-3.5 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <CloudRain className="h-4 w-4 text-slate-300 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-100 truncate">
+                      Atmosfera &amp; Clima
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {hasAnyMapEffect && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          commitMapEffects({
+                            weather: 'none',
+                            fog: 0,
+                            darkness: 0,
+                            torchRadius: 0,
+                            blackout: false,
+                          })
+                        }
+                        title="Limpar todos os efeitos do mapa"
+                        className="px-2 py-0.5 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-bold text-slate-300 hover:text-white transition-colors"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSidebarPanel(null)}
+                      aria-label="Fechar painel de efeitos"
+                      className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-4">
+                  {/* Ações rápidas de Visibilidade / Cortina Secreta */}
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        commitMapEffects({
+                          ...localEffects,
+                          blackout: !localEffects.blackout,
+                        })
+                      }
+                      className={cn(
+                        'w-full px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-between gap-2 transition-all',
+                        localEffects.blackout
+                          ? 'bg-amber-500/20 border-amber-400/55 text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.2)]'
+                          : 'bg-white/[0.05] border-white/15 text-slate-200 hover:bg-white/12 hover:text-white'
+                      )}
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        {localEffects.blackout ? (
+                          <EyeOff className="h-4 w-4 text-amber-300 shrink-0" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-slate-300 shrink-0" />
+                        )}
+                        <span className="truncate">
+                          {localEffects.blackout ? 'Mapa Oculto (Revelar)' : 'Ocultar Mapa p/ Jogadores'}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          'px-1.5 py-0.5 rounded-md text-[9px] font-mono uppercase shrink-0',
+                          localEffects.blackout
+                            ? 'bg-amber-400/25 text-amber-200'
+                            : 'bg-white/10 text-slate-400'
+                        )}
+                      >
+                        {localEffects.blackout ? 'ATIVO' : 'OFF'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPreviewEffectsAsPlayer((v) => !v)}
+                      className={cn(
+                        'w-full px-3 py-2 rounded-xl border text-[11px] font-semibold flex items-center justify-between gap-2 transition-all',
+                        previewEffectsAsPlayer
+                          ? 'bg-white/15 border-white/30 text-white'
+                          : 'bg-[#0c101b] border-white/12 text-slate-300 hover:text-white hover:bg-white/10'
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 text-slate-300" />
+                        Ver como Jogador
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {previewEffectsAsPlayer ? 'Prévia ON' : 'Visão Mestre'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Cenários Prontos em 1 clique */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Presets Rápidos
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {MAP_EFFECT_PRESETS.map((preset) => {
+                        const isMatch =
+                          localEffects.weather === preset.effects.weather &&
+                          localEffects.fog === preset.effects.fog &&
+                          localEffects.darkness === preset.effects.darkness &&
+                          localEffects.torchRadius === preset.effects.torchRadius &&
+                          localEffects.blackout === preset.effects.blackout;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => commitMapEffects(preset.effects)}
+                            className={cn(
+                              'px-2.5 py-2 rounded-xl border text-[11px] font-semibold text-left truncate transition-all',
+                              isMatch
+                                ? 'bg-white/16 border-white/35 text-white'
+                                : 'bg-white/[0.04] border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                            )}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Clima */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Clima e Partículas
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {MAP_WEATHER_OPTIONS.map((opt) => {
+                        const active = localEffects.weather === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => commitMapEffects({ ...localEffects, weather: opt.id })}
+                            className={cn(
+                              'px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all text-center',
+                              active
+                                ? 'bg-white/16 border-white/35 text-white'
+                                : 'bg-[#0c101b] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sliders de Visibilidade (Névoa, Escuridão, Raio de Tocha) */}
+                  <div className="p-3 rounded-xl bg-[#0c101b] border border-white/12 space-y-3.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-200">Névoa / Neblina</span>
+                        <span className="font-mono font-bold text-slate-300 tabular-nums">
+                          {localEffects.fog}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={localEffects.fog}
+                        onChange={(e) =>
+                          commitMapEffects({ ...localEffects, fog: Number(e.target.value) }, 180)
+                        }
+                        className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-200">Escuridão / Penumbra</span>
+                        <span className="font-mono font-bold text-slate-300 tabular-nums">
+                          {localEffects.darkness}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={localEffects.darkness}
+                        onChange={(e) =>
+                          commitMapEffects({ ...localEffects, darkness: Number(e.target.value) }, 180)
+                        }
+                        className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-200">Visão de Tocha (Herói)</span>
+                        <span className="font-mono font-bold text-slate-300 tabular-nums">
+                          {localEffects.torchRadius > 0 ? `${localEffects.torchRadius}%` : 'Desligada'}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={60}
+                        step={4}
+                        value={localEffects.torchRadius}
+                        onChange={(e) =>
+                          commitMapEffects(
+                            { ...localEffects, torchRadius: Number(e.target.value) },
+                            180
+                          )
+                        }
+                        className="w-full h-1.5 rounded-full bg-white/15 accent-white cursor-pointer"
+                      />
+                      <p className="text-[10px] text-slate-400 leading-snug">
+                        Com escuridão ativa, ilumina apenas um halo circular ao redor do token de cada jogador.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Atalho Rápido de Soundboard integrado ao clima */}
+                  {tabletopMusic?.triggerSoundEffect && (
+                    <div className="space-y-1.5 pt-1 border-t border-white/10">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                        Efeito Sonoro Rápido
+                      </span>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { id: 'thunder', label: 'Trovão', Icon: CloudLightning },
+                          { id: 'creaky_door', label: 'Porta', Icon: DoorOpen },
+                          { id: 'sword', label: 'Espada', Icon: Swords },
+                          { id: 'roar', label: 'Rugido', Icon: Skull },
+                        ].map(({ id, label, Icon }) => (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => tabletopMusic.triggerSoundEffect(id)}
+                            className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.05] border border-white/12 hover:bg-white/15 text-[11px] font-semibold text-slate-200 hover:text-white active:scale-95 transition-all"
+                          >
+                            <Icon className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -2367,6 +2725,15 @@ export function TacticalMapCanvas({
               </div>
             );
           })}
+
+          {/* CAMADA ATMOSFÉRICA & VISIBILIDADE (CHUVA, TEMPESTADE, NÉVOA, ESCURIDÃO, TOCHA E OCULTAÇÃO TOTAL) */}
+          <MapAtmosphereOverlay
+            effects={localEffects}
+            isMaster={isMaster}
+            previewAsPlayer={previewEffectsAsPlayer}
+            heroFocusPct={heroFocusPct}
+            onRevealForMaster={() => commitMapEffects({ ...localEffects, blackout: false })}
+          />
         </div>
       </div>
 

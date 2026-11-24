@@ -1820,7 +1820,7 @@ export async function clearMapDiceRollsHistory() {
   try {
     const rollsSnap = await getDocs(collection(firestore, 'map_rolls'));
     const legacyRolls = rollsSnap.docs.filter((d) => {
-      if (d.id === 'table_audio_state') return false;
+      if (d.id.startsWith('table_')) return false;
       const data = d.data();
       return (
         data?.event_type === 'dice_roll' ||
@@ -2182,6 +2182,7 @@ export function subscribeTableAudio(onData, onError) {
         loopMode: ['playlist', 'one', 'off'].includes(raw.loopMode) ? raw.loopMode : 'playlist',
         shuffle: Boolean(raw.shuffle),
         syncVersion: Number.isFinite(Number(raw.syncVersion)) ? Number(raw.syncVersion) : 0,
+        lastSfx: raw.lastSfx && typeof raw.lastSfx === 'object' ? raw.lastSfx : null,
         updatedBy: raw.updatedBy || null,
         updatedByName: raw.updatedByName || null,
       },
@@ -2273,6 +2274,16 @@ export async function saveTableAudioState(statePatch, preferredStorage = 'collec
   if (statePatch.syncVersion !== undefined) {
     payload.syncVersion = Math.max(0, Math.min(100000000, Math.floor(Number(statePatch.syncVersion) || 0)));
     payload.serverUpdatedAt = serverTimestamp();
+  }
+  if (statePatch.lastSfx !== undefined) {
+    payload.lastSfx = statePatch.lastSfx
+      ? {
+          id: String(statePatch.lastSfx.id || `${Date.now()}`).slice(0, 64),
+          sfxId: String(statePatch.lastSfx.sfxId || '').slice(0, 40),
+          triggeredAtMs: Math.round(Number(statePatch.lastSfx.triggeredAtMs) || Date.now()),
+          triggeredByName: String(statePatch.lastSfx.triggeredByName || 'Mestre').slice(0, 60),
+        }
+      : null;
   }
   if (statePatch.updatedBy !== undefined) {
     payload.updatedBy = statePatch.updatedBy ? String(statePatch.updatedBy).slice(0, 128) : null;
@@ -2436,4 +2447,897 @@ export async function deleteTableAudioTrackChunks(trackId) {
       await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
     }
   } catch {}
+}
+
+// =========================================================================
+// HANDOUTS SINCRONIZADOS (IMAGENS, CARTAS, ENIGMAS EM TELA CHEIA)
+// =========================================================================
+
+function getDocTimeMs(d) {
+  if (!d) return 0;
+  const ts = d.shownAt || d.updatedAt || d.createdAt;
+  if (ts?.toMillis) return ts.toMillis();
+  if (ts?.seconds) return ts.seconds * 1000;
+  if (typeof d.createdAtMs === 'number') return d.createdAtMs;
+  if (typeof d.shownAtMs === 'number') return d.shownAtMs;
+  return 0;
+}
+
+export function subscribeTableHandouts(isMaster, userUid, onData, onError) {
+  const firestore = requireDb();
+  const primaryCol = collection(firestore, 'table_handouts');
+  const fallbackDocRef = doc(firestore, 'map_rolls', 'table_handouts_fallback');
+
+  let active = true;
+  let primaryDenied = false;
+  let unsubFallback = null;
+
+  const filterForViewer = (list) => {
+    const sorted = [...list].sort((a, b) => getDocTimeMs(b) - getDocTimeMs(a));
+    if (isMaster) return sorted;
+    return sorted.filter((h) => {
+      if (!h.is_active) return false;
+      const vis = Array.isArray(h.visible_to) && h.visible_to.length > 0 ? h.visible_to : ['all'];
+      return vis.includes('all') || (userUid && vis.includes(userUid));
+    });
+  };
+
+  const ensureFallback = () => {
+    if (!active || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      fallbackDocRef,
+      (snap) => {
+        if (!active) return;
+        const list = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+        onData({ items: filterForViewer(list), storageMode: 'fallback' });
+      },
+      (err) => {
+        if (active && onError) onError(err);
+      }
+    );
+  };
+
+  const q = isMaster ? primaryCol : query(primaryCol, where('is_active', '==', true));
+  const unsubPrimary = onSnapshot(
+    q,
+    (snap) => {
+      if (!active || primaryDenied) return;
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onData({ items: filterForViewer(list), storageMode: 'collection' });
+    },
+    (err) => {
+      if (!active) return;
+      if (isPermissionDeniedError(err)) {
+        primaryDenied = true;
+        ensureFallback();
+      } else if (onError) {
+        onError(err);
+      }
+    }
+  );
+
+  return () => {
+    active = false;
+    if (typeof unsubPrimary === 'function') unsubPrimary();
+    if (typeof unsubFallback === 'function') unsubFallback();
+  };
+}
+
+export async function createTableHandout(
+  { title, subtitle = '', content = '', imageUrl = '', style = 'combined', visible_to = ['all'], is_active = true, created_by = null },
+  preferredStorage = 'collection'
+) {
+  const firestore = requireDb();
+  const cleanTitle = String(title || 'Pergaminho Misterioso').trim().slice(0, 150) || 'Pergaminho Misterioso';
+  const cleanSubtitle = String(subtitle || '').trim().slice(0, 120);
+  const cleanContent = String(content || '').trim().slice(0, 8000);
+  const cleanImage = String(imageUrl || '').trim().slice(0, 840000);
+  const cleanStyle = ['parchment', 'image', 'combined'].includes(style) ? style : 'combined';
+  const cleanVis = Array.isArray(visible_to) && visible_to.length > 0 ? visible_to.slice(0, 60) : ['all'];
+  const nowMs = Date.now();
+
+  const saveFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_handouts_fallback');
+    const id = `hnd-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      const next = prev.map((h) => (is_active ? { ...h, is_active: false } : h));
+      next.unshift({
+        id,
+        title: cleanTitle,
+        subtitle: cleanSubtitle,
+        content: cleanContent,
+        imageUrl: cleanImage,
+        style: cleanStyle,
+        visible_to: cleanVis,
+        is_active: Boolean(is_active),
+        created_by: created_by || null,
+        shownAtMs: is_active ? nowMs : 0,
+        createdAtMs: nowMs,
+      });
+      tx.set(ref, { items: next.slice(0, 20), updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { id, storageMode: 'fallback' };
+  };
+
+  if (preferredStorage === 'fallback') return saveFallback();
+
+  try {
+    // Se abrir imediatamente, desativa outros handouts ativos para foco limpo na tela
+    if (is_active) {
+      const activeSnap = await getDocs(query(collection(firestore, 'table_handouts'), where('is_active', '==', true)));
+      if (!activeSnap.empty) {
+        const batch = writeBatch(firestore);
+        activeSnap.forEach((d) => batch.update(d.ref, { is_active: false, updatedAt: serverTimestamp() }));
+        await batch.commit();
+      }
+    }
+
+    const docRef = await addDoc(collection(firestore, 'table_handouts'), {
+      title: cleanTitle,
+      subtitle: cleanSubtitle,
+      content: cleanContent,
+      imageUrl: cleanImage,
+      style: cleanStyle,
+      visible_to: cleanVis,
+      is_active: Boolean(is_active),
+      created_by: created_by || null,
+      shownAt: is_active ? serverTimestamp() : null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return { id: docRef.id, storageMode: 'collection' };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return saveFallback();
+    throw err;
+  }
+}
+
+export async function setTableHandoutActive(handoutId, nextActive, visible_to = null, preferredStorage = 'collection') {
+  if (!handoutId) return;
+  const firestore = requireDb();
+
+  const updateFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_handouts_fallback');
+    const nowMs = Date.now();
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      const next = prev.map((h) => {
+        if (h.id === handoutId) {
+          return {
+            ...h,
+            is_active: Boolean(nextActive),
+            ...(Array.isArray(visible_to) && visible_to.length > 0 ? { visible_to } : {}),
+            ...(nextActive ? { shownAtMs: nowMs } : {}),
+          };
+        }
+        return nextActive ? { ...h, is_active: false } : h;
+      });
+      tx.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return updateFallback();
+
+  try {
+    const batch = writeBatch(firestore);
+    if (nextActive) {
+      const activeSnap = await getDocs(query(collection(firestore, 'table_handouts'), where('is_active', '==', true)));
+      activeSnap.forEach((d) => {
+        if (d.id !== handoutId) {
+          batch.update(d.ref, { is_active: false, updatedAt: serverTimestamp() });
+        }
+      });
+    }
+    const patch = {
+      is_active: Boolean(nextActive),
+      updatedAt: serverTimestamp(),
+    };
+    if (nextActive) patch.shownAt = serverTimestamp();
+    if (Array.isArray(visible_to) && visible_to.length > 0) patch.visible_to = visible_to.slice(0, 60);
+
+    batch.update(doc(firestore, 'table_handouts', handoutId), patch);
+    await batch.commit();
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return updateFallback();
+    throw err;
+  }
+}
+
+export async function deleteTableHandout(handoutId, preferredStorage = 'collection') {
+  if (!handoutId) return;
+  const firestore = requireDb();
+
+  const deleteFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_handouts_fallback');
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      tx.set(ref, { items: prev.filter((h) => h.id !== handoutId), updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return deleteFallback();
+
+  try {
+    await deleteDoc(doc(firestore, 'table_handouts', handoutId));
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return deleteFallback();
+    throw err;
+  }
+}
+
+// =========================================================================
+// SUSSURROS PRIVADOS (WHISPERS EXCLUSIVOS DO MESTRE PARA 1 JOGADOR)
+// =========================================================================
+
+export function subscribeTableWhispers(isMaster, userUid, onData, onError) {
+  const firestore = requireDb();
+  const primaryCol = collection(firestore, 'table_whispers');
+  const fallbackDocRef = doc(firestore, 'map_rolls', 'table_whispers_fallback');
+
+  let active = true;
+  let primaryDenied = false;
+  let unsubFallback = null;
+
+  const filterAndSort = (list) => {
+    const filtered = isMaster
+      ? list
+      : list.filter((w) => userUid && w.target_uid === userUid);
+    return [...filtered].sort((a, b) => getDocTimeMs(b) - getDocTimeMs(a)).slice(0, 40);
+  };
+
+  const ensureFallback = () => {
+    if (!active || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      fallbackDocRef,
+      (snap) => {
+        if (!active) return;
+        const list = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+        onData({ items: filterAndSort(list), storageMode: 'fallback' });
+      },
+      (err) => {
+        if (active && onError) onError(err);
+      }
+    );
+  };
+
+  if (!isMaster && !userUid) {
+    onData({ items: [], storageMode: 'collection' });
+    return () => {};
+  }
+
+  const q = isMaster ? primaryCol : query(primaryCol, where('target_uid', '==', userUid));
+  const unsubPrimary = onSnapshot(
+    q,
+    (snap) => {
+      if (!active || primaryDenied) return;
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onData({ items: filterAndSort(list), storageMode: 'collection' });
+    },
+    (err) => {
+      if (!active) return;
+      if (isPermissionDeniedError(err)) {
+        primaryDenied = true;
+        ensureFallback();
+      } else if (onError) {
+        onError(err);
+      }
+    }
+  );
+
+  return () => {
+    active = false;
+    if (typeof unsubPrimary === 'function') unsubPrimary();
+    if (typeof unsubFallback === 'function') unsubFallback();
+  };
+}
+
+export async function sendTableWhisper(
+  { target_uid, target_name, sender_uid, sender_name = 'Mestre', message, category = 'secret' },
+  preferredStorage = 'collection'
+) {
+  if (!target_uid) throw new Error('Selecione o jogador destinatário.');
+  const cleanMsg = String(message || '').trim().slice(0, 2000);
+  if (!cleanMsg) throw new Error('Escreva a mensagem do sussurro.');
+
+  const firestore = requireDb();
+  const cleanCat = ['secret', 'perception', 'lore', 'warning'].includes(category) ? category : 'secret';
+  const nowMs = Date.now();
+
+  const saveFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_whispers_fallback');
+    const id = `wsp-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      const next = [
+        {
+          id,
+          target_uid: String(target_uid).slice(0, 128),
+          target_name: String(target_name || 'Aventureiro').slice(0, 60),
+          sender_uid: sender_uid ? String(sender_uid).slice(0, 128) : null,
+          sender_name: String(sender_name || 'Mestre').slice(0, 60),
+          message: cleanMsg,
+          category: cleanCat,
+          read: false,
+          createdAtMs: nowMs,
+        },
+        ...prev,
+      ].slice(0, 40);
+      tx.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { id, storageMode: 'fallback' };
+  };
+
+  if (preferredStorage === 'fallback') return saveFallback();
+
+  try {
+    const docRef = await addDoc(collection(firestore, 'table_whispers'), {
+      target_uid: String(target_uid).slice(0, 128),
+      target_name: String(target_name || 'Aventureiro').slice(0, 60),
+      sender_uid: sender_uid ? String(sender_uid).slice(0, 128) : null,
+      sender_name: String(sender_name || 'Mestre').slice(0, 60),
+      message: cleanMsg,
+      category: cleanCat,
+      read: false,
+      createdAt: serverTimestamp(),
+      readAt: null,
+    });
+    return { id: docRef.id, storageMode: 'collection' };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return saveFallback();
+    throw err;
+  }
+}
+
+export async function markTableWhisperRead(whisperId, preferredStorage = 'collection') {
+  if (!whisperId) return;
+  const firestore = requireDb();
+
+  const markFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_whispers_fallback');
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      const next = prev.map((w) => (w.id === whisperId ? { ...w, read: true } : w));
+      tx.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return markFallback();
+
+  try {
+    await updateDoc(doc(firestore, 'table_whispers', whisperId), {
+      read: true,
+      readAt: serverTimestamp(),
+    });
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return markFallback();
+  }
+}
+
+export async function deleteTableWhisper(whisperId, preferredStorage = 'collection') {
+  if (!whisperId) return;
+  const firestore = requireDb();
+
+  const delFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_whispers_fallback');
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.items) ? snap.data().items : [];
+      tx.set(ref, { items: prev.filter((w) => w.id !== whisperId), updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return delFallback();
+
+  try {
+    await deleteDoc(doc(firestore, 'table_whispers', whisperId));
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return delFallback();
+    throw err;
+  }
+}
+
+// =========================================================================
+// BAÚ DE LOOT / SAQUE PÓS-COMBATE (VISIBILIDADE SELETIVA + TRANSAÇÃO ATÔMICA)
+// =========================================================================
+
+function sanitizeLootItem(raw, idx = 0) {
+  const validTypes = new Set([
+    'weapon', 'shield', 'head', 'face', 'neck', 'body', 'hands', 'waist', 'feet', 'ring', 'consumable', 'misc',
+  ]);
+  const rarity = ['COMUM', 'INCOMUM', 'RARO', 'ÉPICO', 'LENDÁRIO', 'MÍTICO'].includes(
+    String(raw?.rarity || '').toUpperCase()
+  )
+    ? String(raw.rarity).toUpperCase()
+    : getRarityFromItem(raw);
+  const type = validTypes.has(raw?.type) ? raw.type : 'misc';
+  const rawDesc = String(raw?.description || '').trim().slice(0, 800);
+  const description = /^<(COMUM|INCOMUM|RARO|ÉPICO|LENDÁRIO|MÍTICO)>/i.test(rawDesc)
+    ? rawDesc
+    : `<${rarity}> ${rawDesc || 'Item encontrado no baú de saque.'}`;
+
+  return {
+    id: String(raw?.id || `loot-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`).slice(0, 80),
+    name: String(raw?.name || 'Objeto Misterioso').trim().slice(0, 100) || 'Objeto Misterioso',
+    description,
+    rarity,
+    type,
+    qty: Math.max(1, Math.min(99, Math.floor(Number(raw?.qty) || 1))),
+    status: ['available', 'claimed', 'discarded'].includes(raw?.status) ? raw.status : 'available',
+    claimedBy: raw?.claimedBy || null,
+    claimedByName: raw?.claimedByName || null,
+    discardedByName: raw?.discardedByName || null,
+  };
+}
+
+export function subscribeLootChests(isMaster, userUid, onData, onError) {
+  const firestore = requireDb();
+  const primaryCol = collection(firestore, 'loot_chests');
+  const fallbackDocRef = doc(firestore, 'map_rolls', 'table_loot_fallback');
+
+  let active = true;
+  let primaryDenied = false;
+  let unsubFallback = null;
+
+  const filterAndSort = (list) => {
+    const filtered = isMaster
+      ? list
+      : list.filter((c) => {
+          if (c.status !== 'open') return false;
+          const vis = Array.isArray(c.visible_to) ? c.visible_to : [];
+          return vis.includes('all') || (userUid && vis.includes(userUid));
+        });
+    return [...filtered].sort((a, b) => getDocTimeMs(b) - getDocTimeMs(a));
+  };
+
+  const ensureFallback = () => {
+    if (!active || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      fallbackDocRef,
+      (snap) => {
+        if (!active) return;
+        const list = snap.exists() && Array.isArray(snap.data()?.chests) ? snap.data().chests : [];
+        onData({ items: filterAndSort(list), storageMode: 'fallback' });
+      },
+      (err) => {
+        if (active && onError) onError(err);
+      }
+    );
+  };
+
+  if (!isMaster && !userUid) {
+    onData({ items: [], storageMode: 'collection' });
+    return () => {};
+  }
+
+  const q = isMaster
+    ? primaryCol
+    : query(primaryCol, where('visible_to', 'array-contains-any', ['all', userUid]));
+
+  const unsubPrimary = onSnapshot(
+    q,
+    (snap) => {
+      if (!active || primaryDenied) return;
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onData({ items: filterAndSort(list), storageMode: 'collection' });
+    },
+    (err) => {
+      if (!active) return;
+      if (isPermissionDeniedError(err)) {
+        primaryDenied = true;
+        ensureFallback();
+      } else if (onError) {
+        onError(err);
+      }
+    }
+  );
+
+  return () => {
+    active = false;
+    if (typeof unsubPrimary === 'function') unsubPrimary();
+    if (typeof unsubFallback === 'function') unsubFallback();
+  };
+}
+
+export async function createLootChest(
+  { title, theme = '', gold = 0, visible_to = ['all'], items = [], status = 'open', created_by = null },
+  preferredStorage = 'collection'
+) {
+  const firestore = requireDb();
+  const cleanTitle = String(title || 'Baú de Saque').trim().slice(0, 120) || 'Baú de Saque';
+  const cleanTheme = String(theme || '').trim().slice(0, 120);
+  const cleanGold = Math.max(0, Math.min(2000000000, Math.floor(Number(gold) || 0)));
+  const cleanVis = Array.isArray(visible_to) && visible_to.length > 0 ? visible_to.slice(0, 60) : ['all'];
+  const cleanItems = (Array.isArray(items) ? items : []).slice(0, 40).map((it, i) => sanitizeLootItem(it, i));
+  const cleanStatus = status === 'closed' ? 'closed' : 'open';
+  const nowMs = Date.now();
+
+  const saveFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    const id = `chest-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.chests) ? snap.data().chests : [];
+      const next = [
+        {
+          id,
+          title: cleanTitle,
+          theme: cleanTheme,
+          status: cleanStatus,
+          gold: cleanGold,
+          visible_to: cleanVis,
+          items: cleanItems,
+          logs: [],
+          created_by: created_by || null,
+          createdAtMs: nowMs,
+        },
+        ...prev,
+      ].slice(0, 20);
+      tx.set(ref, { chests: next, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { id, storageMode: 'fallback' };
+  };
+
+  if (preferredStorage === 'fallback') return saveFallback();
+
+  try {
+    const docRef = await addDoc(collection(firestore, 'loot_chests'), {
+      title: cleanTitle,
+      theme: cleanTheme,
+      status: cleanStatus,
+      gold: cleanGold,
+      visible_to: cleanVis,
+      items: cleanItems,
+      logs: [],
+      created_by: created_by || null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return { id: docRef.id, storageMode: 'collection' };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return saveFallback();
+    throw err;
+  }
+}
+
+export async function updateLootChest(chestId, patch, preferredStorage = 'collection') {
+  if (!chestId) return;
+  const firestore = requireDb();
+
+  const sanitized = {};
+  if (patch.title !== undefined) sanitized.title = String(patch.title || 'Baú de Saque').trim().slice(0, 120);
+  if (patch.status !== undefined) sanitized.status = patch.status === 'closed' ? 'closed' : 'open';
+  if (patch.gold !== undefined) sanitized.gold = Math.max(0, Math.min(2000000000, Math.floor(Number(patch.gold) || 0)));
+  if (Array.isArray(patch.visible_to) && patch.visible_to.length > 0) sanitized.visible_to = patch.visible_to.slice(0, 60);
+  if (Array.isArray(patch.items)) sanitized.items = patch.items.slice(0, 40).map((it, i) => sanitizeLootItem(it, i));
+
+  const updateFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.chests) ? snap.data().chests : [];
+      const next = prev.map((c) => (c.id === chestId ? { ...c, ...sanitized } : c));
+      tx.set(ref, { chests: next, updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return updateFallback();
+
+  try {
+    await updateDoc(doc(firestore, 'loot_chests', chestId), {
+      ...sanitized,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return updateFallback();
+    throw err;
+  }
+}
+
+export async function deleteLootChest(chestId, preferredStorage = 'collection') {
+  if (!chestId) return;
+  const firestore = requireDb();
+
+  const delFallback = async () => {
+    const ref = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() && Array.isArray(snap.data()?.chests) ? snap.data().chests : [];
+      tx.set(ref, { chests: prev.filter((c) => c.id !== chestId), updatedAt: serverTimestamp() }, { merge: true });
+    });
+  };
+
+  if (preferredStorage === 'fallback') return delFallback();
+
+  try {
+    await deleteDoc(doc(firestore, 'loot_chests', chestId));
+  } catch (err) {
+    if (isPermissionDeniedError(err)) return delFallback();
+    throw err;
+  }
+}
+
+/**
+ * Transação atômica: transfere 1 ou mais itens selecionados do Baú de Loot para a mochila do jogador.
+ * Impede duplicação por cliques simultâneos e respeita os slots disponíveis da mochila.
+ */
+export async function claimLootChestItemsTx(
+  chestId,
+  uid,
+  username,
+  itemIds = [],
+  preferredStorage = 'collection'
+) {
+  if (!chestId || !uid || !Array.isArray(itemIds) || itemIds.length === 0) return { claimedCount: 0 };
+  const firestore = requireDb();
+  const profileRef = doc(firestore, 'profiles', uid);
+  const wantedSet = new Set(itemIds);
+  const actorName = String(username || 'Aventureiro').slice(0, 60);
+
+  const applyClaim = (chestData, prof) => {
+    if (chestData.status !== 'open') throw new Error('Este baú já foi fechado pelo Mestre.');
+    const vis = Array.isArray(chestData.visible_to) ? chestData.visible_to : [];
+    if (!vis.includes('all') && !vis.includes(uid)) {
+      throw new Error('Você não tem acesso a este baú.');
+    }
+
+    const inv = [...prof.inventory];
+    const maxSlots = prof.slots || 10;
+    const chestItems = Array.isArray(chestData.items) ? [...chestData.items] : [];
+    const logs = Array.isArray(chestData.logs) ? [...chestData.logs] : [];
+    const claimedNames = [];
+
+    const nextChestItems = chestItems.map((it) => {
+      if (!wantedSet.has(it.id) || it.status !== 'available') return it;
+
+      const qty = Math.max(1, Math.floor(Number(it.qty) || 1));
+      const existingIdx = inv.findIndex(
+        (bagItem) =>
+          bagItem.name.toLowerCase() === String(it.name || '').toLowerCase() &&
+          (bagItem.description || '') === (it.description || '')
+      );
+
+      if (existingIdx >= 0) {
+        inv[existingIdx] = { ...inv[existingIdx], qty: (Number(inv[existingIdx].qty) || 1) + qty };
+      } else {
+        if (inv.length >= maxSlots) {
+          throw new Error(`Mochila cheia (${inv.length}/${maxSlots} slots)! Libere espaço ou jogue itens fora.`);
+        }
+        inv.push({
+          name: it.name,
+          qty,
+          description: it.description || '',
+          type: it.type || getItemType(it),
+        });
+      }
+
+      claimedNames.push(qty > 1 ? `${qty}x ${it.name}` : it.name);
+      return {
+        ...it,
+        status: 'claimed',
+        claimedBy: uid,
+        claimedByName: actorName,
+      };
+    });
+
+    if (claimedNames.length === 0) {
+      throw new Error('Os itens selecionados já foram coletados ou descartados.');
+    }
+
+    logs.unshift({
+      text: `${actorName} guardou ${claimedNames.join(', ')} na mochila`,
+      action: 'claim',
+      atMs: Date.now(),
+    });
+
+    return {
+      nextInventory: inv,
+      nextChestItems,
+      nextLogs: logs.slice(0, 60),
+      claimedCount: claimedNames.length,
+    };
+  };
+
+  if (preferredStorage === 'fallback') {
+    const fallbackRef = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    let claimedCount = 0;
+    await runTransaction(firestore, async (tx) => {
+      const [profSnap, fbSnap] = await Promise.all([tx.get(profileRef), tx.get(fallbackRef)]);
+      if (!profSnap.exists()) throw new Error('Perfil não encontrado.');
+      const prof = normalizeProfile(profSnap.data(), profSnap.id);
+      const chests = fbSnap.exists() && Array.isArray(fbSnap.data()?.chests) ? fbSnap.data().chests : [];
+      const targetChest = chests.find((c) => c.id === chestId);
+      if (!targetChest) throw new Error('Baú não encontrado.');
+
+      const res = applyClaim(targetChest, prof);
+      claimedCount = res.claimedCount;
+
+      const nextChests = chests.map((c) =>
+        c.id === chestId ? { ...c, items: res.nextChestItems, logs: res.nextLogs } : c
+      );
+      tx.update(profileRef, { inventory: res.nextInventory, updatedAt: serverTimestamp() });
+      tx.set(fallbackRef, { chests: nextChests, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { claimedCount };
+  }
+
+  const chestRef = doc(firestore, 'loot_chests', chestId);
+  let claimedCount = 0;
+  await runTransaction(firestore, async (tx) => {
+    const [profSnap, chestSnap] = await Promise.all([tx.get(profileRef), tx.get(chestRef)]);
+    if (!profSnap.exists()) throw new Error('Perfil não encontrado.');
+    if (!chestSnap.exists()) throw new Error('Baú não encontrado.');
+
+    const prof = normalizeProfile(profSnap.data(), profSnap.id);
+    const res = applyClaim(chestSnap.data(), prof);
+    claimedCount = res.claimedCount;
+
+    tx.update(profileRef, { inventory: res.nextInventory, updatedAt: serverTimestamp() });
+    tx.update(chestRef, {
+      items: res.nextChestItems,
+      logs: res.nextLogs,
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return { claimedCount };
+}
+
+/**
+ * Transação atômica: joga fora / descarta 1 ou mais itens indesejados do Baú de Loot (ex: graveto, pedra, teia).
+ */
+export async function discardLootChestItemsTx(
+  chestId,
+  uid,
+  username,
+  itemIds = [],
+  preferredStorage = 'collection'
+) {
+  if (!chestId || !Array.isArray(itemIds) || itemIds.length === 0) return { discardedCount: 0 };
+  const firestore = requireDb();
+  const wantedSet = new Set(itemIds);
+  const actorName = String(username || 'Aventureiro').slice(0, 60);
+
+  const applyDiscard = (chestData) => {
+    if (chestData.status !== 'open') throw new Error('Este baú já foi fechado.');
+    const chestItems = Array.isArray(chestData.items) ? [...chestData.items] : [];
+    const logs = Array.isArray(chestData.logs) ? [...chestData.logs] : [];
+    const discardedNames = [];
+
+    const nextChestItems = chestItems.map((it) => {
+      if (!wantedSet.has(it.id) || it.status !== 'available') return it;
+      discardedNames.push(it.name);
+      return {
+        ...it,
+        status: 'discarded',
+        discardedByName: actorName,
+      };
+    });
+
+    if (discardedNames.length === 0) {
+      throw new Error('Nenhum item disponível selecionado para jogar fora.');
+    }
+
+    logs.unshift({
+      text: `${actorName} jogou fora ${discardedNames.join(', ')}`,
+      action: 'discard',
+      atMs: Date.now(),
+    });
+
+    return {
+      nextChestItems,
+      nextLogs: logs.slice(0, 60),
+      discardedCount: discardedNames.length,
+    };
+  };
+
+  if (preferredStorage === 'fallback') {
+    const fallbackRef = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    let discardedCount = 0;
+    await runTransaction(firestore, async (tx) => {
+      const fbSnap = await tx.get(fallbackRef);
+      const chests = fbSnap.exists() && Array.isArray(fbSnap.data()?.chests) ? fbSnap.data().chests : [];
+      const targetChest = chests.find((c) => c.id === chestId);
+      if (!targetChest) throw new Error('Baú não encontrado.');
+      const res = applyDiscard(targetChest);
+      discardedCount = res.discardedCount;
+      const nextChests = chests.map((c) =>
+        c.id === chestId ? { ...c, items: res.nextChestItems, logs: res.nextLogs } : c
+      );
+      tx.set(fallbackRef, { chests: nextChests, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { discardedCount };
+  }
+
+  const chestRef = doc(firestore, 'loot_chests', chestId);
+  let discardedCount = 0;
+  await runTransaction(firestore, async (tx) => {
+    const chestSnap = await tx.get(chestRef);
+    if (!chestSnap.exists()) throw new Error('Baú não encontrado.');
+    const res = applyDiscard(chestSnap.data());
+    discardedCount = res.discardedCount;
+    tx.update(chestRef, {
+      items: res.nextChestItems,
+      logs: res.nextLogs,
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return { discardedCount };
+}
+
+/**
+ * Transação atômica: coleta o ouro do Baú de Loot (pegar tudo ou parte específica para o jogador).
+ */
+export async function claimLootChestGoldTx(
+  chestId,
+  uid,
+  username,
+  requestedAmount = null,
+  preferredStorage = 'collection'
+) {
+  if (!chestId || !uid) return { collected: 0 };
+  const firestore = requireDb();
+  const profileRef = doc(firestore, 'profiles', uid);
+  const actorName = String(username || 'Aventureiro').slice(0, 60);
+
+  const computeGoldTake = (chestData) => {
+    if (chestData.status !== 'open') throw new Error('Este baú já foi fechado.');
+    const available = Math.max(0, Math.floor(Number(chestData.gold) || 0));
+    if (available <= 0) throw new Error('Não há mais ouro disponível neste baú.');
+    const take =
+      requestedAmount !== null && Number.isFinite(Number(requestedAmount)) && Number(requestedAmount) > 0
+        ? Math.min(available, Math.floor(Number(requestedAmount)))
+        : available;
+    const logs = Array.isArray(chestData.logs) ? [...chestData.logs] : [];
+    logs.unshift({
+      text: `${actorName} coletou ${take}G de ouro`,
+      action: 'gold',
+      atMs: Date.now(),
+    });
+    return { take, remaining: available - take, nextLogs: logs.slice(0, 60) };
+  };
+
+  if (preferredStorage === 'fallback') {
+    const fallbackRef = doc(firestore, 'map_rolls', 'table_loot_fallback');
+    let collected = 0;
+    await runTransaction(firestore, async (tx) => {
+      const [profSnap, fbSnap] = await Promise.all([tx.get(profileRef), tx.get(fallbackRef)]);
+      if (!profSnap.exists()) throw new Error('Perfil não encontrado.');
+      const prof = normalizeProfile(profSnap.data(), profSnap.id);
+      const chests = fbSnap.exists() && Array.isArray(fbSnap.data()?.chests) ? fbSnap.data().chests : [];
+      const targetChest = chests.find((c) => c.id === chestId);
+      if (!targetChest) throw new Error('Baú não encontrado.');
+      const res = computeGoldTake(targetChest);
+      collected = res.take;
+      const nextChests = chests.map((c) =>
+        c.id === chestId ? { ...c, gold: res.remaining, logs: res.nextLogs } : c
+      );
+      tx.update(profileRef, { gold: prof.gold + res.take, updatedAt: serverTimestamp() });
+      tx.set(fallbackRef, { chests: nextChests, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    return { collected };
+  }
+
+  const chestRef = doc(firestore, 'loot_chests', chestId);
+  let collected = 0;
+  await runTransaction(firestore, async (tx) => {
+    const [profSnap, chestSnap] = await Promise.all([tx.get(profileRef), tx.get(chestRef)]);
+    if (!profSnap.exists()) throw new Error('Perfil não encontrado.');
+    if (!chestSnap.exists()) throw new Error('Baú não encontrado.');
+    const prof = normalizeProfile(profSnap.data(), profSnap.id);
+    const res = computeGoldTake(chestSnap.data());
+    collected = res.take;
+
+    tx.update(profileRef, { gold: prof.gold + res.take, updatedAt: serverTimestamp() });
+    tx.update(chestRef, {
+      gold: res.remaining,
+      logs: res.nextLogs,
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return { collected };
 }

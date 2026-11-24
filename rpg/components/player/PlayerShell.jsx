@@ -32,6 +32,7 @@ import { Modal } from '../ui/Modal';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { UserAvatar } from '../ui/UserAvatar';
 import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
+import { PlayerImmersionBar } from '../tabletop/TabletopImmersionModals';
 
 // Comprime e recorta (quadrado central) a imagem de perfil em formato circular-ready (< 75 KB)
 function compressAvatarFile(file) {
@@ -209,7 +210,8 @@ export function PlayerShell({
             </nav>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <PlayerImmersionBar />
             <TabletopMusicTriggerButton />
             <ThemeSwitcher className="hidden sm:inline-flex" />
 

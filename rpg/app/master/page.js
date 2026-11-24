@@ -24,6 +24,7 @@ import { MasterRequests } from '../../components/master/MasterRequests';
 import { MasterPermissions } from '../../components/master/MasterPermissions';
 import { MasterMapManager } from '../../components/map/MasterMapManager';
 import { TabletopMusicProvider } from '../../components/music/TabletopMusicProvider';
+import { TabletopSessionProvider } from '../../components/tabletop/TabletopSessionProvider';
 
 export default function MasterPage() {
   const { user, profile, loading, error, logout } = useAuthGuard({ requiredRole: 'master' });
@@ -324,7 +325,15 @@ export default function MasterPage() {
       userId={profile?.uid}
       userName={profile?.username || 'Mestre'}
     >
-      <MasterShell
+      <TabletopSessionProvider
+        enabled={isFirebaseConfigured && Boolean(user)}
+        isMaster={true}
+        userId={profile?.uid}
+        userName={profile?.username || 'Mestre'}
+        players={players}
+        profile={profile}
+      >
+        <MasterShell
         profile={profile}
         activeSection={activeSection}
         onSelectSection={setActiveSection}
@@ -411,7 +420,8 @@ export default function MasterPage() {
         loading={resolvingContract}
         onConfirm={handleConfirmContract}
       />
-    </MasterShell>
+        </MasterShell>
+      </TabletopSessionProvider>
     </TabletopMusicProvider>
   );
 }

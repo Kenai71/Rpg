@@ -2,14 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Bell,
   Check,
   ChevronDown,
   ChevronUp,
+  CloudLightning,
+  Coins,
   Compass,
   Disc3,
+  DoorOpen,
   Flame,
+  Ghost,
+  Gift,
   GripVertical,
   Headphones,
+  HeartPulse,
   Link2,
   ListMusic,
   Minus,
@@ -32,6 +39,7 @@ import {
   Volume1,
   Volume2,
   VolumeX,
+  Wind,
   X,
   Zap,
 } from 'lucide-react';
@@ -42,10 +50,26 @@ import {
   fetchYouTubeTitle,
   formatAudioTime,
 } from '../../lib/rpg-music-synth';
+import { SOUNDBOARD_EFFECTS } from '../../lib/rpg-soundboard';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { FormField, Input, Select } from '../ui/Input';
 import { useTabletopMusic } from './TabletopMusicProvider';
+
+const SOUNDBOARD_ICON_MAP = {
+  CloudLightning,
+  DoorOpen,
+  Swords,
+  Skull,
+  Coins,
+  Bell,
+  Zap,
+  Wind,
+  Flame,
+  HeartPulse,
+  Ghost,
+  Gift,
+};
 
 // Ícone geométrico/temático por categoria musical (zero ícones de estrela)
 function getCategoryVisual(categoryId) {
@@ -307,6 +331,11 @@ export function TabletopMusicPanel() {
   const [dragIndex, setDragIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
 
+  // Soundboard de efeitos rápidos sincronizados (Mestre)
+  const [soundboardOpen, setSoundboardOpen] = useState(true);
+  const [flashingSfxId, setFlashingSfxId] = useState(null);
+  const sfxFlashTimerRef = useRef(null);
+
   // Auto-detecta título quando Mestre cola link do YouTube
   useEffect(() => {
     if (!showAddForm || addTab !== 'youtube') return;
@@ -330,7 +359,13 @@ export function TabletopMusicPanel() {
     };
   }, [addUrl, addTab, showAddForm]);
 
-  // Fecha o painel ao pressionar Escape
+  // Fecha o painel ao pressionar Escape e limpa timer de flash SFX
+  useEffect(() => {
+    return () => {
+      if (sfxFlashTimerRef.current) clearTimeout(sfxFlashTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (!music?.panelOpen) return undefined;
     const onKeyDown = (e) => {
@@ -376,7 +411,16 @@ export function TabletopMusicPanel() {
     removeTrack,
     reorderPlaylist,
     restoreDefaultTracks,
+    triggerSoundEffect,
   } = music;
+
+  const handleFireSfx = (sfxId) => {
+    if (!triggerSoundEffect) return;
+    setFlashingSfxId(sfxId);
+    if (sfxFlashTimerRef.current) clearTimeout(sfxFlashTimerRef.current);
+    sfxFlashTimerRef.current = setTimeout(() => setFlashingSfxId(null), 550);
+    triggerSoundEffect(sfxId);
+  };
 
   const displayedTime = scrubValue !== null ? scrubValue : currentTime;
   const safeDuration = Math.max(1, duration || currentTrack?.duration || 1);
@@ -793,8 +837,67 @@ export function TabletopMusicPanel() {
         {/* NOTA DISCRETA PARA JOGADORES */}
         {!isMaster && (
           <p className="text-[11px] text-slate-400 text-center leading-relaxed px-1">
-            A trilha sonora é sincronizada pelo Mestre em tempo real. Ajuste o volume acima apenas para o seu dispositivo.
+            A trilha sonora e os efeitos sonoros são sincronizados pelo Mestre em tempo real. Ajuste o volume acima apenas para o seu dispositivo.
           </p>
+        )}
+
+        {/* SOUNDBOARD DE EFEITOS RÁPIDOS SINCRONIZADOS (EXCLUSIVO DO MESTRE) */}
+        {isMaster && (
+          <div className="rounded-2xl bg-[#0c101b] border border-white/12 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSoundboardOpen((v) => !v)}
+              className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-white/[0.04] transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Zap className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200 truncate">
+                  Soundboard Rápido
+                </span>
+                <span className="px-1.5 py-0.2 rounded-full bg-white/8 border border-white/10 text-[9px] font-mono text-slate-400">
+                  Ao vivo
+                </span>
+              </div>
+              {soundboardOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              )}
+            </button>
+
+            {soundboardOpen && (
+              <div className="px-3 pb-3 pt-1 border-t border-white/10">
+                <div className="grid grid-cols-3 gap-1.5">
+                  {SOUNDBOARD_EFFECTS.map((sfx) => {
+                    const SfxIcon = SOUNDBOARD_ICON_MAP[sfx.icon] || Zap;
+                    const isFlashing = flashingSfxId === sfx.id;
+                    return (
+                      <button
+                        key={sfx.id}
+                        type="button"
+                        onClick={() => handleFireSfx(sfx.id)}
+                        title={`Tocar "${sfx.label}" para todos agora`}
+                        className={cn(
+                          'flex items-center gap-1.5 px-2 py-2 rounded-xl border text-left transition-all active:scale-95',
+                          isFlashing
+                            ? 'bg-white/20 border-white/40 text-white shadow-[0_0_16px_rgba(255,255,255,0.2)]'
+                            : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/12 hover:border-white/25 hover:text-white'
+                        )}
+                      >
+                        <SfxIcon
+                          className="h-3.5 w-3.5 shrink-0"
+                          style={{ color: sfx.color }}
+                        />
+                        <span className="text-[11px] font-semibold truncate">
+                          {sfx.shortLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* GERENCIADOR COMPLETO DA PLAYLIST (EXCLUSIVO DO MESTRE) */}

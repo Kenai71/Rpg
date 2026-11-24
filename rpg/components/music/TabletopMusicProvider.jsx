@@ -15,6 +15,7 @@ import {
   RpgSynthEngine,
   extractYouTubeVideoId,
 } from '../../lib/rpg-music-synth';
+import { playSoundboardEffect } from '../../lib/rpg-soundboard';
 import {
   deleteTableAudioTrackChunks,
   loadTableAudioTrackUrl,
@@ -96,6 +97,7 @@ export function TabletopMusicProvider({
     loopMode: 'playlist', // 'playlist' | 'one'
     shuffle: false,
     syncVersion: 0,
+    lastSfx: null,
     updatedBy: null,
     updatedByName: null,
   }));
@@ -129,6 +131,8 @@ export function TabletopMusicProvider({
   const loadedHtmlTrackKeyRef = useRef(null);
   const lastAppliedSyncKeyRef = useRef('');
   const advancingTrackRef = useRef(false);
+  const lastPlayedSfxIdRef = useRef(null);
+  const sfxInitialSeededRef = useRef(false);
   const isMasterRef = useRef(isMaster);
   isMasterRef.current = isMaster;
 
@@ -671,6 +675,15 @@ export function TabletopMusicProvider({
     ]
   );
 
+  // Marca carregamento inicial do soundboard após 1.2s caso o documento ainda não exista
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const timer = setTimeout(() => {
+      sfxInitialSeededRef.current = true;
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [enabled]);
+
   // Subscrição em tempo real ao estado da mesa no Firestore
   useEffect(() => {
     if (!enabled) return undefined;
@@ -681,7 +694,26 @@ export function TabletopMusicProvider({
           storageModeRef.current = nextMode;
           setStorageMode(nextMode);
         }
-        if (!exists || !data) return;
+        if (!exists || !data) {
+          sfxInitialSeededRef.current = true;
+          return;
+        }
+
+        // Disparo sincronizado de efeitos sonoros pontuais (Soundboard) sem interromper a trilha
+        const incomingSfx = data.lastSfx;
+        if (!sfxInitialSeededRef.current) {
+          sfxInitialSeededRef.current = true;
+          if (incomingSfx?.id) {
+            lastPlayedSfxIdRef.current = incomingSfx.id;
+          }
+        } else if (incomingSfx?.id && incomingSfx.id !== lastPlayedSfxIdRef.current) {
+          lastPlayedSfxIdRef.current = incomingSfx.id;
+          const nowSyncedMs = Date.now() + clockOffsetRef.current;
+          const triggeredAtMs = Number(incomingSfx.triggeredAtMs) || nowSyncedMs;
+          if (Math.abs(nowSyncedMs - triggeredAtMs) <= 15000) {
+            playSoundboardEffect(incomingSfx.sfxId, volumeRef.current, isMutedRef.current);
+          }
+        }
 
         setAudioState((prev) => {
           const nextPlaylist =
@@ -1183,6 +1215,31 @@ export function TabletopMusicProvider({
     toast.success(`${missing.length} trilha(s) RPG restaurada(s) na playlist!`);
   }, [commitMasterState]);
 
+  // Dispara efeito sonoro pontual sincronizado (Soundboard) para todos na mesa sem interromper a música
+  const triggerSoundEffect = useCallback(
+    async (sfxId) => {
+      if (!isMasterRef.current || !sfxId) return;
+      const id = `sfx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const nowSyncedMs = Date.now() + clockOffsetRef.current;
+      lastPlayedSfxIdRef.current = id;
+      sfxInitialSeededRef.current = true;
+      playSoundboardEffect(sfxId, volumeRef.current, isMutedRef.current);
+
+      await commitMasterState(
+        {
+          lastSfx: {
+            id,
+            sfxId: String(sfxId).slice(0, 40),
+            triggeredAtMs: nowSyncedMs,
+            triggeredByName: userName || 'Mestre',
+          },
+        },
+        false
+      );
+    },
+    [commitMasterState, userName]
+  );
+
   const contextValue = useMemo(
     () => ({
       enabled,
@@ -1198,6 +1255,7 @@ export function TabletopMusicProvider({
       duration: Math.max(liveDuration || 0, Number(currentTrack?.duration) || 0),
       loopMode: audioState.loopMode,
       shuffle: audioState.shuffle,
+      lastSfx: audioState.lastSfx || null,
       storageMode,
       volume,
       isMuted,
@@ -1221,6 +1279,7 @@ export function TabletopMusicProvider({
       removeTrack,
       reorderPlaylist,
       restoreDefaultTracks,
+      triggerSoundEffect,
     }),
     [
       enabled,
@@ -1230,6 +1289,7 @@ export function TabletopMusicProvider({
       audioState.isPlaying,
       audioState.loopMode,
       audioState.shuffle,
+      audioState.lastSfx,
       currentTrack,
       currentIndex,
       currentTime,
@@ -1256,6 +1316,7 @@ export function TabletopMusicProvider({
       removeTrack,
       reorderPlaylist,
       restoreDefaultTracks,
+      triggerSoundEffect,
     ]
   );
 

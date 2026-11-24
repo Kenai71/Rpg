@@ -19,6 +19,7 @@ import { PlayerCharacter } from '../../components/player/PlayerCharacter';
 import { RouletteModal } from '../../components/player/RouletteModal';
 import { PlayerMapView } from '../../components/map/PlayerMapView';
 import { TabletopMusicProvider } from '../../components/music/TabletopMusicProvider';
+import { TabletopSessionProvider } from '../../components/tabletop/TabletopSessionProvider';
 
 export default function PlayerPage() {
   const { user, profile, loading, error, logout } = useAuthGuard();
@@ -211,7 +212,15 @@ export default function PlayerPage() {
       userId={profile?.uid}
       userName={profile?.username || 'Aventureiro'}
     >
-      <PlayerShell
+      <TabletopSessionProvider
+        enabled={isFirebaseConfigured && Boolean(user)}
+        isMaster={false}
+        userId={profile?.uid}
+        userName={profile?.username || 'Aventureiro'}
+        players={playerAllies}
+        profile={profile}
+      >
+        <PlayerShell
         profile={profile}
         myParty={myParty}
         activeTab={tab}
@@ -286,7 +295,8 @@ export default function PlayerPage() {
           </Button>
         </div>
       </Modal>
-    </PlayerShell>
+        </PlayerShell>
+      </TabletopSessionProvider>
     </TabletopMusicProvider>
   );
 }
