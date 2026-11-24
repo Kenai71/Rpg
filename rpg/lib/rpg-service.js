@@ -1479,6 +1479,14 @@ export async function createMapToken(data) {
 
   const isAllyDefault = type === 'player';
   const nameHiddenDefault = type === 'monster';
+  const resolvedMoveLimit =
+    data.move_limit !== undefined
+      ? data.move_limit === null
+        ? null
+        : Math.max(0, Math.min(200, Math.round((Number(data.move_limit) || 0) * 10) / 10))
+      : type === 'player'
+      ? null
+      : 9;
   const syncGroupId =
     typeof data.sync_group_id === 'string' && data.sync_group_id.trim()
       ? data.sync_group_id.trim().slice(0, 128)
@@ -1509,6 +1517,8 @@ export async function createMapToken(data) {
     is_ally: data.is_ally !== undefined ? Boolean(data.is_ally) : isAllyDefault,
     name_hidden: data.name_hidden !== undefined ? Boolean(data.name_hidden) : nameHiddenDefault,
     monster_id: data.monster_id ? String(data.monster_id).slice(0, 128) : null,
+    move_limit: resolvedMoveLimit,
+    move_used: 0,
     updatedAt: serverTimestamp(),
   });
 

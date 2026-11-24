@@ -195,6 +195,8 @@ export function MonsterStatDetailModal({
 }) {
   const [customName, setCustomName] = useState('');
   const [spawnCount, setSpawnCount] = useState(1);
+  const [spawnMoveLimit, setSpawnMoveLimit] = useState(9);
+  const [startHidden, setStartHidden] = useState(false);
   const [startHiddenName, setStartHiddenName] = useState(true);
   const [startAsAlly, setStartAsAlly] = useState(false);
 
@@ -202,6 +204,8 @@ export function MonsterStatDetailModal({
     if (monster) {
       setCustomName(monster.name || '');
       setSpawnCount(1);
+      setSpawnMoveLimit(9);
+      setStartHidden(false);
       setStartHiddenName(true);
       setStartAsAlly(false);
     }
@@ -213,11 +217,17 @@ export function MonsterStatDetailModal({
 
   const handleConfirmSpawn = async () => {
     if (!onAddToMap || !canAddToMap) return;
+    const safeMoveLimit = Math.max(
+      0,
+      Math.min(200, Math.round((Number(spawnMoveLimit) || 9) * 10) / 10)
+    );
     await onAddToMap(monster, {
       name: customName.trim() || monster.name,
       count: Math.max(1, Math.min(10, Number(spawnCount) || 1)),
+      hidden: startHidden,
       name_hidden: startHiddenName,
       is_ally: startAsAlly,
+      move_limit: safeMoveLimit,
     });
   };
 
@@ -452,8 +462,8 @@ export function MonsterStatDetailModal({
               <Compass className="h-3.5 w-3.5 text-slate-300" />
               Opções ao Adicionar no Campo
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div className="sm:col-span-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="col-span-2">
                 <FormField label="Nome do Token no Mapa">
                   <Input
                     value={customName}
@@ -472,9 +482,46 @@ export function MonsterStatDetailModal({
                   onChange={(e) => setSpawnCount(e.target.value)}
                 />
               </FormField>
+              <FormField label="Deslocamento (m)">
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  max="200"
+                  value={spawnMoveLimit}
+                  onChange={(e) => setSpawnMoveLimit(e.target.value)}
+                />
+              </FormField>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setStartHidden((v) => !v)}
+                className={cn(
+                  'p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all',
+                  startHidden
+                    ? 'bg-violet-500/15 border-violet-400/45 text-violet-100'
+                    : 'bg-white/5 border-white/15 text-slate-300 hover:bg-white/10'
+                )}
+              >
+                {startHidden ? (
+                  <EyeOff className="h-4 w-4 text-violet-300 shrink-0" />
+                ) : (
+                  <Eye className="h-4 w-4 text-slate-300 shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-xs font-bold leading-tight">
+                    {startHidden ? 'Oculto p/ Jogadores' : 'Visível no Mapa'}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    {startHidden
+                      ? 'Fora do mapa e dos turnos'
+                      : 'Aparece quando no campo de visão'}
+                  </div>
+                </div>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setStartHiddenName((v) => !v)}
@@ -492,10 +539,10 @@ export function MonsterStatDetailModal({
                 )}
                 <div className="min-w-0">
                   <div className="text-xs font-bold leading-tight">
-                    {startHiddenName ? 'Nome Oculto p/ Jogadores' : 'Nome Visível p/ Jogadores'}
+                    {startHiddenName ? 'Nome Oculto' : 'Nome Visível'}
                   </div>
                   <div className="text-[10px] text-slate-400">
-                    {startHiddenName ? 'Entra como "???" (pode revelar depois)' : 'Jogadores veem o nome'}
+                    {startHiddenName ? 'Entra como "???"' : 'Jogadores veem o nome'}
                   </div>
                 </div>
               </button>
@@ -520,7 +567,7 @@ export function MonsterStatDetailModal({
                     {startAsAlly ? 'Iniciar como Aliado' : 'Iniciar como Inimigo'}
                   </div>
                   <div className="text-[10px] text-slate-400">
-                    {startAsAlly ? 'Barra de vida visível' : 'Barra de vida oculta p/ jogadores'}
+                    {startAsAlly ? 'Barra de vida visível' : 'Vida oculta p/ jogadores'}
                   </div>
                 </div>
               </button>
@@ -565,8 +612,10 @@ export function MonsterBestiaryModal({
   const [customHp, setCustomHp] = useState(30);
   const [customAc, setCustomAc] = useState(14);
   const [customMana, setCustomMana] = useState(0);
+  const [customMoveLimit, setCustomMoveLimit] = useState(9);
   const [customColor, setCustomColor] = useState('#ef4444');
   const [customAvatar, setCustomAvatar] = useState('');
+  const [customHidden, setCustomHidden] = useState(false);
   const [customIsAlly, setCustomIsAlly] = useState(false);
   const [customNameHidden, setCustomNameHidden] = useState(true);
   const [compressingAvatar, setCompressingAvatar] = useState(false);
@@ -678,18 +727,23 @@ export function MonsterBestiaryModal({
           max_mana: 0,
           conditions: [],
           initiative: 0,
-          hidden: false,
+          hidden: Boolean(opts?.hidden),
           is_ally: Boolean(opts?.is_ally),
           name_hidden: opts?.name_hidden !== undefined ? Boolean(opts.name_hidden) : true,
           monster_id: monster.id,
+          move_limit:
+            opts?.move_limit !== undefined && Number.isFinite(Number(opts.move_limit))
+              ? Math.max(0, Math.min(200, Math.round(Number(opts.move_limit) * 10) / 10))
+              : 9,
+          move_used: 0,
           x: Math.max(5, Math.min(95, 50 + offsetX)),
           y: Math.max(5, Math.min(95, 45 + offsetY)),
         });
       }
       toast.success(
         count > 1
-          ? `${count}x "${baseName}" posicionados no campo!`
-          : `"${baseName}" posicionado no campo!`
+          ? `${count}x "${baseName}" posicionados no campo${opts?.hidden ? ' (ocultos)' : ''}!`
+          : `"${baseName}" posicionado no campo${opts?.hidden ? ' (oculto)' : ''}!`
       );
       setDetailMonster(null);
       onOpenChange(false);
@@ -739,16 +793,22 @@ export function MonsterBestiaryModal({
         max_mana: Math.max(0, Number(customMana) || 0),
         conditions: [],
         initiative: 0,
-        hidden: false,
+        hidden: customHidden,
         is_ally: customIsAlly,
         name_hidden: customNameHidden,
         monster_id: null,
+        move_limit: Math.max(0, Math.min(200, Math.round((Number(customMoveLimit) || 9) * 10) / 10)),
+        move_used: 0,
         x: 45 + (Math.random() * 10 - 5),
         y: 40 + (Math.random() * 10 - 5),
       });
-      toast.success(`"${customName.trim()}" posicionado no campo!`);
+      toast.success(
+        `"${customName.trim()}" posicionado no campo${customHidden ? ' (oculto)' : ''}!`
+      );
       setCustomName('');
       setCustomAvatar('');
+      setCustomHidden(false);
+      setCustomMoveLimit(9);
       onOpenChange(false);
     } catch (err) {
       toast.error(err?.message || 'Erro ao posicionar token.');
@@ -1070,7 +1130,7 @@ export function MonsterBestiaryModal({
                 </FormField>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                 <FormField label="Vida (PV)">
                   <Input
                     type="number"
@@ -1095,6 +1155,16 @@ export function MonsterBestiaryModal({
                     onChange={(e) => setCustomMana(e.target.value)}
                   />
                 </FormField>
+                <FormField label="Desloc. (m)">
+                  <Input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="200"
+                    value={customMoveLimit}
+                    onChange={(e) => setCustomMoveLimit(e.target.value)}
+                  />
+                </FormField>
                 <FormField label="Tamanho">
                   <Select value={customSize} onChange={(e) => setCustomSize(e.target.value)}>
                     {Object.entries(TOKEN_SIZES).map(([k, cfg]) => (
@@ -1106,7 +1176,34 @@ export function MonsterBestiaryModal({
                 </FormField>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCustomHidden((v) => !v)}
+                  className={cn(
+                    'p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all',
+                    customHidden
+                      ? 'bg-violet-500/15 border-violet-400/45 text-violet-100'
+                      : 'bg-white/5 border-white/15 text-slate-300 hover:bg-white/10'
+                  )}
+                >
+                  {customHidden ? (
+                    <EyeOff className="h-4 w-4 text-violet-300 shrink-0" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-slate-300 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold leading-tight">
+                      {customHidden ? 'Oculto p/ Jogadores' : 'Visível no Mapa'}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {customHidden
+                        ? 'Fora do mapa e dos turnos'
+                        : 'Aparece quando visível'}
+                    </div>
+                  </div>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setCustomNameHidden((v) => !v)}
@@ -1123,8 +1220,8 @@ export function MonsterBestiaryModal({
                     <Eye className="h-4 w-4 text-slate-300 shrink-0" />
                   )}
                   <div className="min-w-0">
-                    <div className="text-xs font-bold">
-                      {customNameHidden ? 'Nome Oculto p/ Jogadores' : 'Nome Visível p/ Jogadores'}
+                    <div className="text-xs font-bold leading-tight">
+                      {customNameHidden ? 'Nome Oculto' : 'Nome Visível'}
                     </div>
                     <div className="text-[10px] text-slate-400">
                       {customNameHidden ? 'Entra como "???"' : 'Jogadores veem o nome'}
@@ -1148,11 +1245,11 @@ export function MonsterBestiaryModal({
                     <Users className="h-4 w-4 text-slate-300 shrink-0" />
                   )}
                   <div className="min-w-0">
-                    <div className="text-xs font-bold">
+                    <div className="text-xs font-bold leading-tight">
                       {customIsAlly ? 'Marcar como Aliado' : 'Iniciar como Inimigo'}
                     </div>
                     <div className="text-[10px] text-slate-400">
-                      {customIsAlly ? 'Barra de vida visível' : 'Barra de vida oculta p/ jogadores'}
+                      {customIsAlly ? 'Barra de vida visível' : 'Vida oculta p/ jogadores'}
                     </div>
                   </div>
                 </button>

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
+  ArrowUp,
   BookOpen,
   ChevronRight,
   CloudLightning,
@@ -19,6 +20,7 @@ import {
   Footprints,
   Ghost,
   Grid,
+  GripVertical,
   Heart,
   Lock,
   Maximize2,
@@ -27,6 +29,7 @@ import {
   Music,
   PanelLeftClose,
   PanelLeftOpen,
+  Play,
   Plus,
   RotateCcw,
   Ruler,
@@ -1019,6 +1022,7 @@ export function TacticalMapCanvas({
   const [moveLimitInput, setMoveLimitInput] = useState(String(mapMoveLimitMeters));
   const [activeMovePreview, setActiveMovePreview] = useState(null);
   const [resettingMovement, setResettingMovement] = useState(false);
+  const [masterFreeMove, setMasterFreeMove] = useState(false);
   const lastMoveBlockedToastRef = useRef(0);
 
   useEffect(() => {
@@ -1029,9 +1033,11 @@ export function TacticalMapCanvas({
     (token) => {
       const hasCustom =
         typeof token?.move_limit === 'number' && Number.isFinite(token.move_limit);
+      const defaultMax =
+        token?.type === 'player' ? mapMoveLimitMeters : DEFAULT_PLAYER_MOVE_LIMIT_M;
       const maxMeters = hasCustom
         ? Math.max(0, Math.min(200, Math.round(token.move_limit * 10) / 10))
-        : mapMoveLimitMeters;
+        : defaultMax;
       const usedMeters =
         Number.isFinite(Number(token?.move_used)) && Number(token?.move_used) > 0
           ? Math.round(Number(token.move_used) * 100) / 100
@@ -1147,7 +1153,9 @@ export function TacticalMapCanvas({
     const rect = mapImageRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
-    const enforceMoveLimit = !isMaster;
+    // Jogadores sempre seguem o limite; Monstros/NPCs também seguem seu limite (padrão 9m) ao mover no turno (Shift ou modo Setup libera livremente p/ o Mestre)
+    const enforceMoveLimit =
+      !isMaster || (token.type !== 'player' && !masterFreeMove && !e.shiftKey);
     const moveState = getTokenMoveState(token);
 
     if (enforceMoveLimit && moveState.remainingMeters <= 0.02) {
@@ -1155,9 +1163,13 @@ export function TacticalMapCanvas({
       if (nowMs - lastMoveBlockedToastRef.current > 2200) {
         lastMoveBlockedToastRef.current = nowMs;
         toast.warning(
-          `Limite de deslocamento atingido (${formatMeters(moveState.usedMeters)}m / ${formatMeters(
-            moveState.maxMeters
-          )}m). Aguarde o Mestre liberar ou aumentar sua distância.`
+          isMaster
+            ? `Deslocamento de ${token.name} esgotado (${formatMeters(moveState.usedMeters)}m / ${formatMeters(
+                moveState.maxMeters
+              )}m). Aumente o limite, avance o turno, clique em Resetar ou segure Shift.`
+            : `Limite de deslocamento atingido (${formatMeters(moveState.usedMeters)}m / ${formatMeters(
+                moveState.maxMeters
+              )}m). Aguarde o seu turno ou o Mestre aumentar sua distância.`
         );
       }
       return;
@@ -1559,35 +1571,140 @@ export function TacticalMapCanvas({
     [visibleTokens]
   );
 
-  // Ordenação de iniciativa para combate
-  const initiativeOrder = [...visibleTokens].sort((a, b) => (b.initiative || 0) - (a.initiative || 0));
+  // Monstros e NPCs no mapa (para controle de movimentação do Mestre)
+  const creatureTokensOnMap = useMemo(
+    () => visibleTokens.filter((t) => t.type !== 'player'),
+    [visibleTokens]
+  );
+
+  // Arrastar e soltar para reordenar a Ordem de Combate (exclusivo do Mestre)
+  const [dragTurnId, setDragTurnId] = useState(null);
+  const [dragOverTurnId, setDragOverTurnId] = useState(null);
+  const [optimisticTurnOrderIds, setOptimisticTurnOrderIds] = useState(null);
+
+  // Ordem completa de combate para o Mestre (estável por iniciativa decrescente)
+  const masterInitiativeOrder = useMemo(() => {
+    const baseSorted = [...visibleTokens].sort(
+      (a, b) =>
+        (Number(b.initiative) || 0) - (Number(a.initiative) || 0) ||
+        String(a.id || '').localeCompare(String(b.id || ''))
+    );
+
+    if (Array.isArray(optimisticTurnOrderIds) && optimisticTurnOrderIds.length > 0) {
+      const byId = new Map(baseSorted.map((t) => [t.id, t]));
+      const ordered = [];
+      optimisticTurnOrderIds.forEach((id) => {
+        const tok = byId.get(id);
+        if (tok) {
+          ordered.push(tok);
+          byId.delete(id);
+        }
+      });
+      byId.forEach((tok) => ordered.push(tok));
+      return ordered;
+    }
+
+    return baseSorted;
+  }, [visibleTokens, optimisticTurnOrderIds]);
+
+  // Ordem de combate visível: Mestre vê todos (incluindo ocultos); Jogadores NUNCA veem ocultos nem monstros fora do seu campo de visão
+  const initiativeOrder = useMemo(() => {
+    if (isMaster) return masterInitiativeOrder;
+    return masterInitiativeOrder.filter((tok) => {
+      if (tok.hidden) return false;
+      if (tok.type === 'player') return true;
+      if (localEffects.blackout) return false;
+      const vis = lightingState.tokenVisibility[tok.id];
+      return vis ? Boolean(vis.visible) : true;
+    });
+  }, [isMaster, masterInitiativeOrder, localEffects.blackout, lightingState.tokenVisibility]);
+
+  // Ativa o turno de um token específico e SEMPRE renova o deslocamento dele para o máximo (funciona p/ jogadores e monstros!)
+  const activateTokenTurn = useCallback(
+    async (targetToken) => {
+      if (!isMaster || !onUpdateMap || !map?.id || !targetToken?.id) return;
+      try {
+        await onUpdateMap(map.id, { current_turn_token_id: targetToken.id });
+        if (onUpdateTokenStats) {
+          await onUpdateTokenStats(targetToken.id, { move_used: 0 });
+        }
+        toast.info(`Turno de: ${targetToken.name} (deslocamento renovado!)`);
+      } catch {
+        toast.error('Erro ao ativar turno.');
+      }
+    },
+    [isMaster, onUpdateMap, map?.id, onUpdateTokenStats]
+  );
 
   const handleNextTurn = async () => {
-    if (!isMaster || !onUpdateMap || initiativeOrder.length === 0) return;
-    const currentIdx = initiativeOrder.findIndex((t) => t.id === map?.current_turn_token_id);
-    const nextToken = initiativeOrder[(currentIdx + 1) % initiativeOrder.length];
-    await onUpdateMap(map.id, { current_turn_token_id: nextToken?.id || null });
-    // Renova automaticamente o orçamento de movimento do personagem cujo turno começou
-    if (nextToken?.id && onUpdateTokenStats && Number(nextToken.move_used) > 0) {
-      onUpdateTokenStats(nextToken.id, { move_used: 0 }).catch(() => {});
-    }
-    toast.info(`Turno de: ${nextToken?.name || 'Próximo'} (movimento renovado)`);
+    if (!isMaster || !onUpdateMap || masterInitiativeOrder.length === 0) return;
+    const currentIdx = masterInitiativeOrder.findIndex((t) => t.id === map?.current_turn_token_id);
+    const nextToken = masterInitiativeOrder[(currentIdx + 1) % masterInitiativeOrder.length];
+    if (!nextToken) return;
+    await activateTokenTurn(nextToken);
   };
+
+  // Reordena a iniciativa ao arrastar um card para cima/baixo ou usar as setas
+  const handleReorderInitiative = useCallback(
+    async (fromIdx, toIdx) => {
+      if (!isMaster || !onUpdateTokenStats) return;
+      if (
+        fromIdx < 0 ||
+        toIdx < 0 ||
+        fromIdx === toIdx ||
+        fromIdx >= masterInitiativeOrder.length ||
+        toIdx >= masterInitiativeOrder.length
+      ) {
+        return;
+      }
+
+      const reordered = [...masterInitiativeOrder];
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+
+      setOptimisticTurnOrderIds(reordered.map((t) => t.id));
+
+      // Atribui valores decrescentes limpos garantindo que empates (ex: vários com 0) sempre respeitem a nova ordem exata
+      const highestExisting = Math.max(
+        reordered.length,
+        ...reordered.map((t) => Math.round(Number(t.initiative) || 0))
+      );
+      const baseTop = Math.max(highestExisting, reordered.length * 2);
+
+      const updates = [];
+      reordered.forEach((tok, idx) => {
+        const nextInit = baseTop - idx;
+        if (Number(tok.initiative) !== nextInit) {
+          updates.push(onUpdateTokenStats(tok.id, { initiative: nextInit }));
+        }
+      });
+
+      try {
+        await Promise.all(updates);
+      } catch {
+        toast.error('Erro ao salvar nova ordem de turno.');
+      } finally {
+        setTimeout(() => setOptimisticTurnOrderIds(null), 250);
+      }
+    },
+    [isMaster, onUpdateTokenStats, masterInitiativeOrder]
+  );
 
   const handleResetAllPlayersMovement = async () => {
     if (!isMaster || !onUpdateTokenStats || resettingMovement) return;
-    if (heroTokensOnMap.length === 0) {
-      toast.info('Nenhum herói no mapa atual para resetar.');
+    const targets = visibleTokens;
+    if (targets.length === 0) {
+      toast.info('Nenhum token no mapa atual para resetar.');
       return;
     }
     setResettingMovement(true);
     try {
       await Promise.all(
-        heroTokensOnMap.map((t) => onUpdateTokenStats(t.id, { move_used: 0 }))
+        targets.map((t) => onUpdateTokenStats(t.id, { move_used: 0 }))
       );
-      toast.success(`Movimento renovado para ${heroTokensOnMap.length} jogador(es)!`);
+      toast.success(`Movimento renovado para todos (${targets.length} tokens)!`);
     } catch {
-      toast.error('Erro ao resetar deslocamento dos jogadores.');
+      toast.error('Erro ao resetar deslocamento.');
     } finally {
       setResettingMovement(false);
     }
@@ -2415,7 +2532,7 @@ export function TacticalMapCanvas({
                 </div>
 
                 {isMaster && initiativeOrder.length > 0 && (
-                  <div className="p-3 border-b border-white/10 shrink-0 bg-white/[0.02]">
+                  <div className="p-3 border-b border-white/10 shrink-0 bg-white/[0.02] space-y-2">
                     <Button
                       size="sm"
                       onClick={handleNextTurn}
@@ -2424,6 +2541,9 @@ export function TacticalMapCanvas({
                       Avançar Próximo Turno
                       <ChevronRight className="h-3.5 w-3.5" />
                     </Button>
+                    <p className="text-[10px] text-slate-400 text-center leading-tight">
+                      Arraste os cards para reordenar os turnos • O deslocamento reseta automaticamente ao chegar o turno
+                    </p>
                   </div>
                 )}
 
@@ -2442,23 +2562,82 @@ export function TacticalMapCanvas({
                         0,
                         Math.min(100, Math.round(((tok.hp || 0) / (tok.max_hp || 1)) * 100))
                       );
+                      const moveSt = getTokenMoveState(tok);
+                      const showMoveBadge =
+                        isMaster || tok.owner_id === currentUserId || tok.character_id === currentUserId;
+                      const isDraggingThis = dragTurnId === tok.id;
+                      const isDragOverThis = dragOverTurnId === tok.id && dragTurnId !== tok.id;
+
                       return (
-                        <button
+                        <div
                           key={tok.id}
-                          type="button"
+                          draggable={isMaster}
+                          onDragStart={(e) => {
+                            if (!isMaster) return;
+                            setDragTurnId(tok.id);
+                            try {
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/plain', tok.id);
+                            } catch {}
+                          }}
+                          onDragOver={(e) => {
+                            if (!isMaster || !dragTurnId) return;
+                            e.preventDefault();
+                            if (dragOverTurnId !== tok.id) setDragOverTurnId(tok.id);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverTurnId === tok.id) setDragOverTurnId(null);
+                          }}
+                          onDrop={(e) => {
+                            if (!isMaster) return;
+                            e.preventDefault();
+                            const sourceId = dragTurnId || e.dataTransfer?.getData('text/plain');
+                            const fromIdx = masterInitiativeOrder.findIndex((t) => t.id === sourceId);
+                            setDragTurnId(null);
+                            setDragOverTurnId(null);
+                            if (fromIdx !== -1 && fromIdx !== index) {
+                              handleReorderInitiative(fromIdx, index);
+                            }
+                          }}
+                          onDragEnd={() => {
+                            setDragTurnId(null);
+                            setDragOverTurnId(null);
+                          }}
                           onClick={() => {
                             setSelectedTokenId(tok.id);
                             setInspectModalOpen(true);
                           }}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedTokenId(tok.id);
+                              setInspectModalOpen(true);
+                            }
+                          }}
                           className={cn(
-                            'w-full flex flex-col gap-1.5 p-2.5 rounded-xl border transition-all text-left',
+                            'group w-full flex flex-col gap-1.5 p-2.5 rounded-xl border transition-all text-left cursor-pointer',
                             isCurrentTurn
                               ? 'bg-amber-500/15 border-amber-400/50 text-white shadow-sm ring-1 ring-amber-400/25'
-                              : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/10'
+                              : tok.hidden
+                              ? 'bg-violet-500/[0.06] border-violet-400/30 text-slate-200 hover:bg-violet-500/12 border-dashed'
+                              : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/10',
+                            isDraggingThis && 'opacity-45 scale-[0.98]',
+                            isDragOverThis && 'border-t-2 border-t-sky-400 shadow-[0_-6px_14px_rgba(56,189,248,0.22)]'
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {isMaster && (
+                                <span
+                                  title="Arraste para cima ou para baixo para mudar a ordem"
+                                  className="text-slate-500 hover:text-slate-200 cursor-grab active:cursor-grabbing shrink-0 -ml-0.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </span>
+                              )}
                               <span className="text-[10px] font-mono text-slate-500 shrink-0">
                                 #{index + 1}
                               </span>
@@ -2473,18 +2652,24 @@ export function TacticalMapCanvas({
                               <span className="text-xs font-bold text-white truncate">
                                 {displayName}
                               </span>
+                              {isMaster && tok.hidden && (
+                                <span className="px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-400/40 text-[9px] font-bold text-violet-200 shrink-0">
+                                  Oculto
+                                </span>
+                              )}
                               {isAlliedNonPlayer && (
-                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300 shrink-0">
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300 shrink-0">
                                   Aliado
                                 </span>
                               )}
-                              {isMaster && tok.name_hidden && (
+                              {isMaster && tok.name_hidden && !tok.hidden && (
                                 <EyeOff
                                   className="h-3 w-3 text-amber-300 shrink-0"
                                   title="Nome oculto para jogadores"
                                 />
                               )}
                             </div>
+
                             {showHp ? (
                               <span className="font-mono text-[10px] text-slate-300 shrink-0">
                                 {tok.hp}/{tok.max_hp} PV
@@ -2495,6 +2680,7 @@ export function TacticalMapCanvas({
                               </span>
                             )}
                           </div>
+
                           {showHp && (
                             <div className="w-full h-1.5 rounded-full bg-black/60 overflow-hidden border border-white/10">
                               <div
@@ -2510,7 +2696,94 @@ export function TacticalMapCanvas({
                               />
                             </div>
                           )}
-                        </button>
+
+                          {/* Rodapé do Card: Deslocamento restante + Controles rápidos do Mestre */}
+                          {(showMoveBadge || isMaster) && (
+                            <div
+                              className="flex items-center justify-between gap-1.5 pt-0.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {showMoveBadge ? (
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1 text-[10px] font-mono',
+                                    moveSt.remainingMeters <= 0.02
+                                      ? 'text-rose-300 font-bold'
+                                      : 'text-slate-400'
+                                  )}
+                                >
+                                  <Footprints className="h-2.5 w-2.5 shrink-0" />
+                                  {formatMeters(moveSt.remainingMeters)}m / {formatMeters(moveSt.maxMeters)}m
+                                </span>
+                              ) : (
+                                <span />
+                              )}
+
+                              {isMaster && (
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    disabled={index === 0}
+                                    onClick={() => handleReorderInitiative(index, index - 1)}
+                                    title="Subir na ordem de turno"
+                                    aria-label="Subir na ordem de turno"
+                                    className="h-6 w-6 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/12 disabled:opacity-25 transition-colors"
+                                  >
+                                    <ArrowUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={index === initiativeOrder.length - 1}
+                                    onClick={() => handleReorderInitiative(index, index + 1)}
+                                    title="Descer na ordem de turno"
+                                    aria-label="Descer na ordem de turno"
+                                    className="h-6 w-6 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/12 disabled:opacity-25 transition-colors"
+                                  >
+                                    <ArrowDown className="h-3 w-3" />
+                                  </button>
+                                  {tok.type !== 'player' && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onUpdateTokenStats?.(tok.id, { hidden: !tok.hidden })
+                                      }
+                                      title={
+                                        tok.hidden
+                                          ? 'Revelar criatura para os jogadores'
+                                          : 'Ocultar criatura dos jogadores'
+                                      }
+                                      aria-label={tok.hidden ? 'Revelar criatura' : 'Ocultar criatura'}
+                                      className={cn(
+                                        'h-6 w-6 rounded-md flex items-center justify-center transition-colors',
+                                        tok.hidden
+                                          ? 'text-violet-300 bg-violet-500/15 hover:bg-violet-500/25'
+                                          : 'text-slate-400 hover:text-white hover:bg-white/12'
+                                      )}
+                                    >
+                                      {tok.hidden ? (
+                                        <Eye className="h-3 w-3" />
+                                      ) : (
+                                        <EyeOff className="h-3 w-3" />
+                                      )}
+                                    </button>
+                                  )}
+                                  {!isCurrentTurn && (
+                                    <button
+                                      type="button"
+                                      onClick={() => activateTokenTurn(tok)}
+                                      title="Iniciar turno deste combatente (reseta movimento)"
+                                      aria-label={`Iniciar turno de ${tok.name}`}
+                                      className="h-6 px-1.5 rounded-md flex items-center gap-0.5 text-[9px] font-bold text-slate-300 hover:text-amber-200 hover:bg-amber-500/15 transition-colors"
+                                    >
+                                      <Play className="h-2.5 w-2.5" />
+                                      Turno
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       );
                     })
                   )}
@@ -2940,135 +3213,188 @@ export function TacticalMapCanvas({
                     </p>
                   </div>
 
-                  {/* Ação 1-clique para renovar movimento de todos os jogadores */}
+                  {/* Ação 1-clique para renovar movimento de todos os tokens (heróis e monstros) */}
                   <Button
                     type="button"
                     size="sm"
                     variant="secondary"
                     loading={resettingMovement}
-                    disabled={heroTokensOnMap.length === 0}
+                    disabled={visibleTokens.length === 0}
                     onClick={handleResetAllPlayersMovement}
                     className="w-full text-xs gap-1.5"
                   >
                     <RotateCcw className="h-3.5 w-3.5 text-slate-300" />
-                    Resetar Movimento de Todos ({heroTokensOnMap.length})
+                    Resetar Movimento de Todos ({visibleTokens.length})
                   </Button>
 
-                  {/* Controle Ao Vivo por Herói no Mapa */}
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-0.5">
-                      Heróis no Mapa ({heroTokensOnMap.length})
-                    </span>
-
-                    {heroTokensOnMap.length === 0 ? (
-                      <div className="py-5 px-3 text-center text-[11px] text-slate-400 rounded-xl border border-dashed border-white/12">
-                        Nenhum herói posicionado neste mapa ainda.
+                  {/* Modo Setup do Mestre para reposicionar monstros livremente quando desejar */}
+                  <button
+                    type="button"
+                    onClick={() => setMasterFreeMove((v) => !v)}
+                    className={cn(
+                      'w-full px-3 py-2 rounded-xl border text-left transition-all flex items-center justify-between gap-2',
+                      masterFreeMove
+                        ? 'bg-amber-500/12 border-amber-400/35 text-amber-100'
+                        : 'bg-[#0c101b] border-white/12 text-slate-300 hover:bg-white/[0.06]'
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold leading-tight">
+                        {masterFreeMove ? 'Modo Setup Livre Ativo' : 'Monstros Respeitam Limite'}
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {heroTokensOnMap.map((hero) => {
-                          const st = getTokenMoveState(hero);
-                          const pct =
-                            st.maxMeters > 0
-                              ? Math.min(100, Math.round((st.usedMeters / st.maxMeters) * 100))
-                              : 100;
-                          return (
-                            <div
-                              key={hero.id}
-                              className="p-2.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-2"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <div className="text-xs font-bold text-white truncate">
-                                    {hero.name}
+                      <div className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                        {masterFreeMove
+                          ? 'Monstros se movem sem limite'
+                          : 'Padrão 9m (segure Shift p/ reposicionar livre)'}
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        'w-8 h-[18px] rounded-full p-0.5 transition-colors shrink-0 flex items-center',
+                        masterFreeMove ? 'bg-amber-400/80 justify-end' : 'bg-white/15 justify-start'
+                      )}
+                    >
+                      <span className="h-3.5 w-3.5 rounded-full bg-white shadow-sm" />
+                    </span>
+                  </button>
+
+                  {/* Controle Ao Vivo por Herói e Monstro/NPC no Mapa */}
+                  {[
+                    { title: 'Heróis no Mapa', list: heroTokensOnMap, empty: 'Nenhum herói neste mapa.', isPlayerGroup: true },
+                    { title: 'Monstros & NPCs no Mapa', list: creatureTokensOnMap, empty: 'Nenhum monstro/NPC neste mapa.', isPlayerGroup: false },
+                  ].map((group) => (
+                    <div key={group.title} className="space-y-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-0.5">
+                        {group.title} ({group.list.length})
+                      </span>
+
+                      {group.list.length === 0 ? (
+                        <div className="py-4 px-3 text-center text-[11px] text-slate-400 rounded-xl border border-dashed border-white/12">
+                          {group.empty}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {group.list.map((tok) => {
+                            const st = getTokenMoveState(tok);
+                            const pct =
+                              st.maxMeters > 0
+                                ? Math.min(100, Math.round((st.usedMeters / st.maxMeters) * 100))
+                                : 100;
+                            return (
+                              <div
+                                key={tok.id}
+                                className="p-2.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-2"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                                      <span className="truncate">{tok.name}</span>
+                                      {tok.hidden && (
+                                        <span className="px-1 py-0.5 rounded bg-violet-500/20 border border-violet-400/35 text-[8px] font-bold text-violet-200 shrink-0">
+                                          Oculto
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] font-mono text-slate-400">
+                                      {formatMeters(st.usedMeters)}m / {formatMeters(st.maxMeters)}m
+                                      {group.isPlayerGroup && st.hasCustom ? ' (individual)' : ''}
+                                    </div>
                                   </div>
-                                  <div className="text-[10px] font-mono text-slate-400">
-                                    {formatMeters(st.usedMeters)}m / {formatMeters(st.maxMeters)}m
-                                    {st.hasCustom ? ' (individual)' : ''}
-                                  </div>
+                                  <span
+                                    className={cn(
+                                      'px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border shrink-0',
+                                      st.remainingMeters <= 0.02
+                                        ? 'bg-rose-500/15 border-rose-400/35 text-rose-300'
+                                        : 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
+                                    )}
+                                  >
+                                    {formatMeters(st.remainingMeters)}m livre
+                                  </span>
                                 </div>
-                                <span
-                                  className={cn(
-                                    'px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border shrink-0',
-                                    st.remainingMeters <= 0.02
-                                      ? 'bg-rose-500/15 border-rose-400/35 text-rose-300'
-                                      : 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
-                                  )}
-                                >
-                                  {formatMeters(st.remainingMeters)}m livre
-                                </span>
-                              </div>
 
-                              <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                                <div
-                                  className={cn(
-                                    'h-full transition-all duration-200',
-                                    pct >= 100
-                                      ? 'bg-rose-500'
-                                      : pct >= 70
-                                      ? 'bg-amber-400'
-                                      : 'bg-sky-400'
-                                  )}
-                                  style={{ width: `${pct}%` }}
-                                />
-                              </div>
+                                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                  <div
+                                    className={cn(
+                                      'h-full transition-all duration-200',
+                                      pct >= 100
+                                        ? 'bg-rose-500'
+                                        : pct >= 70
+                                        ? 'bg-amber-400'
+                                        : 'bg-sky-400'
+                                    )}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
 
-                              <div className="flex items-center gap-1 flex-wrap">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onUpdateTokenStats?.(hero.id, {
-                                      move_limit: Math.min(200, Math.round((st.maxMeters + 3) * 10) / 10),
-                                    })
-                                  }
-                                  className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
-                                  title="Aumentar limite individual em +3m"
-                                >
-                                  +3m
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onUpdateTokenStats?.(hero.id, {
-                                      move_limit: Math.min(200, Math.round((st.maxMeters + 9) * 10) / 10),
-                                    })
-                                  }
-                                  className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
-                                  title="Disparada (+9m no limite individual)"
-                                >
-                                  +9m
-                                </button>
-                                {st.hasCustom && (
+                                <div className="flex items-center gap-1 flex-wrap">
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      onUpdateTokenStats?.(hero.id, { move_limit: null })
+                                      onUpdateTokenStats?.(tok.id, {
+                                        move_limit: Math.min(200, Math.round((st.maxMeters + 3) * 10) / 10),
+                                      })
                                     }
-                                    className="px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 hover:bg-white/12 text-[10px] font-semibold text-slate-400 hover:text-white transition-colors"
-                                    title="Voltar a seguir o limite global do mapa"
+                                    className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
+                                    title="Aumentar limite em +3m"
                                   >
-                                    Padrão
+                                    +3m
                                   </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onUpdateTokenStats?.(hero.id, { move_used: 0 })
-                                  }
-                                  disabled={st.usedMeters <= 0}
-                                  className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/8 border border-white/15 hover:bg-white/15 disabled:opacity-35 text-[10px] font-bold text-white transition-colors"
-                                  title="Zerar metros gastos deste jogador"
-                                >
-                                  <RotateCcw className="h-3 w-3 text-slate-300" />
-                                  Resetar
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onUpdateTokenStats?.(tok.id, {
+                                        move_limit: Math.min(200, Math.round((st.maxMeters + 9) * 10) / 10),
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/12 hover:bg-white/15 text-[10px] font-mono font-bold text-slate-200 transition-colors"
+                                    title="Disparada (+9m no limite)"
+                                  >
+                                    +9m
+                                  </button>
+                                  {group.isPlayerGroup && st.hasCustom && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onUpdateTokenStats?.(tok.id, { move_limit: null })
+                                      }
+                                      className="px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 hover:bg-white/12 text-[10px] font-semibold text-slate-400 hover:text-white transition-colors"
+                                      title="Voltar a seguir o limite global do mapa"
+                                    >
+                                      Padrão
+                                    </button>
+                                  )}
+                                  {!group.isPlayerGroup && st.maxMeters !== DEFAULT_PLAYER_MOVE_LIMIT_M && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onUpdateTokenStats?.(tok.id, { move_limit: DEFAULT_PLAYER_MOVE_LIMIT_M })
+                                      }
+                                      className="px-2 py-1 rounded-lg bg-white/[0.04] border border-white/10 hover:bg-white/12 text-[10px] font-semibold text-slate-400 hover:text-white transition-colors"
+                                      title="Voltar para o padrão de 9m"
+                                    >
+                                      9m
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onUpdateTokenStats?.(tok.id, { move_used: 0 })
+                                    }
+                                    disabled={st.usedMeters <= 0}
+                                    className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/8 border border-white/15 hover:bg-white/15 disabled:opacity-35 text-[10px] font-bold text-white transition-colors"
+                                    title="Zerar metros gastos deste token"
+                                  >
+                                    <RotateCcw className="h-3 w-3 text-slate-300" />
+                                    Resetar
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </>
             )}
@@ -4423,9 +4749,10 @@ export function TacticalMapCanvas({
                   );
                 })()}
 
-                {/* Controle Individual de Limite de Movimento do Jogador */}
-                {activeSelectedToken.type === 'player' && (() => {
+                {/* Controle Individual de Limite de Movimento (Jogadores, Monstros e NPCs — padrão 9m) */}
+                {(() => {
                   const st = getTokenMoveState(activeSelectedToken);
+                  const isPlayerToken = activeSelectedToken.type === 'player';
                   return (
                     <div className="p-3.5 rounded-xl bg-[#0c101b] border border-white/12 space-y-3">
                       <div className="flex items-center justify-between gap-2">
@@ -4446,44 +4773,50 @@ export function TacticalMapCanvas({
                       </div>
 
                       <div className="grid grid-cols-4 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: null })
+                        {isPlayerToken && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: null })
+                            }
+                            className={cn(
+                              'py-1.5 px-2 rounded-lg border text-[10px] font-semibold transition-all text-center',
+                              !st.hasCustom
+                                ? 'bg-white/16 border-white/35 text-white'
+                                : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            )}
+                          >
+                            Mapa ({formatMeters(mapMoveLimitMeters)}m)
+                          </button>
+                        )}
+                        {(isPlayerToken ? [6, 9, 12, 15, 18, 24, 30] : [4.5, 6, 9, 12, 15, 18, 24, 30]).map(
+                          (mVal) => {
+                            const isSelected = isPlayerToken
+                              ? st.hasCustom && Math.abs(st.maxMeters - mVal) < 0.05
+                              : Math.abs(st.maxMeters - mVal) < 0.05;
+                            return (
+                              <button
+                                key={mVal}
+                                type="button"
+                                onClick={() =>
+                                  onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: mVal })
+                                }
+                                className={cn(
+                                  'py-1.5 px-2 rounded-lg border text-[10px] font-mono font-bold transition-all text-center',
+                                  isSelected
+                                    ? 'bg-white/16 border-white/35 text-white'
+                                    : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                                )}
+                              >
+                                {formatMeters(mVal)}m
+                              </button>
+                            );
                           }
-                          className={cn(
-                            'py-1.5 px-2 rounded-lg border text-[10px] font-semibold transition-all text-center',
-                            !st.hasCustom
-                              ? 'bg-white/16 border-white/35 text-white'
-                              : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-                          )}
-                        >
-                          Mapa ({formatMeters(mapMoveLimitMeters)}m)
-                        </button>
-                        {[6, 9, 12, 15, 18, 24, 30].map((mVal) => {
-                          const isSelected = st.hasCustom && Math.abs(st.maxMeters - mVal) < 0.05;
-                          return (
-                            <button
-                              key={mVal}
-                              type="button"
-                              onClick={() =>
-                                onUpdateTokenStats?.(activeSelectedToken.id, { move_limit: mVal })
-                              }
-                              className={cn(
-                                'py-1.5 px-2 rounded-lg border text-[10px] font-mono font-bold transition-all text-center',
-                                isSelected
-                                  ? 'bg-white/16 border-white/35 text-white'
-                                  : 'bg-white/[0.04] border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-                              )}
-                            >
-                              {mVal}m
-                            </button>
-                          );
-                        })}
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <FormField label="Distância individual (metros):">
+                        <FormField label="Distância máxima (metros):">
                           <Input
                             type="number"
                             step="0.5"
