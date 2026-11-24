@@ -21,6 +21,7 @@ import {
   Maximize2,
   Minus,
   Move,
+  Music,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -43,6 +44,7 @@ import { Badge } from '../ui/Badge';
 import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { TacticalDice3D } from './TacticalDice3D';
+import { useTabletopMusic } from '../music/TabletopMusicProvider';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import { computeAutoGridSize, loadMapHdImageUrl } from '../../lib/rpg-service';
 import { cn } from '../../lib/utils';
@@ -172,6 +174,7 @@ export function TacticalMapCanvas({
 }) {
   const containerRef = useRef(null);
   const mapImageRef = useRef(null);
+  const tabletopMusic = useTabletopMusic();
 
   // Zoom e Pan
   const [zoom, setZoom] = useState(map?.scale || 1.0);
@@ -305,10 +308,10 @@ export function TacticalMapCanvas({
     };
   }, [map?.id, map?.imageUrl, map?.hd_chunk_count, map?.hd_mime_type, map?.naturalWidth, map?.naturalHeight]);
 
-  // Dimensões EXATAS em pixels reais da imagem (sem redução artificial para 1400px)
+  // Dimensões EXATAS em pixels reais da imagem (sem redução artificial para 1400px e sem distorcer proporções extremas)
   const mapDisplaySize = useMemo(() => {
-    const w = Math.max(100, Math.round(Number(naturalDimensions.width) || 1400));
-    const h = Math.max(100, Math.round(Number(naturalDimensions.height) || 900));
+    const w = Math.max(32, Math.round(Number(naturalDimensions.width) || 1400));
+    const h = Math.max(32, Math.round(Number(naturalDimensions.height) || 900));
     return { width: w, height: h };
   }, [naturalDimensions]);
 
@@ -358,6 +361,19 @@ export function TacticalMapCanvas({
       return () => cancelAnimationFrame(raf);
     }
   }, [map?.id, imageStatus, fullViewport, handleFitToScreen]);
+
+  // Atualiza limites de zoom sempre que a viewport do mapa mudar de tamanho (ex: resize da janela)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    computeFitAndBounds();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      computeFitAndBounds();
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [computeFitAndBounds]);
 
   // Zoom suave proporcional com Scroll do Mouse dentro do mapa sem rolar a página externa
   useEffect(() => {
@@ -1229,6 +1245,39 @@ export function TacticalMapCanvas({
                 Ordem de Combate ({initiativeOrder.length})
               </span>
             </div>
+
+            {tabletopMusic && (
+              <div className="relative group flex justify-center w-full">
+                <button
+                  type="button"
+                  onClick={tabletopMusic.togglePanel}
+                  aria-label={isMaster ? 'Abrir estúdio musical da mesa' : 'Abrir volume da música'}
+                  aria-expanded={tabletopMusic.panelOpen}
+                  title={isMaster ? 'Música & Playlist da Mesa' : 'Música & Volume'}
+                  className={cn(
+                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                    tabletopMusic.panelOpen
+                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <Music className="h-4 w-4 text-slate-300" />
+                  {tabletopMusic.isPlaying && (
+                    <span
+                      className={cn(
+                        'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0a0d16]',
+                        tabletopMusic.needsUnlock
+                          ? 'bg-amber-400 animate-pulse'
+                          : 'bg-emerald-400 animate-pulse'
+                      )}
+                    />
+                  )}
+                </button>
+                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                  {isMaster ? 'Música & Playlist' : 'Música & Volume'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1889,7 +1938,7 @@ export function TacticalMapCanvas({
         }}
       />
 
-      {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM) */}
+      {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM — ZERO ACHATAMENTO / PROPORÇÃO 1:1 EXATA) */}
       <div
         className="w-full h-full cursor-grab active:cursor-grabbing flex items-center justify-center overflow-hidden"
         onPointerDown={handleMapPointerDown}
@@ -1898,15 +1947,20 @@ export function TacticalMapCanvas({
       >
         <div
           ref={mapImageRef}
-          className="relative transition-transform duration-75 will-change-transform"
+          className="relative shrink-0 transition-transform duration-75 will-change-transform"
           style={{
             width: `${mapDisplaySize.width}px`,
             height: `${mapDisplaySize.height}px`,
+            minWidth: `${mapDisplaySize.width}px`,
+            minHeight: `${mapDisplaySize.height}px`,
+            maxWidth: 'none',
+            maxHeight: 'none',
+            flexShrink: 0,
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: 'center center',
           }}
         >
-          {/* Imagem do Mapa: Exibição 1:1 no tamanho exato em pixels e qualidade máxima */}
+          {/* Imagem do Mapa: Exibição 1:1 no tamanho exato em pixels sem achatar nem distorcer */}
           {resolvedImageUrl || map?.imageUrl ? (
             <>
               {imageStatus === 'loading' && (
@@ -1970,12 +2024,14 @@ export function TacticalMapCanvas({
                   }}
                   onError={() => setImageStatus('error')}
                   className={cn(
-                    'w-full h-full block pointer-events-none rounded-lg shadow-2xl object-fill transition-opacity duration-300',
+                    'block pointer-events-none rounded-lg shadow-2xl max-w-none max-h-none object-contain transition-opacity duration-300',
                     imageStatus === 'loaded' ? 'opacity-100' : 'opacity-0'
                   )}
                   style={{
                     width: `${mapDisplaySize.width}px`,
                     height: `${mapDisplaySize.height}px`,
+                    maxWidth: 'none',
+                    maxHeight: 'none',
                   }}
                 />
               )}

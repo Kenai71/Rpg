@@ -1873,3 +1873,341 @@ export async function saveCharacterSheetFields(
     throw err;
   }
 }
+
+// =========================================================================
+// MÚSICA & PLAYLIST SINCRONIZADA DA MESA EM TEMPO REAL (TABLETOP JUKEBOX)
+// =========================================================================
+
+const AUDIO_CHUNK_SIZE = 720000;
+const AUDIO_MAX_CHUNKS = 15; // ~10.8 MB base64 (~8 MB arquivo MP3/OGG/WebM)
+const audioTrackBlobCache = new Map();
+
+function sanitizeTrackEntry(raw, idx = 0) {
+  if (!raw || typeof raw !== 'object') return null;
+  const sourceType = ['youtube', 'url', 'upload', 'synth'].includes(raw.sourceType)
+    ? raw.sourceType
+    : 'synth';
+  const entry = {
+    id: String(raw.id || `track-${idx}-${Date.now()}`).slice(0, 128),
+    title: String(raw.title || 'Faixa Sem Título').trim().slice(0, 120) || 'Faixa Sem Título',
+    artist: String(raw.artist || '').trim().slice(0, 80),
+    category: String(raw.category || 'tavern').slice(0, 32),
+    sourceType,
+    synthId: raw.synthId ? String(raw.synthId).slice(0, 32) : '',
+    youtubeId: raw.youtubeId ? String(raw.youtubeId).slice(0, 32) : '',
+    url: raw.url ? String(raw.url).trim().slice(0, 2000) : '',
+    duration: Number.isFinite(Number(raw.duration)) && Number(raw.duration) > 0
+      ? Math.min(86400, Math.round(Number(raw.duration) * 10) / 10)
+      : 0,
+    chunkCount: Number.isFinite(Number(raw.chunkCount)) ? Math.max(0, Math.min(32, Math.floor(Number(raw.chunkCount)))) : 0,
+    mimeType: raw.mimeType ? String(raw.mimeType).slice(0, 64) : '',
+  };
+  if (typeof raw.inlineDataUrl === 'string' && raw.inlineDataUrl.length <= 680000) {
+    entry.inlineDataUrl = raw.inlineDataUrl;
+  }
+  return entry;
+}
+
+/**
+ * Inscreve-se em tempo real no estado de áudio/playlist sincronizado da mesa (`table_audio/main`).
+ * Mantém fallback automático para `map_rolls/table_audio_state` (sem campo `createdAt`, portanto
+ * ignorado por `orderBy('createdAt')` em `diceRolls`) caso as novas regras ainda não tenham sido publicadas.
+ */
+export function subscribeTableAudio(onData, onError) {
+  const firestore = requireDb();
+  const primaryRef = doc(firestore, 'table_audio', 'main');
+  const fallbackRef = doc(firestore, 'map_rolls', 'table_audio_state');
+
+  let active = true;
+  let primaryDenied = false;
+  let primaryDocExists = false;
+  let unsubFallback = null;
+
+  const stopFallback = () => {
+    if (typeof unsubFallback === 'function') {
+      unsubFallback();
+      unsubFallback = null;
+    }
+  };
+
+  const emitSnapshot = (snap, storageMode) => {
+    if (!active) return;
+    if (!snap.exists()) {
+      onData({ exists: false, storageMode, data: null });
+      return;
+    }
+    const raw = snap.data() || {};
+    onData({
+      exists: true,
+      storageMode,
+      hasPendingWrites: Boolean(snap.metadata?.hasPendingWrites),
+      data: {
+        playlist: Array.isArray(raw.playlist) ? raw.playlist : null,
+        currentTrackId: raw.currentTrackId || null,
+        currentIndex: Number.isFinite(Number(raw.currentIndex)) ? Number(raw.currentIndex) : 0,
+        isPlaying: Boolean(raw.isPlaying),
+        basePositionSec: Number.isFinite(Number(raw.basePositionSec)) ? Math.max(0, Number(raw.basePositionSec)) : 0,
+        anchorClientMs: Number.isFinite(Number(raw.anchorClientMs)) ? Number(raw.anchorClientMs) : null,
+        serverUpdatedAtMs: raw.serverUpdatedAt?.toMillis
+          ? raw.serverUpdatedAt.toMillis()
+          : raw.serverUpdatedAt?.seconds
+          ? raw.serverUpdatedAt.seconds * 1000
+          : null,
+        loopMode: ['playlist', 'one', 'off'].includes(raw.loopMode) ? raw.loopMode : 'playlist',
+        shuffle: Boolean(raw.shuffle),
+        syncVersion: Number.isFinite(Number(raw.syncVersion)) ? Number(raw.syncVersion) : 0,
+        updatedBy: raw.updatedBy || null,
+        updatedByName: raw.updatedByName || null,
+      },
+    });
+  };
+
+  const ensureFallbackListener = () => {
+    if (!active || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      fallbackRef,
+      (snap) => {
+        if (!active || primaryDocExists) return;
+        emitSnapshot(snap, primaryDenied ? 'fallback' : 'collection');
+      },
+      (err) => {
+        if (active && onError) onError(err);
+      }
+    );
+  };
+
+  const unsubPrimary = onSnapshot(
+    primaryRef,
+    (snap) => {
+      if (!active || primaryDenied) return;
+      if (snap.exists()) {
+        primaryDocExists = true;
+        stopFallback();
+        emitSnapshot(snap, 'collection');
+      } else {
+        primaryDocExists = false;
+        ensureFallbackListener();
+      }
+    },
+    (err) => {
+      if (!active) return;
+      if (isPermissionDeniedError(err)) {
+        primaryDenied = true;
+        primaryDocExists = false;
+        ensureFallbackListener();
+      } else if (onError) {
+        onError(err);
+      }
+    }
+  );
+
+  return () => {
+    active = false;
+    if (typeof unsubPrimary === 'function') unsubPrimary();
+    stopFallback();
+  };
+}
+
+/**
+ * Persiste alterações de reprodução/playlist do Mestre para todos os clientes em tempo real.
+ */
+export async function saveTableAudioState(statePatch, preferredStorage = 'collection') {
+  const firestore = requireDb();
+  const payload = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (Array.isArray(statePatch.playlist)) {
+    payload.playlist = statePatch.playlist
+      .slice(0, 100)
+      .map((item, idx) => sanitizeTrackEntry(item, idx))
+      .filter(Boolean);
+  }
+  if (statePatch.currentTrackId !== undefined) {
+    payload.currentTrackId = statePatch.currentTrackId ? String(statePatch.currentTrackId).slice(0, 128) : null;
+  }
+  if (statePatch.currentIndex !== undefined) {
+    payload.currentIndex = Math.max(-1, Math.min(100, Math.floor(Number(statePatch.currentIndex) || 0)));
+  }
+  if (statePatch.isPlaying !== undefined) {
+    payload.isPlaying = Boolean(statePatch.isPlaying);
+  }
+  if (statePatch.basePositionSec !== undefined) {
+    payload.basePositionSec = Math.max(0, Math.min(86400, Math.round(Number(statePatch.basePositionSec || 0) * 100) / 100));
+  }
+  if (statePatch.anchorClientMs !== undefined) {
+    payload.anchorClientMs = Math.max(0, Math.round(Number(statePatch.anchorClientMs) || Date.now()));
+  }
+  if (statePatch.loopMode !== undefined) {
+    payload.loopMode = ['playlist', 'one', 'off'].includes(statePatch.loopMode) ? statePatch.loopMode : 'playlist';
+  }
+  if (statePatch.shuffle !== undefined) {
+    payload.shuffle = Boolean(statePatch.shuffle);
+  }
+  if (statePatch.syncVersion !== undefined) {
+    payload.syncVersion = Math.max(0, Math.min(100000000, Math.floor(Number(statePatch.syncVersion) || 0)));
+    payload.serverUpdatedAt = serverTimestamp();
+  }
+  if (statePatch.updatedBy !== undefined) {
+    payload.updatedBy = statePatch.updatedBy ? String(statePatch.updatedBy).slice(0, 128) : null;
+  }
+  if (statePatch.updatedByName !== undefined) {
+    payload.updatedByName = statePatch.updatedByName ? String(statePatch.updatedByName).slice(0, 60) : null;
+  }
+
+  const writeFallback = async () => {
+    const fallbackRef = doc(firestore, 'map_rolls', 'table_audio_state');
+    await setDoc(fallbackRef, payload, { merge: true });
+    return { storageMode: 'fallback' };
+  };
+
+  if (preferredStorage === 'fallback') {
+    return await writeFallback();
+  }
+
+  try {
+    const primaryRef = doc(firestore, 'table_audio', 'main');
+    await setDoc(primaryRef, payload, { merge: true });
+    return { storageMode: 'collection' };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      return await writeFallback();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Faz upload de arquivo de áudio (MP3/OGG/WebM/M4A) em chunks para `table_audio/main/audio_chunks`
+ * ou inline caso seja compacto (<= 680 KB).
+ */
+export async function uploadTableAudioTrackFile(trackId, dataUrl, mimeType = 'audio/mpeg') {
+  if (!trackId || typeof dataUrl !== 'string') {
+    throw new Error('Arquivo de áudio inválido.');
+  }
+
+  if (dataUrl.length <= 680000) {
+    return {
+      inlineDataUrl: dataUrl,
+      chunkCount: 0,
+      mimeType,
+    };
+  }
+
+  const parsed = parseDataUrlParts(dataUrl);
+  if (!parsed || !parsed.isBase64 || !parsed.body) {
+    throw new Error('Formato de arquivo de áudio não suportado.');
+  }
+
+  const totalChunks = Math.ceil(parsed.body.length / AUDIO_CHUNK_SIZE);
+  if (totalChunks > AUDIO_MAX_CHUNKS) {
+    throw new Error(
+      'Arquivo de áudio muito grande (máx. ~8 MB). Para músicas longas, use um link do YouTube ou URL direta de áudio.'
+    );
+  }
+
+  const firestore = requireDb();
+  const chunks = [];
+  for (let i = 0; i < totalChunks; i += 1) {
+    chunks.push({
+      index: i,
+      data: parsed.body.slice(i * AUDIO_CHUNK_SIZE, (i + 1) * AUDIO_CHUNK_SIZE),
+    });
+  }
+
+  try {
+    for (let i = 0; i < chunks.length; i += 3) {
+      const slice = chunks.slice(i, i + 3);
+      await Promise.all(
+        slice.map((chunk) =>
+          setDoc(doc(firestore, 'table_audio', 'main', 'audio_chunks', `${trackId}_${chunk.index}`), {
+            track_id: trackId,
+            index: chunk.index,
+            data: chunk.data,
+            createdAt: serverTimestamp(),
+          })
+        )
+      );
+    }
+
+    try {
+      const localBlobUrl = base64ToBlobUrl(parsed.body, parsed.mime || mimeType);
+      audioTrackBlobCache.set(trackId, localBlobUrl);
+    } catch {}
+
+    return {
+      inlineDataUrl: null,
+      chunkCount: totalChunks,
+      mimeType: parsed.mime || mimeType,
+    };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      throw new Error(
+        'Publicação de arquivos de áudio acima de 500 KB requer publicar firestore.rules no Firebase. Para usar agora mesmo sem deploy, cole um link do YouTube ou URL direta.'
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Carrega e monta em cache (Blob URL) um arquivo de áudio enviado pelo Mestre.
+ */
+export async function loadTableAudioTrackUrl(track) {
+  if (!track) return null;
+  if (track.sourceType === 'url') return track.url || null;
+  if (track.sourceType !== 'upload') return null;
+  if (track.inlineDataUrl) return track.inlineDataUrl;
+  if (audioTrackBlobCache.has(track.id)) {
+    return audioTrackBlobCache.get(track.id);
+  }
+
+  try {
+    const firestore = requireDb();
+    const snap = await getDocs(
+      query(
+        collection(firestore, 'table_audio', 'main', 'audio_chunks'),
+        where('track_id', '==', track.id)
+      )
+    );
+    if (snap.empty) return null;
+
+    const ordered = snap.docs
+      .map((d) => d.data())
+      .filter((d) => typeof d?.data === 'string' && d.data.length > 0)
+      .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+
+    if (ordered.length === 0) return null;
+
+    const fullBase64 = ordered.map((c) => c.data).join('');
+    const blobUrl = base64ToBlobUrl(fullBase64, track.mimeType || 'audio/mpeg');
+    audioTrackBlobCache.set(track.id, blobUrl);
+    return blobUrl;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteTableAudioTrackChunks(trackId) {
+  if (!trackId) return;
+  const cached = audioTrackBlobCache.get(trackId);
+  if (cached && cached.startsWith('blob:')) {
+    try {
+      URL.revokeObjectURL(cached);
+    } catch {}
+  }
+  audioTrackBlobCache.delete(trackId);
+
+  try {
+    const firestore = requireDb();
+    const snap = await getDocs(
+      query(
+        collection(firestore, 'table_audio', 'main', 'audio_chunks'),
+        where('track_id', '==', trackId)
+      )
+    );
+    if (!snap.empty) {
+      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+    }
+  } catch {}
+}

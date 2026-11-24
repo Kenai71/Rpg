@@ -31,6 +31,7 @@ import { FormField, Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { UserAvatar } from '../ui/UserAvatar';
+import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
 
 // Comprime e recorta (quadrado central) a imagem de perfil em formato circular-ready (< 75 KB)
 function compressAvatarFile(file) {
@@ -209,6 +210,7 @@ export function PlayerShell({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <TabletopMusicTriggerButton />
             <ThemeSwitcher className="hidden sm:inline-flex" />
 
             {profile?.role === 'master' && (

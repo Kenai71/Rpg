@@ -19,6 +19,7 @@ import Logo from '../../app/components/Logo';
 import { Button } from '../ui/Button';
 import { ThemeSwitcher } from '../ui/ThemeSwitcher';
 import { RoleBadge } from '../ui/Badge';
+import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
 import { cn } from '../../lib/utils';
 
 const NAV_ITEMS = [
@@ -183,12 +184,18 @@ export function MasterShell({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <TabletopMusicTriggerButton />
               <ThemeSwitcher className="hidden sm:inline-flex" />
             </div>
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 xl:px-8 py-4 xl:py-6 space-y-4 xl:space-y-6">
+        <main
+          className={cn(
+            'flex-1 w-full mx-auto px-3 sm:px-5 xl:px-8 py-4 xl:py-6 space-y-4 xl:space-y-6',
+            activeSection === 'maps' ? 'max-w-none' : 'max-w-7xl'
+          )}
+        >
           {children}
         </main>
       </div>

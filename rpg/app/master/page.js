@@ -23,6 +23,7 @@ import { MasterPlayers } from '../../components/master/MasterPlayers';
 import { MasterRequests } from '../../components/master/MasterRequests';
 import { MasterPermissions } from '../../components/master/MasterPermissions';
 import { MasterMapManager } from '../../components/map/MasterMapManager';
+import { TabletopMusicProvider } from '../../components/music/TabletopMusicProvider';
 
 export default function MasterPage() {
   const { user, profile, loading, error, logout } = useAuthGuard({ requiredRole: 'master' });
@@ -317,15 +318,21 @@ export default function MasterPage() {
   }
 
   return (
-    <MasterShell
-      profile={profile}
-      activeSection={activeSection}
-      onSelectSection={setActiveSection}
-      pendingRequestsCount={pendingRequestsCount}
-      activeContractsCount={activeContractsCount}
-      commandItems={commandItems}
-      onLogout={logout}
+    <TabletopMusicProvider
+      enabled={isFirebaseConfigured && Boolean(user)}
+      isMaster={true}
+      userId={profile?.uid}
+      userName={profile?.username || 'Mestre'}
     >
+      <MasterShell
+        profile={profile}
+        activeSection={activeSection}
+        onSelectSection={setActiveSection}
+        pendingRequestsCount={pendingRequestsCount}
+        activeContractsCount={activeContractsCount}
+        commandItems={commandItems}
+        onLogout={logout}
+      >
       {activeSection === 'overview' && (
         <MasterOverview
           missions={missions}
@@ -405,5 +412,6 @@ export default function MasterPage() {
         onConfirm={handleConfirmContract}
       />
     </MasterShell>
+    </TabletopMusicProvider>
   );
 }

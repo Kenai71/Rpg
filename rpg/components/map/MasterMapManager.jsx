@@ -212,8 +212,8 @@ export function MasterMapManager({
       // Redução suave progressiva apenas se a imagem for gigantesca e precisar caber em 1 documento
       const scales = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.32];
       for (const scale of scales) {
-        const w = Math.max(320, Math.round(origW * scale));
-        const h = Math.max(320, Math.round(origH * scale));
+        const w = Math.max(16, Math.round(origW * scale));
+        const h = Math.max(16, Math.round(origH * scale));
         const attempt = binarySearchQuality(img, w, h, bestMime, 0.68, 0.92, SINGLE_DOC_BUDGET);
         if (attempt) {
           return { dataUrl: attempt.dataUrl, width: w, height: h, quality: attempt.quality };
@@ -221,7 +221,7 @@ export function MasterMapManager({
       }
 
       const safeW = Math.min(origW, 1600);
-      const safeH = Math.round((origH * safeW) / origW);
+      const safeH = Math.max(16, Math.round((origH * safeW) / origW));
       return {
         dataUrl: drawToDataUrl(img, safeW, safeH, bestMime, 0.65),
         width: safeW,
@@ -236,8 +236,8 @@ export function MasterMapManager({
       let pH = origH;
       if (pW > maxPreviewDim || pH > maxPreviewDim) {
         const r = Math.min(maxPreviewDim / pW, maxPreviewDim / pH);
-        pW = Math.max(200, Math.round(pW * r));
-        pH = Math.max(200, Math.round(pH * r));
+        pW = Math.max(16, Math.round(pW * r));
+        pH = Math.max(16, Math.round(pH * r));
       }
       const attempt = binarySearchQuality(img, pW, pH, bestMime, 0.6, 0.84, PREVIEW_BUDGET);
       return attempt ? attempt.dataUrl : drawToDataUrl(img, pW, pH, bestMime, 0.6);

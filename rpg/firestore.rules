@@ -191,6 +191,31 @@ service cloud.firestore {
     //   - createdAt: timestamp (optional, immutable once set)
     //   - updatedAt: timestamp (optional)
     //
+    // Collection: table_audio
+    // Document ID: {sessionId} (e.g. 'main' - synchronized tabletop music player state)
+    // Fields:
+    //   - playlist: list (optional, size <= 100 - ordered track metadata entries)
+    //   - currentTrackId: string | null (optional, 0..128 chars)
+    //   - currentIndex: int | null (optional, -1..100)
+    //   - isPlaying: bool | null (optional)
+    //   - basePositionSec: number | null (optional, 0..86400)
+    //   - anchorClientMs: number | null (optional, 0..9999999999999)
+    //   - loopMode: string | null (optional, 'playlist' | 'one' | 'off')
+    //   - shuffle: bool | null (optional)
+    //   - syncVersion: int | null (optional, 0..100000000)
+    //   - updatedBy: string | null (optional, 0..128 chars)
+    //   - updatedByName: string | null (optional, 0..60 chars)
+    //   - serverUpdatedAt: timestamp | null (optional)
+    //   - updatedAt: timestamp | null (optional)
+    //
+    // Subcollection: table_audio/{sessionId}/audio_chunks
+    // Document ID: {chunkId} (chunk identifier, e.g. '{trackId}_{index}')
+    // Fields:
+    //   - track_id: string (required, 1..128 chars)
+    //   - index: int (required, 0..32)
+    //   - data: string (required, 1..850000 chars - base64 audio chunk payload)
+    //   - createdAt: timestamp | null (optional)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -431,6 +456,29 @@ service cloud.firestore {
         (!('updatedByRole' in data) || data.updatedByRole == null || data.updatedByRole in ['player', 'master']) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidTableAudio(data) {
+      return (!('playlist' in data) || (data.playlist is list && data.playlist.size() <= 100)) &&
+        isSafeOptionalString(data, 'currentTrackId', 0, 128) &&
+        isSafeOptionalInt(data, 'currentIndex', -1, 100) &&
+        isSafeOptionalBool(data, 'isPlaying') &&
+        isSafeOptionalNumber(data, 'basePositionSec', 0, 86400) &&
+        isSafeOptionalNumber(data, 'anchorClientMs', 0, 9999999999999) &&
+        (!('loopMode' in data) || data.loopMode == null || data.loopMode in ['playlist', 'one', 'off']) &&
+        isSafeOptionalBool(data, 'shuffle') &&
+        isSafeOptionalInt(data, 'syncVersion', 0, 100000000) &&
+        isSafeOptionalString(data, 'updatedBy', 0, 128) &&
+        isSafeOptionalString(data, 'updatedByName', 0, 60) &&
+        isSafeOptionalTimestamp(data, 'serverUpdatedAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidAudioChunk(data) {
+      return 'track_id' in data && data.track_id is string && data.track_id.size() >= 1 && data.track_id.size() <= 128 &&
+        'index' in data && data.index is int && data.index >= 0 && data.index <= 32 &&
+        'data' in data && data.data is string && data.data.size() >= 1 && data.data.size() <= 850000 &&
+        isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     // ===============================================================
@@ -686,6 +734,19 @@ service cloud.firestore {
         );
 
       allow delete: if isMaster();
+    }
+
+    // Synchronized Tabletop Music Player State & Chunked Audio Uploads
+    match /table_audio/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isMaster() && isValidTableAudio(request.resource.data);
+      allow delete: if isMaster();
+
+      match /audio_chunks/{chunkId} {
+        allow read: if isAuthenticated();
+        allow create, update: if isMaster() && isValidAudioChunk(request.resource.data);
+        allow delete: if isMaster();
+      }
     }
 
     // Default deny catch-all for any unmatched paths or collections

@@ -18,6 +18,7 @@ import { PlayerAllies } from '../../components/player/PlayerAllies';
 import { PlayerCharacter } from '../../components/player/PlayerCharacter';
 import { RouletteModal } from '../../components/player/RouletteModal';
 import { PlayerMapView } from '../../components/map/PlayerMapView';
+import { TabletopMusicProvider } from '../../components/music/TabletopMusicProvider';
 
 export default function PlayerPage() {
   const { user, profile, loading, error, logout } = useAuthGuard();
@@ -204,18 +205,24 @@ export default function PlayerPage() {
   }
 
   return (
-    <PlayerShell
-      profile={profile}
-      myParty={myParty}
-      activeTab={tab}
-      onSelectTab={setTab}
-      pendingTradesCount={pendingTradesCount}
-      commandItems={commandItems}
-      onRequestSpin={handleRequestSpin}
-      requestingSpin={requestingSpin}
-      onOpenRoulette={() => setRouletteOpen(true)}
-      onLogout={logout}
+    <TabletopMusicProvider
+      enabled={isFirebaseConfigured && Boolean(user)}
+      isMaster={false}
+      userId={profile?.uid}
+      userName={profile?.username || 'Aventureiro'}
     >
+      <PlayerShell
+        profile={profile}
+        myParty={myParty}
+        activeTab={tab}
+        onSelectTab={setTab}
+        pendingTradesCount={pendingTradesCount}
+        commandItems={commandItems}
+        onRequestSpin={handleRequestSpin}
+        requestingSpin={requestingSpin}
+        onOpenRoulette={() => setRouletteOpen(true)}
+        onLogout={logout}
+      >
       {tab === 'map' && (
         <PlayerMapView
           maps={maps}
@@ -280,5 +287,6 @@ export default function PlayerPage() {
         </div>
       </Modal>
     </PlayerShell>
+    </TabletopMusicProvider>
   );
 }

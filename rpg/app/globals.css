@@ -41,8 +41,8 @@
   box-sizing: border-box;
 }
 
-/* Universal high-contrast dark inputs, textareas & selects (excludes light-paper PDF sheet overlay fields) */
-input:not([type="checkbox"]):not([type="radio"]):not(.pdf-sheet-field),
+/* Universal high-contrast dark inputs, textareas & selects (excludes checkboxes, radios, range sliders, and light-paper PDF sheet overlay fields) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.pdf-sheet-field),
 textarea:not(.pdf-sheet-field),
 select:not(.pdf-sheet-field) {
   background-color: #0c101b !important;
@@ -262,4 +262,19 @@ h4 {
 
 .animate-gacha-spin {
   animation: spinSlow 0.9s linear infinite;
+}
+
+/* Synchronized tabletop music equalizer bars */
+@keyframes musicEqBar {
+  0%, 100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.music-eq-bar {
+  transform-origin: bottom center;
+  animation: musicEqBar 0.85s ease-in-out infinite;
 }
