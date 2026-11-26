@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   Check,
@@ -16,6 +16,7 @@ import {
   Shield,
   User,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import fichaSchema from '../../lib/ficha-fields.json';
@@ -74,7 +75,7 @@ function escapeHtml(str) {
 /**
  * Renderiza uma única página da Ficha.pdf (em modo preview reduzido ou modo interativo editável)
  */
-function SheetPageCanvas({
+export function SheetPageCanvas({
   pageData,
   fields,
   interactive = false,
@@ -287,7 +288,7 @@ function SheetPageCanvas({
 /**
  * Hook compartilhado de sincronização em tempo real da Ficha.pdf (Jogador <-> Mestre)
  */
-function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
+export function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
   const [fields, setFields] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -452,7 +453,20 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
       }
     );
 
+    const handlePageHide = () => {
+      flushPending();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushPending();
+      }
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       flushPending();
       if (typeof unsub === 'function') unsub();
     };
@@ -526,7 +540,7 @@ function useRealtimeCharacterSheet(heroUid, editorProfile, enabled = true) {
 /**
  * Gera uma janela limpa de impressão / Salvar como PDF com as 2 páginas preenchidas da Ficha.pdf
  */
-function printFilledCharacterSheet(heroName, fields) {
+export function printFilledCharacterSheet(heroName, fields) {
   if (typeof window === 'undefined') return;
   const origin = window.location.origin;
 
@@ -612,6 +626,182 @@ function printFilledCharacterSheet(heroName, fields) {
 }
 
 /**
+ * Hook de zoom ancorado no cursor e rolagem isolada exclusivos da Ficha.pdf:
+ * - Intercepta Ctrl+Scroll e pinça no trackpad ({ passive: false }) impedindo que o navegador
+ *   aplique zoom na página inteira — dá zoom APENAS na ficha exatamente onde o cursor está.
+ * - Preserva rolagem vertical/horizontal fluida dentro da ficha (inclusive com zoom ativo)
+ *   e suporta alternar modo "Zoom com Scroll" para usar a rodinha direto sem segurar Ctrl.
+ */
+export function useSheetZoomAndScroll({
+  containerEl = null,
+  containerRef = null,
+  scrollerRef,
+  minZoom = 0.6,
+  maxZoom = 2.5,
+  initialZoom = 1.0,
+  wheelZoomWithoutCtrl = false,
+  active = true,
+}) {
+  const [zoom, setZoom] = useState(initialZoom);
+  const zoomRef = useRef(initialZoom);
+  zoomRef.current = zoom;
+  const wheelZoomModeRef = useRef(wheelZoomWithoutCtrl);
+  wheelZoomModeRef.current = wheelZoomWithoutCtrl;
+  const pendingAnchorRef = useRef(null);
+
+  const captureAnchor = useCallback(
+    (rawClientX, rawClientY) => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      if (scrollerRect.width <= 0 || scrollerRect.height <= 0) return;
+
+      const clientX = Math.max(scrollerRect.left, Math.min(scrollerRect.right, rawClientX));
+      const clientY = Math.max(scrollerRect.top, Math.min(scrollerRect.bottom, rawClientY));
+      const relVpX = clientX - scrollerRect.left;
+      const relVpY = clientY - scrollerRect.top;
+
+      const pages = Array.from(scroller.querySelectorAll('[data-sheet-page-wrap]'));
+      let targetEl = pages[0] || scroller.firstElementChild;
+      for (const pg of pages) {
+        const r = pg.getBoundingClientRect();
+        if (clientY >= r.top && clientY <= r.bottom) {
+          targetEl = pg;
+          break;
+        }
+        if (clientY < r.top) {
+          targetEl = pg;
+          break;
+        }
+        targetEl = pg;
+      }
+      if (!targetEl) return;
+
+      const targetRect = targetEl.getBoundingClientRect();
+      if (targetRect.width <= 0 || targetRect.height <= 0) return;
+
+      pendingAnchorRef.current = {
+        targetEl,
+        fracX: (clientX - targetRect.left) / targetRect.width,
+        fracY: (clientY - targetRect.top) / targetRect.height,
+        relVpX,
+        relVpY,
+      };
+    },
+    [scrollerRef]
+  );
+
+  const applyZoomAtClientPoint = useCallback(
+    (nextZoomRaw, clientX, clientY) => {
+      const prevZoom = zoomRef.current;
+      const nextZoom = Math.min(
+        maxZoom,
+        Math.max(minZoom, Math.round(nextZoomRaw * 1000) / 1000)
+      );
+      if (Math.abs(nextZoom - prevZoom) < 0.001) return;
+
+      if (!pendingAnchorRef.current && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+        captureAnchor(clientX, clientY);
+      }
+      zoomRef.current = nextZoom;
+      setZoom(nextZoom);
+    },
+    [captureAnchor, minZoom, maxZoom]
+  );
+
+  const applyZoomAtCenter = useCallback(
+    (nextZoomRaw) => {
+      const scroller = scrollerRef.current;
+      if (scroller) {
+        const rect = scroller.getBoundingClientRect();
+        applyZoomAtClientPoint(
+          nextZoomRaw,
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+      } else {
+        applyZoomAtClientPoint(nextZoomRaw, NaN, NaN);
+      }
+    },
+    [scrollerRef, applyZoomAtClientPoint]
+  );
+
+  // Ajusta scrollLeft/scrollTop antes da pintura para travar o ponto exato sob o cursor (0 tremor)
+  useLayoutEffect(() => {
+    const anchor = pendingAnchorRef.current;
+    pendingAnchorRef.current = null;
+    const scroller = scrollerRef.current;
+    if (!anchor || !scroller || !anchor.targetEl?.isConnected) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const nextTargetRect = anchor.targetEl.getBoundingClientRect();
+    if (nextTargetRect.width <= 0 || nextTargetRect.height <= 0) return;
+
+    const newPointClientX = nextTargetRect.left + anchor.fracX * nextTargetRect.width;
+    const newPointClientY = nextTargetRect.top + anchor.fracY * nextTargetRect.height;
+    const desiredClientX = scrollerRect.left + anchor.relVpX;
+    const desiredClientY = scrollerRect.top + anchor.relVpY;
+
+    scroller.scrollLeft += newPointClientX - desiredClientX;
+    scroller.scrollTop += newPointClientY - desiredClientY;
+  }, [zoom, scrollerRef]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const root = containerEl || containerRef?.current;
+    if (!root) return undefined;
+
+    const handleWheel = (e) => {
+      const wantsZoom = e.ctrlKey || e.metaKey || wheelZoomModeRef.current;
+      if (!wantsZoom) {
+        // Permite rolagem natural (vertical e Shift+Scroll horizontal) apenas dentro da ficha
+        return;
+      }
+
+      // Impede completamente que o navegador dê zoom na página inteira
+      e.preventDefault();
+      e.stopPropagation();
+
+      const normalizedDeltaY = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
+      const rawFactor = Math.exp(-normalizedDeltaY * 0.0022);
+      const factor = Math.max(0.78, Math.min(1.28, rawFactor));
+      const nextZoom = zoomRef.current * factor;
+
+      applyZoomAtClientPoint(nextZoom, e.clientX, e.clientY);
+    };
+
+    const handleGesture = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    root.addEventListener('wheel', handleWheel, { passive: false });
+    root.addEventListener('gesturestart', handleGesture, { passive: false });
+    root.addEventListener('gesturechange', handleGesture, { passive: false });
+
+    return () => {
+      root.removeEventListener('wheel', handleWheel);
+      root.removeEventListener('gesturestart', handleGesture);
+      root.removeEventListener('gesturechange', handleGesture);
+    };
+  }, [containerEl, containerRef, applyZoomAtClientPoint, active]);
+
+  const zoomIn = useCallback(() => {
+    applyZoomAtCenter(zoomRef.current + 0.15);
+  }, [applyZoomAtCenter]);
+
+  const zoomOut = useCallback(() => {
+    applyZoomAtCenter(zoomRef.current - 0.15);
+  }, [applyZoomAtCenter]);
+
+  const zoomReset = useCallback(() => {
+    applyZoomAtCenter(initialZoom);
+  }, [applyZoomAtCenter, initialZoom]);
+
+  return { zoom, setZoom, zoomIn, zoomOut, zoomReset };
+}
+
+/**
  * MODAL EDITÁVEL COMPLETO DA FICHA.PDF (Sincronizado em Tempo Real entre Jogador e Mestre)
  */
 export function CharacterSheetModal({
@@ -623,8 +813,25 @@ export function CharacterSheetModal({
   isMasterView = false,
   sheetController = null,
 }) {
-  const [zoom, setZoom] = useState(1.0);
+  const [modalContentEl, setModalContentEl] = useState(null);
+  const modalScrollerRef = useRef(null);
   const [pageFilter, setPageFilter] = useState('all'); // 'all' | 1 | 2
+  const [scrollZoomMode, setScrollZoomMode] = useState(false);
+
+  const {
+    zoom,
+    zoomIn: handleZoomIn,
+    zoomOut: handleZoomOut,
+    zoomReset: handleZoomReset,
+  } = useSheetZoomAndScroll({
+    containerEl: modalContentEl,
+    scrollerRef: modalScrollerRef,
+    minZoom: 0.6,
+    maxZoom: 2.5,
+    initialZoom: 1.0,
+    wheelZoomWithoutCtrl: scrollZoomMode,
+    active: open,
+  });
 
   // Quando usado dentro de CharacterSheetPreviewCard, reutiliza o mesmo estado em tempo real
   // para refletir todas as edições instantaneamente (0ms) na versão minimizada!
@@ -660,10 +867,6 @@ export function CharacterSheetModal({
     onOpenChange?.(nextOpen);
   };
 
-  const handleZoomOut = () => setZoom((z) => Math.max(0.6, Math.round((z - 0.15) * 100) / 100));
-  const handleZoomIn = () => setZoom((z) => Math.min(1.8, Math.round((z + 0.15) * 100) / 100));
-  const handleZoomReset = () => setZoom(1.0);
-
   const pageWidthPx = Math.round(820 * zoom);
 
   const lastEditorLabel = useMemo(() => {
@@ -679,6 +882,7 @@ export function CharacterSheetModal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md data-[state=open]:animate-in" />
         <Dialog.Content
+          ref={setModalContentEl}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
             'w-[calc(100vw-0.75rem)] sm:w-[96vw] max-w-[1440px] h-[94dvh]',
@@ -766,7 +970,7 @@ export function CharacterSheetModal({
                 <button
                   type="button"
                   onClick={handleZoomReset}
-                  title="Restaurar zoom (100%)"
+                  title="Restaurar zoom (100%) • Use Ctrl + Scroll para dar zoom apenas na ficha onde está o cursor"
                   className="px-1.5 text-[11px] font-mono font-bold text-slate-200 hover:text-white tabular-nums min-w-[42px] text-center"
                 >
                   {Math.round(zoom * 100)}%
@@ -779,6 +983,25 @@ export function CharacterSheetModal({
                   className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrollZoomMode((v) => !v)}
+                  aria-pressed={scrollZoomMode}
+                  title={
+                    scrollZoomMode
+                      ? 'Scroll do mouse em modo Zoom (clique para voltar a Rolar • Ctrl+Scroll sempre dá zoom)'
+                      : 'Ativar zoom direto na rodinha do mouse (sem precisar segurar Ctrl)'
+                  }
+                  aria-label="Alternar modo zoom na rodinha do mouse"
+                  className={cn(
+                    'h-7 w-7 rounded-lg flex items-center justify-center transition-colors border',
+                    scrollZoomMode
+                      ? 'bg-white/15 text-white border-white/25'
+                      : 'text-slate-400 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <ZoomIn className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
@@ -818,8 +1041,11 @@ export function CharacterSheetModal({
             </div>
           </div>
 
-          {/* Área Editável do PDF */}
-          <div className="flex-1 min-h-0 overflow-auto bg-[#070911] p-3 sm:p-6">
+          {/* Área Editável do PDF (scroll isolado + zoom ancorado no cursor via Ctrl+Scroll) */}
+          <div
+            ref={modalScrollerRef}
+            className="flex-1 min-h-0 overflow-auto overscroll-contain bg-[#070911] p-3 sm:p-6"
+          >
             {loading ? (
               <div className="h-full min-h-[360px] flex flex-col items-center justify-center gap-3 text-slate-300">
                 <Loader2 className="h-7 w-7 animate-spin text-slate-300" />
@@ -832,7 +1058,7 @@ export function CharacterSheetModal({
                 {visiblePages.map((pageData) => (
                   <div
                     key={pageData.page}
-                    className="transition-[width] duration-150"
+                    data-sheet-page-wrap="true"
                     style={{
                       width:
                         zoom <= 1

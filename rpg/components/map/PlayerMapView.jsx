@@ -83,12 +83,13 @@ export function PlayerMapView({
 
   return (
     <div className="flex-1 min-h-0 w-full h-full flex flex-col">
-      {/* CANVAS TÁTICO FULL-VIEWPORT COM SIDEBAR INTEGRADA */}
+      {/* CANVAS TÁTICO FULL-VIEWPORT COM SIDEBAR E FICHA EDITÁVEL ABERTA INTEGRADA */}
       <TacticalMapCanvas
         map={activeMap}
         tokens={activeTokens}
         currentUserId={profile?.uid}
         currentUserName={profile?.username || 'Aventureiro'}
+        playerProfile={profile}
         isMaster={false}
         fullViewport={true}
         onUpdateTokenPosition={updateMapTokenPosition}

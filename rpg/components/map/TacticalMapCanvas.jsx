@@ -16,6 +16,7 @@ import {
   Droplet,
   Eye,
   EyeOff,
+  FileText,
   Flame,
   Footprints,
   Ghost,
@@ -76,8 +77,23 @@ import {
   normalizeMapEffects,
 } from './MapAtmosphereOverlay';
 import { useTabletopMusic } from '../music/TabletopMusicProvider';
+import { MapFloatingCharacterSheet } from '../sheet/MapFloatingCharacterSheet';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import { computeAutoGridSize, loadMapHdImageUrl } from '../../lib/rpg-service';
+import {
+  buildSheetCutoutClipPath,
+  clampSheetToViewport,
+  computeInitialSheetLayout,
+  computeMapFitInRegion,
+  getEffectiveMapObstacle,
+  getMapRect,
+  pickBestMapRegion,
+  rectsOverlap,
+  resolveMapPanAgainstSheet,
+  resolveSheetDragAgainstMap,
+  resolveSheetResizeAgainstMap,
+  toBox,
+} from '../../lib/tabletop-collision';
 import { cn } from '../../lib/utils';
 
 const DICE_QUICK_COUNTS = [1, 2, 3, 4, 6, 8];
@@ -208,6 +224,7 @@ export function TacticalMapCanvas({
   tokens = [],
   currentUserId,
   currentUserName,
+  playerProfile = null,
   isMaster = false,
   fullViewport = false,
   onUpdateTokenPosition,
@@ -397,35 +414,108 @@ export function TacticalMapCanvas({
     return Math.max(0.55, Math.min(3.5, Math.round(refFactor * 1000) / 1000));
   }, [mapDisplaySize]);
 
-  // Calcula limites de zoom dinâmicos compatíveis com mapas pequenos, 4K e mapas colossais (permite zoom profundo nos detalhes)
-  const computeFitAndBounds = useCallback(() => {
-    const container = containerRef.current;
-    if (!container || !mapDisplaySize.width || !mapDisplaySize.height) {
-      return { fitScale: 1.0, minZoom: 0.1, maxZoom: 6.0 };
+  // Ficha Editável Aberta na Mesa (exclusiva para aventureiros, arrastável livremente sem sobrepor o mapa)
+  const canUseMapSheet = !isMaster && Boolean(playerProfile?.uid);
+  const [sheetOpen, setSheetOpen] = useState(canUseMapSheet);
+  const sheetAutoOpenedRef = useRef(canUseMapSheet);
+  const [sheetRect, setSheetRect] = useState(null);
+
+  useEffect(() => {
+    if (canUseMapSheet && !sheetAutoOpenedRef.current) {
+      sheetAutoOpenedRef.current = true;
+      setSheetOpen(true);
     }
-    const cWidth = Math.max(240, container.clientWidth - 24);
-    const cHeight = Math.max(200, container.clientHeight - 24);
-    const scaleW = cWidth / mapDisplaySize.width;
-    const scaleH = cHeight / mapDisplaySize.height;
-    const rawFit = Math.min(scaleW, scaleH);
-    const minZoom = Math.min(0.25, Math.max(0.05, Math.round(rawFit * 0.6 * 1000) / 1000));
-    const maxZoom = Math.max(
-      5.5,
-      Math.min(10.0, Math.round(Math.max(1.5, rawFit * 10) * 10) / 10)
-    );
-    const fitScale = Math.max(minZoom, Math.min(maxZoom, Math.round(rawFit * 1000) / 1000));
-    zoomBoundsRef.current = { min: minZoom, max: maxZoom };
-    return { fitScale, minZoom, maxZoom };
-  }, [mapDisplaySize]);
+  }, [canUseMapSheet]);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [isDraggingSheet, setIsDraggingSheet] = useState(false);
+  const [isResizingSheet, setIsResizingSheet] = useState(false);
+  const [sheetCollidedEdge, setSheetCollidedEdge] = useState(null);
 
-  // Ajustar mapa à tela (Fit to screen — essencial para notebooks, telas menores e mapas 4K)
-  const handleFitToScreen = useCallback(() => {
-    const { fitScale } = computeFitAndBounds();
-    setZoom(fitScale);
-    setPan({ x: 0, y: 0 });
-  }, [computeFitAndBounds]);
+  const activeSheetRect = canUseMapSheet && sheetOpen ? sheetRect : null;
+  const activeSheetRef = useRef(activeSheetRect);
+  activeSheetRef.current = activeSheetRect;
 
-  // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro na viewport
+  const containerSizeRef = useRef(containerSize);
+  containerSizeRef.current = containerSize;
+
+  const mapDisplaySizeRef = useRef(mapDisplaySize);
+  mapDisplaySizeRef.current = mapDisplaySize;
+
+  const barrierTimerRef = useRef(null);
+  const sheetInteractionCleanupRef = useRef(null);
+
+  const flashBarrierEdge = useCallback((edge) => {
+    if (!edge) return;
+    setSheetCollidedEdge(edge);
+    if (barrierTimerRef.current) clearTimeout(barrierTimerRef.current);
+    barrierTimerRef.current = setTimeout(() => {
+      setSheetCollidedEdge(null);
+    }, 450);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (barrierTimerRef.current) clearTimeout(barrierTimerRef.current);
+      if (typeof sheetInteractionCleanupRef.current === 'function') {
+        sheetInteractionCleanupRef.current();
+      }
+    };
+  }, []);
+
+  // Calcula limites de zoom dinâmicos e área livre fora da ficha (compatível de mapas pequenos até 8K+)
+  const computeFitAndBounds = useCallback(
+    (overrideSheet = undefined) => {
+      const container = containerRef.current;
+      if (!container || !mapDisplaySize.width || !mapDisplaySize.height) {
+        return { fitScale: 1.0, fitPan: { x: 0, y: 0 }, minZoom: 0.1, maxZoom: 6.0 };
+      }
+      const vpW = container.clientWidth;
+      const vpH = container.clientHeight;
+      const currentSheet = overrideSheet !== undefined ? overrideSheet : activeSheetRef.current;
+      const region = pickBestMapRegion(
+        vpW,
+        vpH,
+        mapDisplaySize.width,
+        mapDisplaySize.height,
+        currentSheet
+      );
+      const cWidth = Math.max(120, region.width - 8);
+      const cHeight = Math.max(120, region.height - 8);
+      const scaleW = cWidth / mapDisplaySize.width;
+      const scaleH = cHeight / mapDisplaySize.height;
+      const rawFit = Math.min(scaleW, scaleH);
+      const minZoom = Math.min(0.25, Math.max(0.05, Math.round(rawFit * 0.6 * 1000) / 1000));
+      const maxZoom = Math.max(
+        5.5,
+        Math.min(10.0, Math.round(Math.max(1.5, rawFit * 10) * 10) / 10)
+      );
+      const fit = computeMapFitInRegion({
+        vpW,
+        vpH,
+        mapW: mapDisplaySize.width,
+        mapH: mapDisplaySize.height,
+        region,
+        minZoom,
+        maxZoom,
+      });
+      zoomBoundsRef.current = { min: minZoom, max: maxZoom };
+      return { fitScale: fit.zoom, fitPan: fit.pan, minZoom, maxZoom };
+    },
+    [mapDisplaySize]
+  );
+
+  // Ajustar mapa à área livre da tela (Fit to screen — respeitando a ficha aberta sem sobrepor)
+  const handleFitToScreen = useCallback(
+    (overrideSheet = undefined) => {
+      const { fitScale, fitPan } = computeFitAndBounds(overrideSheet);
+      viewTransformRef.current = { zoom: fitScale, pan: fitPan };
+      setZoom(fitScale);
+      setPan(fitPan);
+    },
+    [computeFitAndBounds]
+  );
+
+  // Auto-ajuste sempre que o mapa carregar ou mudar de dimensões naturais para caber inteiro na área livre
   useEffect(() => {
     if (map?.id && imageStatus === 'loaded') {
       const raf = requestAnimationFrame(() => {
@@ -435,26 +525,73 @@ export function TacticalMapCanvas({
     }
   }, [map?.id, imageStatus, fullViewport, handleFitToScreen]);
 
-  // Atualiza limites de zoom sempre que a viewport do mapa mudar de tamanho (ex: resize da janela)
+  // Monitora tamanho da viewport: inicializa/clampa a ficha aberta e mantém 0% de sobreposição ao redimensionar janela
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    computeFitAndBounds();
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
+
+    const syncViewportMetrics = () => {
+      const vpW = container.clientWidth;
+      const vpH = container.clientHeight;
+      if (vpW <= 0 || vpH <= 0) return;
+
+      containerSizeRef.current = { width: vpW, height: vpH };
+      setContainerSize((prev) =>
+        prev.width === vpW && prev.height === vpH ? prev : { width: vpW, height: vpH }
+      );
+
+      if (canUseMapSheet && sheetOpen) {
+        if (!activeSheetRef.current) {
+          const initial = computeInitialSheetLayout(vpW, vpH, 'right');
+          activeSheetRef.current = initial;
+          setSheetRect(initial);
+          handleFitToScreen(initial);
+          return;
+        }
+        const clamped = clampSheetToViewport(activeSheetRef.current, vpW, vpH);
+        const changed =
+          clamped.x !== activeSheetRef.current.x ||
+          clamped.y !== activeSheetRef.current.y ||
+          clamped.width !== activeSheetRef.current.width ||
+          clamped.height !== activeSheetRef.current.height;
+        if (changed) {
+          activeSheetRef.current = clamped;
+          setSheetRect(clamped);
+        }
+        const resolved = resolveMapPanAgainstSheet({
+          prevPan: viewTransformRef.current.pan,
+          targetPan: viewTransformRef.current.pan,
+          zoom: viewTransformRef.current.zoom,
+          vpW,
+          vpH,
+          mapW: mapDisplaySizeRef.current.width,
+          mapH: mapDisplaySizeRef.current.height,
+          sheet: clamped,
+        });
+        if (resolved.collided) {
+          viewTransformRef.current.pan = resolved.pan;
+          setPan(resolved.pan);
+        }
+      }
+
       computeFitAndBounds();
-    });
+    };
+
+    syncViewportMetrics();
+
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(syncViewportMetrics);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [computeFitAndBounds]);
+  }, [canUseMapSheet, sheetOpen, computeFitAndBounds, handleFitToScreen]);
 
-  // Zoom suave ancorado exatamente onde está o cursor do mouse (sem rolar a página externa)
+  // Zoom suave ancorado exatamente onde está o cursor do mouse (sem rolar a página externa e sem sobrepor a ficha)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleWheel = (e) => {
-      // Permite rolagem natural dentro dos painéis laterais da sidebar (Histórico de Dados / Iniciativa / Movimento)
+      // Permite rolagem natural dentro dos painéis laterais da sidebar e da Ficha Editável aberta
       if (e.target?.closest?.('[data-map-overlay-scroll]')) return;
 
       // Impede a rolagem vertical/horizontal da página
@@ -479,10 +616,24 @@ export function TacticalMapCanvas({
       const cursorY = e.clientY - (rect.top + rect.height / 2);
       const scaleRatio = nextZoom / prevZoom;
 
-      const nextPan = {
+      let nextPan = {
         x: Math.round((cursorX - (cursorX - prevPan.x) * scaleRatio) * 100) / 100,
         y: Math.round((cursorY - (cursorY - prevPan.y) * scaleRatio) * 100) / 100,
       };
+
+      if (activeSheetRef.current) {
+        const resolved = resolveMapPanAgainstSheet({
+          prevPan,
+          targetPan: nextPan,
+          zoom: nextZoom,
+          vpW: rect.width,
+          vpH: rect.height,
+          mapW: mapDisplaySizeRef.current.width,
+          mapH: mapDisplaySizeRef.current.height,
+          sheet: activeSheetRef.current,
+        });
+        nextPan = resolved.pan;
+      }
 
       // Atualiza ref síncrono antes do React commit para evitar drift em múltiplos ticks rápidos da rodinha
       viewTransformRef.current = { zoom: nextZoom, pan: nextPan };
@@ -879,19 +1030,273 @@ export function TacticalMapCanvas({
     };
   }, []);
 
-  // Controle de Zoom (suporta escalas exatas de imagens pequenas até mapas 4K/8K)
+  // Controle de Zoom (suporta escalas exatas de imagens pequenas até mapas 4K/8K, respeitando a ficha aberta)
+  const applyButtonZoom = useCallback((nextZoom) => {
+    const prevPan = viewTransformRef.current.pan || { x: 0, y: 0 };
+    let nextPan = prevPan;
+    if (activeSheetRef.current) {
+      const vpEl = viewportRef.current || containerRef.current;
+      const vpW = vpEl?.clientWidth || containerSizeRef.current.width;
+      const vpH = vpEl?.clientHeight || containerSizeRef.current.height;
+      const resolved = resolveMapPanAgainstSheet({
+        prevPan,
+        targetPan: prevPan,
+        zoom: nextZoom,
+        vpW,
+        vpH,
+        mapW: mapDisplaySizeRef.current.width,
+        mapH: mapDisplaySizeRef.current.height,
+        sheet: activeSheetRef.current,
+      });
+      nextPan = resolved.pan;
+    }
+    viewTransformRef.current = { zoom: nextZoom, pan: nextPan };
+    setZoom(nextZoom);
+    setPan(nextPan);
+  }, []);
+
   const handleZoomIn = () => {
     const { min, max } = zoomBoundsRef.current;
-    setZoom((z) => Math.min(max, Math.max(min, Math.round(z * 1.15 * 1000) / 1000)));
+    const nextZoom = Math.min(
+      max,
+      Math.max(min, Math.round((viewTransformRef.current.zoom || 1) * 1.15 * 1000) / 1000)
+    );
+    applyButtonZoom(nextZoom);
   };
   const handleZoomOut = () => {
     const { min, max } = zoomBoundsRef.current;
-    setZoom((z) => Math.min(max, Math.max(min, Math.round((z / 1.15) * 1000) / 1000)));
+    const nextZoom = Math.min(
+      max,
+      Math.max(min, Math.round(((viewTransformRef.current.zoom || 1) / 1.15) * 1000) / 1000)
+    );
+    applyButtonZoom(nextZoom);
   };
   const handleResetView = () => {
+    if (activeSheetRef.current) {
+      handleFitToScreen();
+      return;
+    }
+    viewTransformRef.current = { zoom: 1.0, pan: { x: 0, y: 0 } };
     setZoom(1.0);
     setPan({ x: 0, y: 0 });
   };
+
+  // Arrastar Ficha livremente pela mesa (colisão rígida contra o mapa: nunca sobrepõe; desliza nas bordas e cede espaço no lado oposto)
+  const handleStartSheetDrag = useCallback(
+    (startEvent, { fromHeader = true } = {}) => {
+      if (!activeSheetRef.current || !containerRef.current) return;
+      if (typeof sheetInteractionCleanupRef.current === 'function') {
+        sheetInteractionCleanupRef.current();
+      }
+
+      const startClientX = startEvent.clientX;
+      const startClientY = startEvent.clientY;
+      let anchorClientX = startClientX;
+      let anchorClientY = startClientY;
+      let anchorSheet = { ...activeSheetRef.current };
+      let activated = Boolean(fromHeader);
+
+      if (activated) {
+        setIsDraggingSheet(true);
+      }
+
+      const handleMove = (ev) => {
+        const container = containerRef.current;
+        const currentSheet = activeSheetRef.current;
+        if (!container || !currentSheet) return;
+
+        if (!activated) {
+          if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) < 4) {
+            return;
+          }
+          activated = true;
+          setIsDraggingSheet(true);
+        }
+
+        const cRect = container.getBoundingClientRect();
+        const vpW = cRect.width;
+        const vpH = cRect.height;
+        const targetX = anchorSheet.x + (ev.clientX - anchorClientX);
+        const targetY = anchorSheet.y + (ev.clientY - anchorClientY);
+        const pointerX = ev.clientX - cRect.left;
+        const pointerY = ev.clientY - cRect.top;
+
+        const { min: minZoom, max: maxZoom } = zoomBoundsRef.current;
+        const result = resolveSheetDragAgainstMap({
+          prevSheet: currentSheet,
+          targetX,
+          targetY,
+          pointerX,
+          pointerY,
+          vpW,
+          vpH,
+          mapW: mapDisplaySizeRef.current.width,
+          mapH: mapDisplaySizeRef.current.height,
+          pan: viewTransformRef.current.pan,
+          zoom: viewTransformRef.current.zoom,
+          minZoom,
+          maxZoom,
+        });
+
+        activeSheetRef.current = result.sheet;
+        setSheetRect(result.sheet);
+
+        if (result.nextMapView) {
+          viewTransformRef.current = result.nextMapView;
+          setZoom(result.nextMapView.zoom);
+          setPan(result.nextMapView.pan);
+          anchorClientX = ev.clientX;
+          anchorClientY = ev.clientY;
+          anchorSheet = { ...result.sheet };
+          setSheetCollidedEdge(null);
+        } else if (result.collided) {
+          flashBarrierEdge(result.edge);
+        }
+      };
+
+      const cleanup = () => {
+        window.removeEventListener('pointermove', handleMove);
+        window.removeEventListener('pointerup', cleanup);
+        window.removeEventListener('pointercancel', cleanup);
+        setIsDraggingSheet(false);
+        if (sheetInteractionCleanupRef.current === cleanup) {
+          sheetInteractionCleanupRef.current = null;
+        }
+      };
+
+      sheetInteractionCleanupRef.current = cleanup;
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', cleanup);
+      window.addEventListener('pointercancel', cleanup);
+    },
+    [flashBarrierEdge]
+  );
+
+  // Redimensionar Ficha pelas bordas/cantos (nunca cresce sobre o mapa)
+  const handleStartSheetResize = useCallback(
+    (startEvent, handle) => {
+      if (!activeSheetRef.current || !containerRef.current) return;
+      if (typeof sheetInteractionCleanupRef.current === 'function') {
+        sheetInteractionCleanupRef.current();
+      }
+
+      const startClientX = startEvent.clientX;
+      const startClientY = startEvent.clientY;
+      const originSheet = { ...activeSheetRef.current };
+      setIsResizingSheet(true);
+
+      const handleMove = (ev) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const vpW = container.clientWidth;
+        const vpH = container.clientHeight;
+        const mapRect = getEffectiveMapObstacle({
+          vpW,
+          vpH,
+          mapW: mapDisplaySizeRef.current.width,
+          mapH: mapDisplaySizeRef.current.height,
+          pan: viewTransformRef.current.pan,
+          zoom: viewTransformRef.current.zoom,
+          prevSheet: originSheet,
+        });
+
+        const result = resolveSheetResizeAgainstMap({
+          prevSheet: originSheet,
+          handle,
+          dx: ev.clientX - startClientX,
+          dy: ev.clientY - startClientY,
+          vpW,
+          vpH,
+          mapRect,
+        });
+
+        activeSheetRef.current = result.sheet;
+        setSheetRect(result.sheet);
+        if (result.collided) {
+          flashBarrierEdge(result.edge);
+        }
+      };
+
+      const cleanup = () => {
+        window.removeEventListener('pointermove', handleMove);
+        window.removeEventListener('pointerup', cleanup);
+        window.removeEventListener('pointercancel', cleanup);
+        setIsResizingSheet(false);
+        if (sheetInteractionCleanupRef.current === cleanup) {
+          sheetInteractionCleanupRef.current = null;
+        }
+      };
+
+      sheetInteractionCleanupRef.current = cleanup;
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', cleanup);
+      window.addEventListener('pointercancel', cleanup);
+    },
+    [flashBarrierEdge]
+  );
+
+  // Atalho 1-clique para acoplar a ficha na Esquerda / Direita / Base (acomoda o mapa no lado livre sem sobrepor)
+  const handleQuickDockSheet = useCallback(
+    (side) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const vpW = container.clientWidth;
+      const vpH = container.clientHeight;
+      const nextSheet = computeInitialSheetLayout(vpW, vpH, side);
+      activeSheetRef.current = nextSheet;
+      setSheetRect(nextSheet);
+      setSheetCollidedEdge(null);
+      handleFitToScreen(nextSheet);
+    },
+    [handleFitToScreen]
+  );
+
+  // Abrir / Recolher a Ficha na barra lateral do mapa
+  const handleToggleSheetOpen = useCallback(() => {
+    if (!canUseMapSheet) return;
+    const container = containerRef.current;
+    const vpW = container?.clientWidth || containerSizeRef.current.width;
+    const vpH = container?.clientHeight || containerSizeRef.current.height;
+
+    if (sheetOpen) {
+      activeSheetRef.current = null;
+      setSheetOpen(false);
+      setSheetCollidedEdge(null);
+      handleFitToScreen(null);
+      return;
+    }
+
+    const nextSheet =
+      sheetRect && vpW > 0 && vpH > 0
+        ? clampSheetToViewport(sheetRect, vpW, vpH)
+        : computeInitialSheetLayout(vpW || 1200, vpH || 700, 'right');
+
+    activeSheetRef.current = nextSheet;
+    setSheetRect(nextSheet);
+    setSheetOpen(true);
+
+    if (vpW > 0 && vpH > 0) {
+      const currentMapRect = getMapRect({
+        vpW,
+        vpH,
+        mapW: mapDisplaySizeRef.current.width,
+        mapH: mapDisplaySizeRef.current.height,
+        pan: viewTransformRef.current.pan,
+        zoom: viewTransformRef.current.zoom,
+      });
+      if (rectsOverlap(currentMapRect, toBox(nextSheet))) {
+        handleFitToScreen(nextSheet);
+      }
+    }
+  }, [canUseMapSheet, sheetOpen, sheetRect, handleFitToScreen]);
+
+  // Recorte geométrico de segurança: impede que qualquer pixel do mapa (mesmo em zoom 400%+) invada a área da ficha
+  const mapViewportClipPath = useMemo(() => {
+    if (!activeSheetRect || containerSize.width <= 0 || containerSize.height <= 0) {
+      return undefined;
+    }
+    return buildSheetCutoutClipPath(activeSheetRect, containerSize.width, containerSize.height, 6);
+  }, [activeSheetRect, containerSize.width, containerSize.height]);
 
   // Travar / Destravar Mapa
   const handleToggleLock = async () => {
@@ -965,6 +1370,7 @@ export function TacticalMapCanvas({
     }
 
     if (e.target.closest('[data-token-element]')) return;
+    if (e.target.closest('[data-map-sheet-panel]')) return;
 
     if (!isLocked) {
       setIsPanning(true);
@@ -984,10 +1390,39 @@ export function TacticalMapCanvas({
     }
 
     if (isPanning && !isLocked) {
-      setPan({
+      const targetPan = {
         x: e.clientX - panStartRef.current.x,
         y: e.clientY - panStartRef.current.y,
-      });
+      };
+
+      if (activeSheetRef.current) {
+        const vpEl = viewportRef.current || containerRef.current;
+        const vpW = vpEl?.clientWidth || containerSizeRef.current.width;
+        const vpH = vpEl?.clientHeight || containerSizeRef.current.height;
+        const resolved = resolveMapPanAgainstSheet({
+          prevPan: viewTransformRef.current.pan,
+          targetPan,
+          zoom: viewTransformRef.current.zoom,
+          vpW,
+          vpH,
+          mapW: mapDisplaySizeRef.current.width,
+          mapH: mapDisplaySizeRef.current.height,
+          sheet: activeSheetRef.current,
+        });
+        if (resolved.collided) {
+          panStartRef.current = {
+            x: e.clientX - resolved.pan.x,
+            y: e.clientY - resolved.pan.y,
+          };
+          flashBarrierEdge(resolved.edge);
+        }
+        viewTransformRef.current.pan = resolved.pan;
+        setPan(resolved.pan);
+        return;
+      }
+
+      viewTransformRef.current.pan = targetPan;
+      setPan(targetPan);
     }
   };
 
@@ -2046,6 +2481,32 @@ export function TacticalMapCanvas({
                 Ordem de Combate ({initiativeOrder.length})
               </span>
             </div>
+
+            {canUseMapSheet && (
+              <div className="relative group flex justify-center w-full">
+                <button
+                  type="button"
+                  onClick={handleToggleSheetOpen}
+                  aria-label={sheetOpen ? 'Ocultar ficha do personagem na mesa' : 'Abrir ficha do personagem na mesa'}
+                  aria-pressed={sheetOpen}
+                  title={sheetOpen ? 'Recolher Ficha Editável' : 'Abrir Ficha Editável na Mesa'}
+                  className={cn(
+                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                    sheetOpen
+                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <FileText className="h-4 w-4 text-slate-300" />
+                  {sheetOpen && (
+                    <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0a0d16] bg-emerald-400" />
+                  )}
+                </button>
+                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                  {sheetOpen ? 'Ocultar Ficha' : 'Abrir Ficha'}
+                </span>
+              </div>
+            )}
 
             {tabletopMusic && (
               <div className="relative group flex justify-center w-full">
@@ -3595,6 +4056,21 @@ export function TacticalMapCanvas({
         </div>
       )}
 
+      {/* FICHA EDITÁVEL ABERTA DO AVENTUREIRO NA MESA (ARRASTÁVEL LIVREMENTE SEM SOBREPOR O MAPA) */}
+      {canUseMapSheet && sheetOpen && activeSheetRect && (
+        <MapFloatingCharacterSheet
+          profile={playerProfile}
+          sheetRect={activeSheetRect}
+          isDragging={isDraggingSheet}
+          isResizing={isResizingSheet}
+          collidedEdge={sheetCollidedEdge}
+          onStartDrag={handleStartSheetDrag}
+          onStartResize={handleStartSheetResize}
+          onQuickDock={handleQuickDockSheet}
+          onClose={handleToggleSheetOpen}
+        />
+      )}
+
       {/* ÁREA PRINCIPAL DO MAPA (VIEWPORT COM PAN & ZOOM — ZERO ACHATAMENTO / PROPORÇÃO 1:1 EXATA) */}
       <div
         ref={viewportRef}
@@ -3606,9 +4082,11 @@ export function TacticalMapCanvas({
             ? 'cursor-default'
             : 'cursor-grab active:cursor-grabbing'
         )}
+        style={mapViewportClipPath ? { clipPath: mapViewportClipPath } : undefined}
         onPointerDown={handleMapPointerDown}
         onPointerMove={handleMapPointerMove}
         onPointerUp={handleMapPointerUp}
+        onPointerCancel={handleMapPointerUp}
       >
         <div
           ref={mapImageRef}
