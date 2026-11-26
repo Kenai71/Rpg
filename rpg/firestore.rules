@@ -108,8 +108,10 @@ service cloud.firestore {
     //   - is_active: bool
     //   - is_locked: bool
     //   - fog_enabled: bool (optional)
+    //   - fog_of_war: map | null (optional, size <= 20 - manual room-by-room Fog of War state: enabled, defaultCovered, masterOpacity, ops)
     //   - combat_active: bool (optional)
     //   - current_turn_token_id: string | null (optional, 0..128 chars)
+    //   - turn_seq: int | null (optional, 0..2000000000 - monotonic turn-advance counter for reliable alerts)
     //   - player_move_limit: number | null (optional, 0.5..200 - global max player movement distance in meters configured by the Master; defaults to 9m in app)
     //   - effects: map | null (optional, size <= 30 - atmosphere overlays: weather, fog, darkness, blackout, torchRadius)
     //   - createdAt: timestamp (optional)
@@ -147,6 +149,9 @@ service cloud.firestore {
     //   - is_ally: bool (optional - marks monster/NPC as ally so players can see its HP bar)
     //   - name_hidden: bool (optional - hides monster/NPC name from players until revealed)
     //   - monster_id: string | null (optional, 0..128 chars - Monster Manual bestiary reference)
+    //   - npc_id: string | null (optional, 0..128 chars - linked NPC library reference)
+    //   - npc_profession: string | null (optional, 0..120 chars - NPC profession/occupation displayed on token)
+    //   - npc_role: string | null (optional, 0..60 chars - NPC narrative/attitude role)
     //   - sync_group_id: string | null (optional, 0..128 chars - links identical entities across maps for synchronized HP/vitals)
     //   - light_radius: number | null (optional, 0..85 - per-token light radius, or null/omitted to inherit map global torch setting)
     //   - light_color: string | null (optional, 0..32 chars - per-token light tint e.g. 'warm', 'arcane', 'holy', 'emerald', 'crimson', or null/omitted)
@@ -265,6 +270,44 @@ service cloud.firestore {
     //   - logs: list | null (optional, size <= 80)
     //   - created_by: string | null (optional, 0..128 chars, immutable for players)
     //   - createdAt: timestamp | null (optional, immutable for players)
+    //   - updatedAt: timestamp | null (optional)
+    //
+    // Collection: map_drawings
+    // Document ID: {drawingId} (auto-generated - freehand tactical map drawings)
+    // Fields:
+    //   - map_id: string (required, 1..128 chars)
+    //   - author_id: string (required, 1..128 chars, matches creator UID on create)
+    //   - author_name: string (required, 1..60 chars)
+    //   - author_role: string (required, 'player' | 'master')
+    //   - color: string (required, 1..32 chars)
+    //   - width: number (required, 1..24)
+    //   - points: list (required, size 1..300)
+    //   - createdAt: timestamp | null (optional)
+    //   - updatedAt: timestamp | null (optional)
+    //
+    // Collection: npcs
+    // Document ID: {npcId} (auto-generated - Master-only story-linked NPC library & secrets)
+    // Fields:
+    //   - name: string (required, 1..100 chars)
+    //   - profession: string (required, 1..120 chars)
+    //   - race: string | null (optional, 0..80 chars)
+    //   - attitude: string | null (optional, 0..40 chars)
+    //   - appearance: string | null (optional, 0..1500 chars)
+    //   - personality: string | null (optional, 0..1500 chars)
+    //   - story_hook: string | null (optional, 0..2000 chars)
+    //   - secret: string | null (optional, 0..2000 chars)
+    //   - description: string | null (optional, 0..4000 chars)
+    //   - notes: string | null (optional, 0..5000 chars)
+    //   - story_context: string | null (optional, 0..1500 chars)
+    //   - avatar_color: string | null (optional, 0..40 chars)
+    //   - created_by: string | null (optional, 0..128 chars)
+    //   - hp: number | null (optional, 0..10000)
+    //   - max_hp: number | null (optional, 1..10000)
+    //   - ac: number | null (optional, 1..50)
+    //   - mana: number | null (optional, 0..10000)
+    //   - max_mana: number | null (optional, 0..10000)
+    //   - speed: number | null (optional, 0..200)
+    //   - createdAt: timestamp | null (optional)
     //   - updatedAt: timestamp | null (optional)
     //
     // ===============================================================
@@ -435,8 +478,19 @@ service cloud.firestore {
         isSafeOptionalString(data, 'hd_mime_type', 0, 64) &&
         isSafeOptionalBool(data, 'autoGrid') &&
         isSafeOptionalBool(data, 'fog_enabled') &&
+        isSafeOptionalMap(data, 'fog_of_war', 20) &&
+        (
+          !('fog_of_war' in data) || data.fog_of_war == null ||
+          (
+            isSafeOptionalBool(data.fog_of_war, 'enabled') &&
+            isSafeOptionalBool(data.fog_of_war, 'defaultCovered') &&
+            isSafeOptionalNumber(data.fog_of_war, 'masterOpacity', 0, 100) &&
+            isSafeOptionalList(data.fog_of_war, 'ops', 1000)
+          )
+        ) &&
         isSafeOptionalBool(data, 'combat_active') &&
         isSafeOptionalString(data, 'current_turn_token_id', 0, 128) &&
+        isSafeOptionalInt(data, 'turn_seq', 0, 2000000000) &&
         isSafeOptionalNumber(data, 'player_move_limit', 0.5, 200) &&
         isSafeOptionalMap(data, 'effects', 30) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
@@ -472,6 +526,9 @@ service cloud.firestore {
         isSafeOptionalBool(data, 'is_ally') &&
         isSafeOptionalBool(data, 'name_hidden') &&
         isSafeOptionalString(data, 'monster_id', 0, 128) &&
+        isSafeOptionalString(data, 'npc_id', 0, 128) &&
+        isSafeOptionalString(data, 'npc_profession', 0, 120) &&
+        isSafeOptionalString(data, 'npc_role', 0, 60) &&
         isSafeOptionalString(data, 'sync_group_id', 0, 128) &&
         isSafeOptionalNumber(data, 'light_radius', 0, 85) &&
         isSafeOptionalString(data, 'light_color', 0, 32) &&
@@ -581,6 +638,42 @@ service cloud.firestore {
         'items' in data && data.items is list && data.items.size() <= 40 &&
         isSafeOptionalList(data, 'logs', 80) &&
         isSafeOptionalString(data, 'created_by', 0, 128) &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidMapDrawing(data) {
+      return 'map_id' in data && isSafeString(data.map_id, 1, 128) &&
+        'author_id' in data && isSafeString(data.author_id, 1, 128) &&
+        'author_name' in data && isSafeString(data.author_name, 1, 60) &&
+        'author_role' in data && data.author_role in ['player', 'master'] &&
+        'color' in data && isSafeString(data.color, 1, 32) &&
+        'width' in data && isSafeNumber(data.width, 1, 24) &&
+        'points' in data && data.points is list && data.points.size() >= 1 && data.points.size() <= 300 &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function isValidNpc(data) {
+      return 'name' in data && isSafeString(data.name, 1, 100) &&
+        'profession' in data && isSafeString(data.profession, 1, 120) &&
+        isSafeOptionalString(data, 'race', 0, 80) &&
+        isSafeOptionalString(data, 'attitude', 0, 40) &&
+        isSafeOptionalString(data, 'appearance', 0, 1500) &&
+        isSafeOptionalString(data, 'personality', 0, 1500) &&
+        isSafeOptionalString(data, 'story_hook', 0, 2000) &&
+        isSafeOptionalString(data, 'secret', 0, 2000) &&
+        isSafeOptionalString(data, 'description', 0, 4000) &&
+        isSafeOptionalString(data, 'notes', 0, 5000) &&
+        isSafeOptionalString(data, 'story_context', 0, 1500) &&
+        isSafeOptionalString(data, 'avatar_color', 0, 40) &&
+        isSafeOptionalString(data, 'created_by', 0, 128) &&
+        isSafeOptionalNumber(data, 'hp', 0, 10000) &&
+        isSafeOptionalNumber(data, 'max_hp', 1, 10000) &&
+        isSafeOptionalNumber(data, 'ac', 1, 50) &&
+        isSafeOptionalNumber(data, 'mana', 0, 10000) &&
+        isSafeOptionalNumber(data, 'max_mana', 0, 10000) &&
+        isSafeOptionalNumber(data, 'speed', 0, 200) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
     }
@@ -908,6 +1001,32 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['gold', 'items', 'logs', 'updatedAt'])
           )
         );
+
+      allow delete: if isMaster();
+    }
+
+    // Freehand Tactical Map Drawings (Players create & erase own strokes; Master edits/erases any)
+    match /map_drawings/{drawingId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+        isValidMapDrawing(request.resource.data) &&
+        request.resource.data.author_id == request.auth.uid &&
+        (request.resource.data.author_role == 'player' || isMaster());
+
+      allow update: if isMaster() && isValidMapDrawing(request.resource.data);
+
+      allow delete: if isAuthenticated() && (
+        ('author_id' in resource.data && resource.data.author_id == request.auth.uid) ||
+        isMaster()
+      );
+    }
+
+    // Master's Story-Linked NPC Generator & Library (strictly Master-only to protect secrets & notes)
+    match /npcs/{npcId} {
+      allow read: if isMaster();
+
+      allow create, update: if isMaster() && isValidNpc(request.resource.data);
 
       allow delete: if isMaster();
     }

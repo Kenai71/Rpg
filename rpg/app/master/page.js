@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { orderBy } from 'firebase/firestore';
-import { Compass, Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
+import { BookOpen, Compass, Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { auth, isFirebaseConfigured } from '../../lib/firebase';
 import { formatNumber } from '../../lib/utils';
@@ -11,6 +11,7 @@ import {
   persistGeneratedDailyContent,
   resolveMissionTx,
   subscribeCollection,
+  subscribeNpcs,
 } from '../../lib/rpg-service';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { PageLoadingSkeleton } from '../../components/ui/Skeleton';
@@ -22,6 +23,7 @@ import { MasterShop } from '../../components/master/MasterShop';
 import { MasterPlayers } from '../../components/master/MasterPlayers';
 import { MasterRequests } from '../../components/master/MasterRequests';
 import { MasterPermissions } from '../../components/master/MasterPermissions';
+import { MasterNpcs } from '../../components/master/MasterNpcs';
 import { MasterMapManager } from '../../components/map/MasterMapManager';
 import { TabletopMusicProvider } from '../../components/music/TabletopMusicProvider';
 import { TabletopSessionProvider } from '../../components/tabletop/TabletopSessionProvider';
@@ -39,6 +41,7 @@ export default function MasterPage() {
   const [tokens, setTokens] = useState([]);
   const [pings, setPings] = useState([]);
   const [diceRolls, setDiceRolls] = useState([]);
+  const [npcs, setNpcs] = useState([]);
 
   const [contractConfirm, setContractConfirm] = useState(null); // { mission, status }
   const [resolvingContract, setResolvingContract] = useState(false);
@@ -72,6 +75,7 @@ export default function MasterPage() {
         console.error('Erro ao ouvir pings:', err)
       ),
       subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, () => {}),
+      subscribeNpcs(setNpcs, (err) => console.error('Erro ao ouvir NPCs:', err)),
     ];
 
     return () => {
@@ -100,6 +104,7 @@ export default function MasterPage() {
     const modules = [
       { id: 'nav-overview', group: 'Módulos Admin', label: 'Visão Geral', icon: LayoutDashboard, onSelect: () => setActiveSection('overview') },
       { id: 'nav-maps', group: 'Módulos Admin', label: 'Mesa & Mapas', icon: Compass, onSelect: () => setActiveSection('maps') },
+      { id: 'nav-npcs', group: 'Módulos Admin', label: 'NPCs & História', icon: BookOpen, onSelect: () => setActiveSection('npcs') },
       { id: 'nav-missions', group: 'Módulos Admin', label: 'Missões & Contratos', icon: Scroll, onSelect: () => setActiveSection('missions') },
       { id: 'nav-shop', group: 'Módulos Admin', label: 'Loja & Economia', icon: ShoppingBag, onSelect: () => setActiveSection('shop') },
       { id: 'nav-players', group: 'Módulos Admin', label: 'Heróis & Grupos', icon: Users, onSelect: () => setActiveSection('players') },
@@ -363,6 +368,16 @@ export default function MasterPage() {
           players={players}
           currentUserId={profile?.uid}
           currentUserName={profile?.username || 'Mestre'}
+        />
+      )}
+
+      {activeSection === 'npcs' && (
+        <MasterNpcs
+          npcs={npcs}
+          maps={maps}
+          tokens={tokens}
+          missions={missions}
+          currentUserId={profile?.uid}
         />
       )}
 

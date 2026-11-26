@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Bell,
   BookOpen,
+  Briefcase,
   ChevronRight,
   CloudLightning,
   CloudRain,
@@ -14,6 +16,7 @@ import {
   Dices,
   DoorOpen,
   Droplet,
+  Eraser,
   Eye,
   EyeOff,
   FileText,
@@ -23,13 +26,16 @@ import {
   Grid,
   GripVertical,
   Heart,
+  Layers,
   Lock,
   Maximize2,
   Minus,
   Move,
   Music,
+  Paintbrush,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
@@ -38,8 +44,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   Skull,
+  Square,
   Swords,
   Trash2,
+  Undo2,
   Unlock,
   User,
   Users,
@@ -78,8 +86,27 @@ import {
 } from './MapAtmosphereOverlay';
 import { useTabletopMusic } from '../music/TabletopMusicProvider';
 import { MapFloatingCharacterSheet } from '../sheet/MapFloatingCharacterSheet';
+import { MapFogOfWarOverlay } from './MapFogOfWarOverlay';
+import { playTurnAlertSound } from '../../lib/dice-audio';
+import {
+  DRAWING_COLORS,
+  DRAWING_WIDTHS,
+  MAX_FOG_OPS,
+  buildSmoothSvgPath,
+  isPointCoveredByFogOfWar,
+  isPointNearStroke,
+  normalizeFogOfWar,
+  simplifyPolyline,
+} from '../../lib/map-fog';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
-import { computeAutoGridSize, loadMapHdImageUrl } from '../../lib/rpg-service';
+import {
+  clearMapDrawings,
+  computeAutoGridSize,
+  createMapDrawing,
+  deleteMapDrawing,
+  loadMapHdImageUrl,
+  subscribeMapDrawings,
+} from '../../lib/rpg-service';
 import {
   buildSheetCutoutClipPath,
   clampSheetToViewport,
@@ -256,7 +283,7 @@ export function TacticalMapCanvas({
   viewTransformRef.current.pan = pan;
 
   // Ferramentas ativas
-  const [activeTool, setActiveTool] = useState('select'); // 'select' | 'ruler' | 'ping'
+  const [activeTool, setActiveTool] = useState('select'); // 'select' | 'ruler' | 'ping' | 'draw' | 'fog'
   const [isLocked, setIsLocked] = useState(Boolean(map?.is_locked));
   const [showGrid, setShowGrid] = useState(map?.gridType !== 'none');
   const [gridSize, setGridSize] = useState(map?.gridSize || 48);
@@ -760,6 +787,227 @@ export function TacticalMapCanvas({
     },
     [isMaster, onUpdateMap, map?.id]
   );
+
+  // =========================================================================
+  // NÉVOA DE GUERRA MANUAL POR SALAS (FOG OF WAR — Retângulo & Pincel)
+  // =========================================================================
+  const [localFogOfWar, setLocalFogOfWar] = useState(() => normalizeFogOfWar(map?.fog_of_war));
+  const [fogMode, setFogMode] = useState('reveal'); // 'reveal' | 'hide'
+  const [fogShape, setFogShape] = useState('rect'); // 'rect' | 'brush'
+  const [fogBrushRadius, setFogBrushRadius] = useState(7);
+  const [draftFogOp, setDraftFogOp] = useState(null);
+  const fogAnchorRef = useRef(null);
+  const fogSaveTimerRef = useRef(null);
+
+  useEffect(() => {
+    setLocalFogOfWar(normalizeFogOfWar(map?.fog_of_war));
+    setDraftFogOp(null);
+    fogAnchorRef.current = null;
+  }, [map?.id, map?.fog_of_war]);
+
+  useEffect(() => {
+    return () => {
+      if (fogSaveTimerRef.current) clearTimeout(fogSaveTimerRef.current);
+    };
+  }, []);
+
+  const commitFogOfWar = useCallback(
+    (nextFog, debounceMs = 0) => {
+      const normalized = normalizeFogOfWar(nextFog);
+      setLocalFogOfWar(normalized);
+      if (!isMaster || !onUpdateMap || !map?.id) return;
+
+      if (fogSaveTimerRef.current) {
+        clearTimeout(fogSaveTimerRef.current);
+        fogSaveTimerRef.current = null;
+      }
+
+      const persist = () => {
+        onUpdateMap(map.id, { fog_of_war: normalized }).catch((err) => {
+          toast.error(err?.message || 'Erro ao sincronizar Névoa de Guerra.');
+        });
+      };
+
+      if (debounceMs > 0) {
+        fogSaveTimerRef.current = setTimeout(persist, debounceMs);
+      } else {
+        persist();
+      }
+    },
+    [isMaster, onUpdateMap, map?.id]
+  );
+
+  // =========================================================================
+  // DESENHO LIVRE / MARCAÇÕES TÁTICAS EM TEMPO REAL (map_drawings)
+  // =========================================================================
+  const [mapDrawings, setMapDrawings] = useState([]);
+  const [drawMode, setDrawMode] = useState('pen'); // 'pen' | 'eraser'
+  const [drawColor, setDrawColor] = useState(isMaster ? '#fbbf24' : '#38bdf8');
+  const [drawWidth, setDrawWidth] = useState(4.5);
+  const [draftStroke, setDraftStroke] = useState(null);
+  const [clearingDrawings, setClearingDrawings] = useState(false);
+  const erasingActiveRef = useRef(false);
+  const deletingStrokeIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    setDraftStroke(null);
+    erasingActiveRef.current = false;
+    deletingStrokeIdsRef.current.clear();
+    if (!map?.id) {
+      setMapDrawings([]);
+      return undefined;
+    }
+    const unsub = subscribeMapDrawings(
+      map.id,
+      (list) => {
+        setMapDrawings(list);
+        const liveIds = new Set(list.map((d) => d.id));
+        for (const id of deletingStrokeIdsRef.current) {
+          if (!liveIds.has(id)) deletingStrokeIdsRef.current.delete(id);
+        }
+      },
+      () => {}
+    );
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [map?.id]);
+
+  const canEraseStroke = useCallback(
+    (stroke) => {
+      if (!stroke) return false;
+      if (isMaster) return true;
+      return Boolean(currentUserId && stroke.author_id === currentUserId);
+    },
+    [isMaster, currentUserId]
+  );
+
+  const eraseStrokesAt = useCallback(
+    (x, y) => {
+      const hits = mapDrawings.filter(
+        (s) =>
+          canEraseStroke(s) &&
+          !deletingStrokeIdsRef.current.has(s.id) &&
+          isPointNearStroke(x, y, s.points, 2.0)
+      );
+      if (hits.length === 0) return;
+
+      hits.forEach((s) => deletingStrokeIdsRef.current.add(s.id));
+      const hitIds = new Set(hits.map((h) => h.id));
+      setMapDrawings((prev) => prev.filter((s) => !hitIds.has(s.id)));
+
+      hits.forEach((s) => {
+        deleteMapDrawing(s.id).catch(() => {
+          deletingStrokeIdsRef.current.delete(s.id);
+        });
+      });
+    },
+    [mapDrawings, canEraseStroke]
+  );
+
+  const myDrawingsCount = useMemo(
+    () => mapDrawings.filter((s) => currentUserId && s.author_id === currentUserId).length,
+    [mapDrawings, currentUserId]
+  );
+
+  const playerDrawingsCount = useMemo(
+    () => mapDrawings.filter((s) => s.author_role !== 'master').length,
+    [mapDrawings]
+  );
+
+  const handleUndoLastDrawing = useCallback(async () => {
+    const candidates = isMaster
+      ? mapDrawings
+      : mapDrawings.filter((s) => currentUserId && s.author_id === currentUserId);
+    const last = candidates[candidates.length - 1];
+    if (!last?.id) return;
+    deletingStrokeIdsRef.current.add(last.id);
+    setMapDrawings((prev) => prev.filter((s) => s.id !== last.id));
+    try {
+      await deleteMapDrawing(last.id);
+    } catch {
+      deletingStrokeIdsRef.current.delete(last.id);
+    }
+  }, [isMaster, mapDrawings, currentUserId]);
+
+  const handleClearDrawings = useCallback(
+    async (scope = 'all') => {
+      if (!map?.id || clearingDrawings) return;
+      setClearingDrawings(true);
+      try {
+        if (scope === 'mine') {
+          await clearMapDrawings(map.id, { authorId: currentUserId });
+        } else if (scope === 'players' && isMaster) {
+          await clearMapDrawings(map.id, { onlyPlayers: true });
+        } else if (scope === 'all' && isMaster) {
+          await clearMapDrawings(map.id);
+        }
+      } catch (err) {
+        toast.error(err?.message || 'Não foi possível apagar os desenhos.');
+      } finally {
+        setClearingDrawings(false);
+      }
+    },
+    [map?.id, clearingDrawings, currentUserId, isMaster]
+  );
+
+  // =========================================================================
+  // AVISO DE TURNO ("É O SEU TURNO!") — Banner discreto + toque sutil p/ Jogador
+  // =========================================================================
+  const [turnAlertBanner, setTurnAlertBanner] = useState(null);
+  const prevTurnSignalRef = useRef({ initialized: false, mapId: null, tokenId: null, turnSeq: 0 });
+  const turnAlertTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (turnAlertTimerRef.current) clearTimeout(turnAlertTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const mapId = map?.id || null;
+    const tokenId = map?.current_turn_token_id || null;
+    const turnSeq = Number(map?.turn_seq) || 0;
+    const prev = prevTurnSignalRef.current;
+
+    // Primeira carga ou troca de mapa: apenas memoriza sem disparar alerta falso
+    if (!prev.initialized || prev.mapId !== mapId) {
+      prevTurnSignalRef.current = { initialized: true, mapId, tokenId, turnSeq };
+      return;
+    }
+
+    const changed = prev.tokenId !== tokenId || prev.turnSeq !== turnSeq;
+    prevTurnSignalRef.current = { initialized: true, mapId, tokenId, turnSeq };
+
+    if (!changed || isMaster || !tokenId || !currentUserId) return;
+
+    const activeTok = tokens.find((t) => t.id === tokenId);
+    if (!activeTok) return;
+    const isOwnTurn =
+      activeTok.owner_id === currentUserId || activeTok.character_id === currentUserId;
+    if (!isOwnTurn) return;
+
+    const hasCustomLimit =
+      typeof activeTok.move_limit === 'number' && Number.isFinite(activeTok.move_limit);
+    const mapLimit =
+      Number.isFinite(Number(map?.player_move_limit)) && Number(map?.player_move_limit) >= 0.5
+        ? Number(map.player_move_limit)
+        : DEFAULT_PLAYER_MOVE_LIMIT_M;
+    const moveMeters = hasCustomLimit ? activeTok.move_limit : mapLimit;
+
+    playTurnAlertSound();
+    const bannerKey = `${tokenId}_${turnSeq}_${Date.now()}`;
+    setTurnAlertBanner({
+      key: bannerKey,
+      tokenName: activeTok.name || currentUserName || 'Seu Herói',
+      moveMeters,
+    });
+
+    if (turnAlertTimerRef.current) clearTimeout(turnAlertTimerRef.current);
+    turnAlertTimerRef.current = setTimeout(() => {
+      setTurnAlertBanner((cur) => (cur?.key === bannerKey ? null : cur));
+    }, 5500);
+  }, [map?.id, map?.current_turn_token_id, map?.turn_seq, map?.player_move_limit, isMaster, currentUserId, currentUserName, tokens]);
   const [diceCount, setDiceCount] = useState(1);
   const [diceCountInput, setDiceCountInput] = useState('1');
   const [recentRoll, setRecentRoll] = useState(null);
@@ -780,7 +1028,15 @@ export function TacticalMapCanvas({
   };
 
   const toggleSidebarPanel = (panel) => {
-    setSidebarPanel((prev) => (prev === panel ? null : panel));
+    setSidebarPanel((prev) => {
+      const next = prev === panel ? null : panel;
+      if (next === 'fog' && isMaster && localFogOfWar.enabled) {
+        setActiveTool('fog');
+      } else if (prev === 'fog' && next !== 'fog' && activeTool === 'fog') {
+        setActiveTool('select');
+      }
+      return next;
+    });
   };
 
   const showTopResultBanner = useCallback((rollObj) => {
@@ -1310,6 +1566,61 @@ export function TacticalMapCanvas({
 
   // Pan do Mapa com o mouse (quando mapa não está travado)
   const handleMapPointerDown = (e) => {
+    if (e.button === 2) return;
+
+    // Modo Névoa de Guerra Manual por Salas (exclusivo do Mestre)
+    if (activeTool === 'fog') {
+      if (!isMaster || !localFogOfWar.enabled) return;
+      const rect = mapImageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+      if (fogShape === 'rect') {
+        fogAnchorRef.current = { x, y };
+        setDraftFogOp({
+          id: 'draft',
+          action: fogMode,
+          shape: 'rect',
+          x,
+          y,
+          w: 0.2,
+          h: 0.2,
+        });
+      } else {
+        setDraftFogOp({
+          id: 'draft',
+          action: fogMode,
+          shape: 'brush',
+          r: fogBrushRadius,
+          points: [{ x, y }],
+        });
+      }
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
+
+    // Modo Desenho Livre / Borracha (Mestre e Jogadores)
+    if (activeTool === 'draw') {
+      const rect = mapImageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+      if (drawMode === 'eraser') {
+        erasingActiveRef.current = true;
+        eraseStrokesAt(x, y);
+      } else {
+        setDraftStroke({
+          color: drawColor,
+          width: drawWidth,
+          points: [{ x, y }],
+        });
+      }
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
+
     // Em modo Régua ou Ping, ignora cliques nos tokens para medir/sinalizar livremente mesmo em cima de heróis
     if (activeTool === 'ruler') {
       if (rulerClearTimerRef.current) {
@@ -1380,6 +1691,65 @@ export function TacticalMapCanvas({
   };
 
   const handleMapPointerMove = (e) => {
+    if (activeTool === 'fog' && draftFogOp) {
+      const rect = mapImageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+      if (draftFogOp.shape === 'rect' && fogAnchorRef.current) {
+        const ax = fogAnchorRef.current.x;
+        const ay = fogAnchorRef.current.y;
+        setDraftFogOp((prev) =>
+          prev
+            ? {
+                ...prev,
+                x: Math.min(ax, x),
+                y: Math.min(ay, y),
+                w: Math.max(0.2, Math.abs(x - ax)),
+                h: Math.max(0.2, Math.abs(y - ay)),
+              }
+            : null
+        );
+      } else if (draftFogOp.shape === 'brush') {
+        setDraftFogOp((prev) => {
+          if (!prev || !Array.isArray(prev.points)) return prev;
+          const last = prev.points[prev.points.length - 1];
+          if (last && Math.hypot(x - last.x, y - last.y) < 0.35) return prev;
+          return {
+            ...prev,
+            points: [...prev.points, { x, y }],
+          };
+        });
+      }
+      return;
+    }
+
+    if (activeTool === 'draw') {
+      const rect = mapImageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+      if (drawMode === 'eraser' && erasingActiveRef.current) {
+        eraseStrokesAt(x, y);
+        return;
+      }
+
+      if (draftStroke) {
+        setDraftStroke((prev) => {
+          if (!prev || !Array.isArray(prev.points)) return prev;
+          const last = prev.points[prev.points.length - 1];
+          if (last && Math.hypot(x - last.x, y - last.y) < 0.25) return prev;
+          return {
+            ...prev,
+            points: [...prev.points, { x, y }],
+          };
+        });
+      }
+      return;
+    }
+
     if (activeTool === 'ruler' && rulerStart) {
       const rect = mapImageRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -1427,6 +1797,73 @@ export function TacticalMapCanvas({
   };
 
   const handleMapPointerUp = (e) => {
+    if (activeTool === 'fog') {
+      try {
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+      } catch {}
+      if (draftFogOp && isMaster) {
+        let finalOp = null;
+        if (draftFogOp.shape === 'rect') {
+          if (draftFogOp.w >= 0.4 && draftFogOp.h >= 0.4) {
+            finalOp = {
+              id: `fog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              action: draftFogOp.action,
+              shape: 'rect',
+              x: Math.round(draftFogOp.x * 100) / 100,
+              y: Math.round(draftFogOp.y * 100) / 100,
+              w: Math.round(draftFogOp.w * 100) / 100,
+              h: Math.round(draftFogOp.h * 100) / 100,
+            };
+          }
+        } else if (draftFogOp.shape === 'brush' && Array.isArray(draftFogOp.points) && draftFogOp.points.length > 0) {
+          const simplified = simplifyPolyline(draftFogOp.points, 0.35, 110);
+          finalOp = {
+            id: `fog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            action: draftFogOp.action,
+            shape: 'brush',
+            r: draftFogOp.r,
+            points: simplified,
+          };
+        }
+
+        if (finalOp) {
+          const nextOps = [...localFogOfWar.ops.slice(-(MAX_FOG_OPS - 1)), finalOp];
+          commitFogOfWar({ ...localFogOfWar, ops: nextOps });
+        }
+      }
+      setDraftFogOp(null);
+      fogAnchorRef.current = null;
+      return;
+    }
+
+    if (activeTool === 'draw') {
+      try {
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+      } catch {}
+      if (erasingActiveRef.current) {
+        erasingActiveRef.current = false;
+      }
+      if (draftStroke) {
+        const strokeToSave = draftStroke;
+        setDraftStroke(null);
+        const simplified = simplifyPolyline(strokeToSave.points, 0.22, 180);
+        if (simplified.length > 0 && map?.id && currentUserId) {
+          createMapDrawing({
+            map_id: map.id,
+            author_id: currentUserId,
+            author_name: currentUserName || (isMaster ? 'Mestre' : 'Aventureiro'),
+            author_role: isMaster ? 'master' : 'player',
+            color: strokeToSave.color,
+            width: strokeToSave.width,
+            points: simplified,
+          }).catch((err) => {
+            toast.error(err?.message || 'Não foi possível salvar o traço.');
+          });
+        }
+      }
+      return;
+    }
+
     if (activeTool === 'ruler') {
       try {
         e.currentTarget.releasePointerCapture?.(e.pointerId);
@@ -2042,24 +2479,55 @@ export function TacticalMapCanvas({
     return baseSorted;
   }, [visibleTokens, optimisticTurnOrderIds]);
 
-  // Ordem de combate visível: Mestre vê todos (incluindo ocultos); Jogadores NUNCA veem ocultos nem monstros fora do seu campo de visão
+  const mapAspectRatio = useMemo(
+    () => mapDisplaySize.width / Math.max(1, mapDisplaySize.height),
+    [mapDisplaySize.width, mapDisplaySize.height]
+  );
+
+  // Verifica se um token está sob área ainda não revelada da Névoa de Guerra Manual
+  const isTokenCoveredByManualFog = useCallback(
+    (token) => {
+      if (!localFogOfWar.enabled || !token) return false;
+      // O jogador sempre vê o próprio token de herói
+      if (token.id === activeViewerTokenId) return false;
+      if (
+        !isMaster &&
+        currentUserId &&
+        (token.owner_id === currentUserId || token.character_id === currentUserId)
+      ) {
+        return false;
+      }
+      const rawPos = localTokenPositions[token.id] || { x: token.x, y: token.y };
+      const px = Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50;
+      const py = Number.isFinite(Number(rawPos.y)) ? Number(rawPos.y) : 50;
+      return isPointCoveredByFogOfWar(px, py, localFogOfWar, mapAspectRatio);
+    },
+    [localFogOfWar, activeViewerTokenId, isMaster, currentUserId, localTokenPositions, mapAspectRatio]
+  );
+
+  // Ordem de combate visível: Mestre vê todos (incluindo ocultos); Jogadores NUNCA veem ocultos nem monstros fora do seu campo de visão ou sob Névoa de Guerra
   const initiativeOrder = useMemo(() => {
     if (isMaster) return masterInitiativeOrder;
     return masterInitiativeOrder.filter((tok) => {
       if (tok.hidden) return false;
       if (tok.type === 'player') return true;
       if (localEffects.blackout) return false;
+      if (isTokenCoveredByManualFog(tok)) return false;
       const vis = lightingState.tokenVisibility[tok.id];
       return vis ? Boolean(vis.visible) : true;
     });
-  }, [isMaster, masterInitiativeOrder, localEffects.blackout, lightingState.tokenVisibility]);
+  }, [isMaster, masterInitiativeOrder, localEffects.blackout, lightingState.tokenVisibility, isTokenCoveredByManualFog]);
 
   // Ativa o turno de um token específico e SEMPRE renova o deslocamento dele para o máximo (funciona p/ jogadores e monstros!)
   const activateTokenTurn = useCallback(
     async (targetToken) => {
       if (!isMaster || !onUpdateMap || !map?.id || !targetToken?.id) return;
       try {
-        await onUpdateMap(map.id, { current_turn_token_id: targetToken.id });
+        const nextTurnSeq = (Number(map?.turn_seq) || 0) + 1;
+        await onUpdateMap(map.id, {
+          current_turn_token_id: targetToken.id,
+          turn_seq: nextTurnSeq,
+        });
         if (onUpdateTokenStats) {
           await onUpdateTokenStats(targetToken.id, { move_used: 0 });
         }
@@ -2068,7 +2536,7 @@ export function TacticalMapCanvas({
         toast.error('Erro ao ativar turno.');
       }
     },
-    [isMaster, onUpdateMap, map?.id, onUpdateTokenStats]
+    [isMaster, onUpdateMap, map?.id, map?.turn_seq, onUpdateTokenStats]
   );
 
   const handleNextTurn = async () => {
@@ -2297,6 +2765,34 @@ export function TacticalMapCanvas({
                 Sinalizar ({pingCharges}/3)
               </span>
             </div>
+
+            <div className="relative group flex justify-center w-full">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool((t) => (t === 'draw' ? 'select' : 'draw'));
+                }}
+                aria-label="Desenho livre e marcações no mapa"
+                aria-pressed={activeTool === 'draw'}
+                title="Desenho livre / marcações rápidas (traçar rotas, armadilhas e posições)"
+                className={cn(
+                  'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                  activeTool === 'draw'
+                    ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                )}
+              >
+                <Pencil className="h-4 w-4 text-slate-300" />
+                {mapDrawings.length > 0 && (
+                  <span className="absolute -bottom-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#0c101b] border border-white/20 text-[9px] font-mono font-bold text-slate-200 flex items-center justify-center leading-none">
+                    {mapDrawings.length}
+                  </span>
+                )}
+              </button>
+              <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                Desenho Livre ({mapDrawings.length})
+              </span>
+            </div>
           </div>
 
           <div className="w-7 h-px bg-white/10 my-0.5 shrink-0" />
@@ -2395,6 +2891,32 @@ export function TacticalMapCanvas({
                 </button>
                 <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
                   Atmosfera &amp; Visibilidade
+                </span>
+              </div>
+            )}
+
+            {isMaster && (
+              <div className="relative group flex justify-center w-full">
+                <button
+                  type="button"
+                  onClick={() => toggleSidebarPanel('fog')}
+                  aria-label="Névoa de Guerra manual por salas"
+                  aria-expanded={sidebarPanel === 'fog'}
+                  title="Névoa de Guerra por Salas (esconder áreas e revelar sala por sala)"
+                  className={cn(
+                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
+                    sidebarPanel === 'fog' || activeTool === 'fog'
+                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
+                  )}
+                >
+                  <Layers className="h-4 w-4 text-slate-300" />
+                  {localFogOfWar.enabled && (
+                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0a0d16] bg-violet-400" />
+                  )}
+                </button>
+                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
+                  Névoa de Guerra {localFogOfWar.enabled ? '(Ativa)' : ''}
                 </span>
               </div>
             )}
@@ -3859,8 +4381,311 @@ export function TacticalMapCanvas({
                 </div>
               </>
             )}
+
+            {sidebarPanel === 'fog' && isMaster && (
+              <>
+                <div className="px-3.5 py-3 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Layers className="h-4 w-4 text-slate-300 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-100 truncate">
+                      Névoa de Guerra
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSidebarPanel(null);
+                      if (activeTool === 'fog') setActiveTool('select');
+                    }}
+                    aria-label="Fechar painel de Névoa de Guerra"
+                    className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
+                  {/* Ativar / Desativar Névoa por Salas */}
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-bold text-white">Névoa Manual por Salas</p>
+                        <p className="text-[11px] text-slate-400 leading-snug">
+                          Esconde salas e criaturas mesmo em mapas iluminados de dia.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextEnabled = !localFogOfWar.enabled;
+                          commitFogOfWar({ ...localFogOfWar, enabled: nextEnabled });
+                          setActiveTool(nextEnabled ? 'fog' : 'select');
+                        }}
+                        aria-pressed={localFogOfWar.enabled}
+                        className={cn(
+                          'px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all shrink-0',
+                          localFogOfWar.enabled
+                            ? 'bg-white/15 border-white/30 text-white'
+                            : 'bg-[#0c101b] border-white/15 text-slate-300 hover:text-white hover:bg-white/10'
+                        )}
+                      >
+                        {localFogOfWar.enabled ? 'Ativada' : 'Desativada'}
+                      </button>
+                    </div>
+
+                    {localFogOfWar.enabled && (
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                        <span className="text-[11px] text-slate-300">
+                          {activeTool === 'fog'
+                            ? 'Ferramenta de Névoa ativa no mapa'
+                            : 'Você está no modo Mover Tokens'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTool(activeTool === 'fog' ? 'select' : 'fog')}
+                          className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-[10px] font-bold text-white transition-colors shrink-0"
+                        >
+                          {activeTool === 'fog' ? 'Mover Tokens' : 'Pintar Névoa'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Modo: Revelar Sala vs Esconder Área */}
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Ação ao Arrastar no Mapa
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFogMode('reveal');
+                          if (localFogOfWar.enabled) setActiveTool('fog');
+                        }}
+                        className={cn(
+                          'flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-all',
+                          fogMode === 'reveal'
+                            ? 'bg-emerald-500/18 border-emerald-400/45 text-emerald-200'
+                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:bg-white/10'
+                        )}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Revelar Sala
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFogMode('hide');
+                          if (localFogOfWar.enabled) setActiveTool('fog');
+                        }}
+                        className={cn(
+                          'flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-all',
+                          fogMode === 'hide'
+                            ? 'bg-rose-500/18 border-rose-400/45 text-rose-200'
+                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:bg-white/10'
+                        )}
+                      >
+                        <EyeOff className="h-3.5 w-3.5" />
+                        Esconder
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Ferramenta: Retângulo vs Pincel */}
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Formato da Ferramenta
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFogShape('rect');
+                          if (localFogOfWar.enabled) setActiveTool('fog');
+                        }}
+                        className={cn(
+                          'flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-all',
+                          fogShape === 'rect'
+                            ? 'bg-white/15 border-white/30 text-white'
+                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:bg-white/10'
+                        )}
+                      >
+                        <Square className="h-3.5 w-3.5" />
+                        Retângulo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFogShape('brush');
+                          if (localFogOfWar.enabled) setActiveTool('fog');
+                        }}
+                        className={cn(
+                          'flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-all',
+                          fogShape === 'brush'
+                            ? 'bg-white/15 border-white/30 text-white'
+                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:bg-white/10'
+                        )}
+                      >
+                        <Paintbrush className="h-3.5 w-3.5" />
+                        Pincel
+                      </button>
+                    </div>
+
+                    {fogShape === 'brush' && (
+                      <div className="pt-2 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-slate-300">
+                          <span>Raio do Pincel</span>
+                          <span className="font-mono font-bold text-white">{fogBrushRadius}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={2}
+                          max={22}
+                          step={1}
+                          value={fogBrushRadius}
+                          onChange={(e) => setFogBrushRadius(Number(e.target.value))}
+                          className="w-full accent-slate-200 cursor-pointer"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ações Rápidas */}
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Ações Rápidas ({localFogOfWar.ops.length} áreas)
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          commitFogOfWar({
+                            ...localFogOfWar,
+                            enabled: true,
+                            defaultCovered: true,
+                            ops: [],
+                          });
+                          setActiveTool('fog');
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/12 border border-white/12 text-[11px] font-bold text-slate-200 transition-colors"
+                      >
+                        Cobrir Tudo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          commitFogOfWar({
+                            ...localFogOfWar,
+                            defaultCovered: false,
+                            ops: [],
+                          });
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/12 border border-white/12 text-[11px] font-bold text-slate-200 transition-colors"
+                      >
+                        Revelar Tudo
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={localFogOfWar.ops.length === 0}
+                      onClick={() => {
+                        if (localFogOfWar.ops.length === 0) return;
+                        commitFogOfWar({
+                          ...localFogOfWar,
+                          ops: localFogOfWar.ops.slice(0, -1),
+                        });
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] hover:bg-white/12 disabled:opacity-35 border border-white/12 text-xs font-bold text-white transition-colors"
+                    >
+                      <Undo2 className="h-3.5 w-3.5 text-slate-300" />
+                      Desfazer Última Área
+                    </button>
+                  </div>
+
+                  {/* Translucidez para o Mestre + Prévia como Jogador */}
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-slate-300">
+                        <span>Opacidade p/ o Mestre</span>
+                        <span className="font-mono font-bold text-white">
+                          {Math.round(localFogOfWar.masterOpacity * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={20}
+                        max={85}
+                        step={5}
+                        value={Math.round(localFogOfWar.masterOpacity * 100)}
+                        onChange={(e) => {
+                          const val = Math.max(0.2, Math.min(0.85, Number(e.target.value) / 100));
+                          commitFogOfWar({ ...localFogOfWar, masterOpacity: val }, 180);
+                        }}
+                        className="w-full accent-slate-200 cursor-pointer"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Para os jogadores, áreas cobertas são sempre 100% opacas e ocultam monstros/NPCs.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setPreviewEffectsAsPlayer((v) => !v)}
+                      className={cn(
+                        'w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl border text-xs font-bold transition-all',
+                        previewEffectsAsPlayer
+                          ? 'bg-sky-500/18 border-sky-400/45 text-sky-200'
+                          : 'bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/10'
+                      )}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5" />
+                        Ver como Jogador
+                      </span>
+                      <span className="text-[10px] font-mono">
+                        {previewEffectsAsPlayer ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
+
+      {/* BANNER DISCRETO DE AVISO DE TURNO PARA O JOGADOR ("É O SEU TURNO!") */}
+      {!isMaster && turnAlertBanner && (
+        <div
+          key={turnAlertBanner.key}
+          role="status"
+          aria-live="polite"
+          className={cn(
+            'pointer-events-auto absolute left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0c101b]/95 border border-emerald-400/45 text-white backdrop-blur-2xl shadow-[0_14px_40px_rgba(0,0,0,0.82)] transition-all duration-300 animate-in fade-in slide-in-from-top-3 max-w-[min(92vw,420px)]',
+            sharedBannerRoll ? 'top-24' : 'top-5'
+          )}
+        >
+          <span className="h-8 w-8 rounded-xl bg-emerald-500/15 border border-emerald-400/35 flex items-center justify-center shrink-0">
+            <Bell className="h-4 w-4 text-emerald-300" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-extrabold tracking-wide text-emerald-200 leading-tight">
+              É o seu turno!
+            </p>
+            <p className="text-[11px] text-slate-300 truncate">
+              {turnAlertBanner.tokenName} • {formatMeters(turnAlertBanner.moveMeters)}m de deslocamento livres
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTurnAlertBanner(null)}
+            aria-label="Fechar aviso de turno"
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* BANNER SUPERIOR DE RESULTADO SINCRONIZADO PARA TODOS (EXIBIDO APENAS APÓS OS DADOS PARAREM DE ROLAR) */}
       {sharedBannerRoll && (() => {
@@ -4056,6 +4881,191 @@ export function TacticalMapCanvas({
         </div>
       )}
 
+      {/* BARRA FLUTUANTE DE DESENHO LIVRE & MARCAÇÕES TÁTICAS (LÁPIS, BORRACHA, CORES, APAGAR TUDO) */}
+      {activeTool === 'draw' && (
+        <div
+          data-map-overlay-scroll="true"
+          className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 rounded-2xl bg-[#0c101b]/95 border border-white/20 text-xs text-slate-100 backdrop-blur-2xl shadow-[0_14px_38px_rgba(0,0,0,0.85)] max-w-[calc(100%-1rem)]"
+        >
+          {/* Lápis vs Borracha */}
+          <div className="flex items-center gap-1 pr-1.5 border-r border-white/10">
+            <button
+              type="button"
+              onClick={() => setDrawMode('pen')}
+              aria-pressed={drawMode === 'pen'}
+              title="Lápis — desenhar rotas e marcações"
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all',
+                drawMode === 'pen'
+                  ? 'bg-white/15 border-white/30 text-white'
+                  : 'bg-transparent border-transparent text-slate-300 hover:text-white hover:bg-white/10'
+              )}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Lápis</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDrawMode('eraser')}
+              aria-pressed={drawMode === 'eraser'}
+              title={
+                isMaster
+                  ? 'Borracha — passe sobre qualquer traço (do Mestre ou dos jogadores) para apagar'
+                  : 'Borracha — passe sobre seus próprios traços para apagar'
+              }
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all',
+                drawMode === 'eraser'
+                  ? 'bg-rose-500/20 border-rose-400/45 text-rose-200'
+                  : 'bg-transparent border-transparent text-slate-300 hover:text-white hover:bg-white/10'
+              )}
+            >
+              <Eraser className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Borracha</span>
+            </button>
+          </div>
+
+          {/* Paleta de Cores e Espessura (quando Lápis ativo) */}
+          {drawMode === 'pen' && (
+            <>
+              <div className="flex items-center gap-1.5 pr-1.5 border-r border-white/10">
+                {DRAWING_COLORS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setDrawColor(c.hex)}
+                    title={c.label}
+                    aria-label={`Cor ${c.label}`}
+                    className={cn(
+                      'h-5 w-5 rounded-full transition-transform border',
+                      drawColor === c.hex
+                        ? 'scale-115 border-white ring-2 ring-white/40'
+                        : 'border-white/25 hover:scale-110'
+                    )}
+                    style={{ backgroundColor: c.hex }}
+                  />
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1 pr-1.5 border-r border-white/10">
+                {DRAWING_WIDTHS.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => setDrawWidth(w.px)}
+                    title={`Espessura ${w.label}`}
+                    className={cn(
+                      'px-2 py-1 rounded-lg border text-[10px] font-bold transition-colors',
+                      drawWidth === w.px
+                        ? 'bg-white/15 border-white/30 text-white'
+                        : 'bg-transparent border-transparent text-slate-400 hover:text-white hover:bg-white/10'
+                    )}
+                  >
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Ações Rápidas: Desfazer + Apagar */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleUndoLastDrawing}
+              disabled={isMaster ? mapDrawings.length === 0 : myDrawingsCount === 0}
+              title="Desfazer último traço"
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/15 disabled:opacity-35 border border-white/12 text-[11px] font-bold text-slate-200 transition-colors"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Desfazer</span>
+            </button>
+
+            {!isMaster && (
+              <button
+                type="button"
+                disabled={clearingDrawings || myDrawingsCount === 0}
+                onClick={() => handleClearDrawings('mine')}
+                title="Apagar todos os seus traços"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 disabled:opacity-35 border border-rose-400/35 text-[11px] font-bold text-rose-200 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Apagar Meus{myDrawingsCount > 0 ? ` (${myDrawingsCount})` : ''}
+              </button>
+            )}
+
+            {isMaster && (
+              <button
+                type="button"
+                disabled={clearingDrawings || playerDrawingsCount === 0}
+                onClick={() => handleClearDrawings('players')}
+                title="Apagar todas as marcações feitas pelos jogadores"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-35 border border-amber-400/35 text-[11px] font-bold text-amber-200 transition-colors"
+              >
+                <Eraser className="h-3.5 w-3.5" />
+                Apagar Jogadores{playerDrawingsCount > 0 ? ` (${playerDrawingsCount})` : ''}
+              </button>
+            )}
+
+            {isMaster && (
+              <button
+                type="button"
+                disabled={clearingDrawings || mapDrawings.length === 0}
+                onClick={() => handleClearDrawings('all')}
+                title="Apagar TODOS os traços do mapa (Mestre e Jogadores)"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 disabled:opacity-35 border border-rose-400/45 text-[11px] font-bold text-rose-100 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Apagar Tudo{mapDrawings.length > 0 ? ` (${mapDrawings.length})` : ''}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setActiveTool('select')}
+              className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[11px] font-bold text-white transition-colors"
+            >
+              Sair
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* INDICADOR DE MODO NÉVOA DE GUERRA ATIVO (MESTRE) */}
+      {isMaster && activeTool === 'fog' && (
+        <div
+          data-map-overlay-scroll="true"
+          className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0c101b]/95 border border-violet-400/45 text-xs font-semibold text-slate-100 backdrop-blur-xl shadow-[0_12px_32px_rgba(0,0,0,0.85)]"
+        >
+          <Layers className="h-3.5 w-3.5 text-violet-300 shrink-0" />
+          <span className="whitespace-nowrap">
+            Névoa: <strong>{fogMode === 'reveal' ? 'Revelar' : 'Esconder'}</strong> (
+            {fogShape === 'rect' ? 'Retângulo' : `Pincel ${fogBrushRadius}%`})
+          </span>
+          <button
+            type="button"
+            disabled={localFogOfWar.ops.length === 0}
+            onClick={() =>
+              commitFogOfWar({
+                ...localFogOfWar,
+                ops: localFogOfWar.ops.slice(0, -1),
+              })
+            }
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-35 border border-white/15 text-[10px] font-bold text-white transition-colors"
+          >
+            <Undo2 className="h-3 w-3" />
+            Desfazer
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTool('select')}
+            className="px-2 py-0.5 rounded-full bg-white/12 hover:bg-white/20 border border-white/20 text-[10px] font-bold text-white transition-colors"
+          >
+            Sair
+          </button>
+        </div>
+      )}
+
       {/* FICHA EDITÁVEL ABERTA DO AVENTUREIRO NA MESA (ARRASTÁVEL LIVREMENTE SEM SOBREPOR O MAPA) */}
       {canUseMapSheet && sheetOpen && activeSheetRect && (
         <MapFloatingCharacterSheet
@@ -4076,7 +5086,10 @@ export function TacticalMapCanvas({
         ref={viewportRef}
         className={cn(
           'w-full h-full flex items-center justify-center overflow-hidden',
-          activeTool === 'ruler' || activeTool === 'ping'
+          activeTool === 'ruler' ||
+            activeTool === 'ping' ||
+            activeTool === 'draw' ||
+            activeTool === 'fog'
             ? 'cursor-crosshair'
             : isLocked
             ? 'cursor-default'
@@ -4369,7 +5382,72 @@ export function TacticalMapCanvas({
             );
           })}
 
-          {/* CAMADA DE BONEQUINHOS / TOKENS (RESPEITA VISIBILIDADE NA ESCURIDÃO >= 60% & LUZ POR PROXIMIDADE) */}
+          {/* CAMADA DE DESENHO LIVRE & MARCAÇÕES RÁPIDAS (TEMPO REAL — ABAIXO DA NÉVOA DE GUERRA) */}
+          {(mapDrawings.length > 0 || draftStroke) && (
+            <svg
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              className="absolute inset-0 w-full h-full pointer-events-none z-[28]"
+            >
+              {mapDrawings.map((stroke) => {
+                const pathData = buildSmoothSvgPath(stroke.points);
+                if (!pathData) return null;
+                const w = Math.max(1.5, Math.min(18, Number(stroke.width) || 4));
+                return (
+                  <g key={stroke.id}>
+                    <path
+                      d={pathData}
+                      fill="none"
+                      stroke="rgba(5, 8, 16, 0.72)"
+                      strokeWidth={w + 2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <path
+                      d={pathData}
+                      fill="none"
+                      stroke={stroke.color || '#38bdf8'}
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </g>
+                );
+              })}
+
+              {draftStroke && (() => {
+                const draftPath = buildSmoothSvgPath(draftStroke.points);
+                if (!draftPath) return null;
+                const w = Math.max(1.5, Math.min(18, Number(draftStroke.width) || 4));
+                return (
+                  <g>
+                    <path
+                      d={draftPath}
+                      fill="none"
+                      stroke="rgba(5, 8, 16, 0.72)"
+                      strokeWidth={w + 2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <path
+                      d={draftPath}
+                      fill="none"
+                      stroke={draftStroke.color || '#38bdf8'}
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </g>
+                );
+              })()}
+            </svg>
+          )}
+
+          {/* CAMADA DE BONEQUINHOS / TOKENS (RESPEITA VISIBILIDADE NA ESCURIDÃO >= 60%, NÉVOA DE GUERRA & LUZ POR PROXIMIDADE) */}
           {visibleTokens.map((token) => {
             const visMeta = lightingState.tokenVisibility[token.id] || {
               visible: true,
@@ -4378,6 +5456,10 @@ export function TacticalMapCanvas({
             };
             // Em escuridão >= 60%, jogadores NÃO veem outros tokens fora da sua área iluminada / aliados próximos
             if (!visMeta.visible) return null;
+            // Sob Névoa de Guerra Manual não revelada, jogadores (e prévia do Mestre) NÃO veem criaturas/tokens escondidos
+            if ((!isMaster || previewEffectsAsPlayer) && isTokenCoveredByManualFog(token)) {
+              return null;
+            }
 
             const rawPos = localTokenPositions[token.id] || { x: token.x, y: token.y };
             const pos = {
@@ -4598,6 +5680,16 @@ export function TacticalMapCanvas({
             mapHeight={mapDisplaySize.height}
             onRevealForMaster={() => commitMapEffects({ ...localEffects, blackout: false })}
           />
+
+          {/* CAMADA DE NÉVOA DE GUERRA MANUAL POR SALAS (RETÂNGULO / PINCEL — ANTI-SPOILER EM MAPAS ILUMINADOS) */}
+          <MapFogOfWarOverlay
+            fogOfWar={localFogOfWar}
+            isMaster={isMaster}
+            previewAsPlayer={previewEffectsAsPlayer}
+            mapWidth={mapDisplaySize.width}
+            mapHeight={mapDisplaySize.height}
+            draftOp={draftFogOp}
+          />
         </div>
       </div>
 
@@ -4665,6 +5757,11 @@ export function TacticalMapCanvas({
                       ? 'NPC'
                       : 'Herói'}
                   </Badge>
+                  {activeSelectedToken.npc_profession && (
+                    <Badge className="bg-white/10 text-slate-200 border-white/15 text-[10px]">
+                      <Briefcase className="h-3 w-3 text-slate-300" /> {activeSelectedToken.npc_profession}
+                    </Badge>
+                  )}
                   {selectedIsAlliedNonPlayer && (
                     <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-400/35 text-[10px]">
                       <ShieldCheck className="h-3 w-3" /> Aliado

@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -1426,6 +1427,11 @@ export async function deleteMapWithTokens(mapId) {
     }
   }
 
+  // Remove traços livres associados ao mapa (evita órfãos no Firestore)
+  try {
+    await clearMapDrawings(mapId);
+  } catch {}
+
   const batch = writeBatch(firestore);
 
   // Deleta tokens associados
@@ -1492,6 +1498,8 @@ export async function createMapToken(data) {
       ? data.sync_group_id.trim().slice(0, 128)
       : type === 'player' && data.character_id
       ? `hero:${String(data.character_id).slice(0, 118)}`
+      : data.npc_id
+      ? `npc:${String(data.npc_id).slice(0, 118)}`
       : `tok:${tokenRef.id}`;
 
   await setDoc(tokenRef, {
@@ -1517,6 +1525,9 @@ export async function createMapToken(data) {
     is_ally: data.is_ally !== undefined ? Boolean(data.is_ally) : isAllyDefault,
     name_hidden: data.name_hidden !== undefined ? Boolean(data.name_hidden) : nameHiddenDefault,
     monster_id: data.monster_id ? String(data.monster_id).slice(0, 128) : null,
+    npc_id: data.npc_id ? String(data.npc_id).slice(0, 128) : null,
+    npc_profession: data.npc_profession ? String(data.npc_profession).slice(0, 120) : null,
+    npc_role: data.npc_role ? String(data.npc_role).slice(0, 60) : null,
     move_limit: resolvedMoveLimit,
     move_used: 0,
     updatedAt: serverTimestamp(),
@@ -3513,4 +3524,248 @@ export async function claimLootChestGoldTx(
     });
   });
   return { collected };
+}
+
+/* ============================================================================
+ * DESENHO LIVRE & MARCAÇÕES TÁTICAS NO MAPA (map_drawings — tempo real)
+ * Jogadores criam e apagam seus próprios traços; Mestre pode apagar traços de
+ * qualquer jogador ou apagar tudo (Mestre + Jogadores) em um clique.
+ * ========================================================================== */
+
+function sanitizeDrawingPoints(points) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .slice(0, 240)
+    .map((pt) => {
+      const x = Number(pt?.x ?? (Array.isArray(pt) ? pt[0] : NaN));
+      const y = Number(pt?.y ?? (Array.isArray(pt) ? pt[1] : NaN));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        x: Math.max(0, Math.min(100, Math.round(x * 100) / 100)),
+        y: Math.max(0, Math.min(100, Math.round(y * 100) / 100)),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function subscribeMapDrawings(mapId, onData, onError) {
+  if (!mapId) {
+    onData?.([]);
+    return () => {};
+  }
+  const firestore = requireDb();
+  const q = query(collection(firestore, 'map_drawings'), where('map_id', '==', String(mapId)));
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => {
+        const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : Number(a.createdAtMs) || 0;
+        const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : Number(b.createdAtMs) || 0;
+        return ta - tb;
+      });
+      onData?.(list);
+    },
+    (err) => {
+      if (isPermissionDeniedError(err)) {
+        onData?.([]);
+        return;
+      }
+      if (onError) onError(err);
+    }
+  );
+}
+
+export async function createMapDrawing({
+  map_id,
+  author_id,
+  author_name,
+  author_role = 'player',
+  color = '#38bdf8',
+  width = 4,
+  points = [],
+}) {
+  if (!map_id || !author_id) return null;
+  const cleanPoints = sanitizeDrawingPoints(points);
+  if (cleanPoints.length === 0) return null;
+
+  const firestore = requireDb();
+  const ref = doc(collection(firestore, 'map_drawings'));
+  await setDoc(ref, {
+    map_id: String(map_id).slice(0, 128),
+    author_id: String(author_id).slice(0, 128),
+    author_name: String(author_name || 'Aventureiro').trim().slice(0, 60),
+    author_role: author_role === 'master' ? 'master' : 'player',
+    color: String(color || '#38bdf8').slice(0, 32),
+    width: Math.max(1, Math.min(24, Number(width) || 4)),
+    points: cleanPoints,
+    createdAtMs: Date.now(),
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function deleteMapDrawing(drawingId) {
+  if (!drawingId) return;
+  const firestore = requireDb();
+  await deleteDoc(doc(firestore, 'map_drawings', drawingId));
+}
+
+export async function clearMapDrawings(mapId, { authorId = null, onlyPlayers = false } = {}) {
+  if (!mapId) return 0;
+  const firestore = requireDb();
+  const snap = await getDocs(
+    query(collection(firestore, 'map_drawings'), where('map_id', '==', String(mapId)))
+  );
+  if (snap.empty) return 0;
+
+  const toDelete = snap.docs.filter((d) => {
+    const data = d.data();
+    if (authorId) return data.author_id === authorId;
+    if (onlyPlayers) return data.author_role !== 'master';
+    return true;
+  });
+
+  if (toDelete.length === 0) return 0;
+
+  for (let i = 0; i < toDelete.length; i += 400) {
+    const batch = writeBatch(firestore);
+    toDelete.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return toDelete.length;
+}
+
+/* ============================================================================
+ * BIBLIOTECA & GERADOR DE NPCs ATRELADOS À HISTÓRIA (npcs — exclusivo Mestre)
+ * ========================================================================== */
+
+function sanitizeNpcPayload(data = {}, isCreate = false) {
+  const out = {};
+  if (isCreate || data.name !== undefined) {
+    out.name = String(data.name || 'NPC Sem Nome').trim().slice(0, 100);
+  }
+  if (isCreate || data.profession !== undefined) {
+    out.profession = String(data.profession || 'Cidadão').trim().slice(0, 120);
+  }
+  if (isCreate || data.race !== undefined) {
+    out.race = String(data.race || 'Humano').trim().slice(0, 80);
+  }
+  if (isCreate || data.attitude !== undefined) {
+    const valid = ['Aliado', 'Neutro', 'Misterioso', 'Hostil'];
+    out.attitude = valid.includes(data.attitude) ? data.attitude : 'Neutro';
+  }
+  if (isCreate || data.appearance !== undefined) {
+    out.appearance = String(data.appearance || '').trim().slice(0, 1500);
+  }
+  if (isCreate || data.personality !== undefined) {
+    out.personality = String(data.personality || '').trim().slice(0, 1500);
+  }
+  if (isCreate || data.story_hook !== undefined) {
+    out.story_hook = String(data.story_hook || '').trim().slice(0, 2000);
+  }
+  if (isCreate || data.secret !== undefined) {
+    out.secret = String(data.secret || '').trim().slice(0, 2000);
+  }
+  if (isCreate || data.description !== undefined) {
+    out.description = String(data.description || '').trim().slice(0, 4000);
+  }
+  if (isCreate || data.notes !== undefined) {
+    out.notes = String(data.notes || '').slice(0, 5000);
+  }
+  if (isCreate || data.story_context !== undefined) {
+    out.story_context = String(data.story_context || '').trim().slice(0, 1500);
+  }
+  if (isCreate || data.avatar_color !== undefined) {
+    out.avatar_color = String(data.avatar_color || '#38bdf8').slice(0, 40);
+  }
+  if (isCreate || data.hp !== undefined) {
+    out.hp = Math.max(0, Math.min(10000, Math.floor(Number(data.hp ?? 22))));
+  }
+  if (isCreate || data.max_hp !== undefined) {
+    out.max_hp = Math.max(1, Math.min(10000, Math.floor(Number(data.max_hp ?? data.hp ?? 22))));
+  }
+  if (isCreate || data.ac !== undefined) {
+    out.ac = Math.max(1, Math.min(50, Math.floor(Number(data.ac ?? 12))));
+  }
+  if (isCreate || data.mana !== undefined) {
+    out.mana = Math.max(0, Math.min(10000, Math.floor(Number(data.mana ?? 0))));
+  }
+  if (isCreate || data.max_mana !== undefined) {
+    out.max_mana = Math.max(0, Math.min(10000, Math.floor(Number(data.max_mana ?? data.mana ?? 0))));
+  }
+  if (isCreate || data.speed !== undefined) {
+    out.speed = Math.max(0, Math.min(200, Math.round((Number(data.speed ?? 9) || 9) * 10) / 10));
+  }
+  if (isCreate && data.created_by) {
+    out.created_by = String(data.created_by).slice(0, 128);
+  }
+  out.updatedAt = serverTimestamp();
+  if (isCreate) {
+    out.createdAt = serverTimestamp();
+  }
+  return out;
+}
+
+export function subscribeNpcs(onData, onError) {
+  const firestore = requireDb();
+  const colRef = collection(firestore, 'npcs');
+  return onSnapshot(
+    colRef,
+    (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => {
+        const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : Number(a.createdAtMs) || 0;
+        const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : Number(b.createdAtMs) || 0;
+        return tb - ta;
+      });
+      onData?.(list);
+    },
+    (err) => {
+      if (isPermissionDeniedError(err)) {
+        onData?.([]);
+        return;
+      }
+      if (onError) onError(err);
+    }
+  );
+}
+
+export async function createNpc(data) {
+  const firestore = requireDb();
+  const ref = doc(collection(firestore, 'npcs'));
+  await setDoc(ref, sanitizeNpcPayload(data, true));
+  return ref.id;
+}
+
+export async function updateNpc(npcId, updates) {
+  if (!npcId) return;
+  const firestore = requireDb();
+  await updateDoc(doc(firestore, 'npcs', npcId), sanitizeNpcPayload(updates, false));
+}
+
+export async function deleteNpc(npcId) {
+  if (!npcId) return;
+  const firestore = requireDb();
+  await deleteDoc(doc(firestore, 'npcs', npcId));
+}
+
+export async function removeNpcTokensFromMap(npcId, mapId = null) {
+  if (!npcId) return 0;
+  const firestore = requireDb();
+  const snap = await getDocs(
+    query(collection(firestore, 'map_tokens'), where('npc_id', '==', String(npcId)))
+  );
+  if (snap.empty) return 0;
+
+  const targets = mapId
+    ? snap.docs.filter((d) => d.data()?.map_id === String(mapId))
+    : snap.docs;
+  if (targets.length === 0) return 0;
+
+  const batch = writeBatch(firestore);
+  targets.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  return targets.length;
 }

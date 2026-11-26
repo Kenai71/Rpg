@@ -67,6 +67,42 @@ export function playDiceBounceSound(intensity = 1) {
 }
 
 /**
+ * Toque sutil e agradável de Aviso de Turno ("É o seu turno!")
+ * Intervalo harmônico suave de quinta justa (G5 -> D6) em volume discreto para não assustar o jogador.
+ */
+export function playTurnAlertSound() {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const t = ctx.currentTime;
+    const notes = [
+      { freq: 783.99, delay: 0.0, peak: 0.13, dur: 0.42 },  // G5
+      { freq: 1174.66, delay: 0.11, peak: 0.14, dur: 0.62 }, // D6
+    ];
+
+    notes.forEach(({ freq, delay, peak, dur }) => {
+      const start = t + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(peak, start + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + dur + 0.04);
+    });
+  } catch {}
+}
+
+/**
  * Som agradável de Sucesso Máximo / Crítico
  * Frequências: C5, E5, G5, B5, C6 (Arpejo pentatônico maior brilhante)
  */

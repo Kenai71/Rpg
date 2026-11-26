@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  GiHoodedFigure,
   GiScrollUnfurled,
   GiSwapBag,
   GiTreasureMap,
@@ -30,6 +31,7 @@ import { cn } from '../../lib/utils';
 const NAV_ITEMS = [
   { id: 'overview', label: 'Visão Geral', icon: LayoutDashboard },
   { id: 'maps', label: 'Mesa & Mapas', icon: GiTreasureMap },
+  { id: 'npcs', label: 'NPCs & História', icon: GiHoodedFigure },
   { id: 'missions', label: 'Missões & Contratos', icon: GiScrollUnfurled },
   { id: 'shop', label: 'Loja & Economia', icon: GiSwapBag },
   { id: 'players', label: 'Heróis & Grupos', icon: Users },
