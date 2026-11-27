@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { normalizeFogOfWar } from '../../lib/map-fog';
+import { filterFogOpsForViewer, normalizeFogOfWar } from '../../lib/map-fog';
 
 const MAX_FOG_CANVAS_SIDE = 1920;
 
@@ -10,14 +10,16 @@ const MAX_FOG_CANVAS_SIDE = 1920;
  *
  * - Para Jogadores (e Mestre em "Ver como Jogador"): áreas cobertas são 100% opacas,
  *   impedindo qualquer spoiler de salas ou monstros escondidos mesmo em mapas iluminados de dia.
+ *   Aplica operações globais do Mestre + explorações individuais do próprio jogador (viewerUid).
  * - Para o Mestre: áreas cobertas aparecem translúcidas (controlável pelo slider) com sutil
  *   hachura tática, permitindo visualizar o mapa completo por baixo enquanto revela sala por sala.
- * - Suporta prévia ao vivo de retângulo ou pincel enquanto o Mestre arrasta.
+ * - Suporta prévia ao vivo de retângulo ou pincel (e trilha de descoberta 6% do jogador) durante arraste.
  */
 export function MapFogOfWarOverlay({
   fogOfWar,
   isMaster = false,
   previewAsPlayer = false,
+  viewerUid = null,
   mapWidth = 1400,
   mapHeight = 900,
   draftOp = null,
@@ -25,6 +27,7 @@ export function MapFogOfWarOverlay({
   const canvasRef = useRef(null);
   const safeFog = normalizeFogOfWar(fogOfWar);
   const effectivePlayerView = !isMaster || previewAsPlayer;
+  const effectiveViewerUid = effectivePlayerView ? viewerUid : '*';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -47,7 +50,8 @@ export function MapFogOfWarOverlay({
     ctx.clearRect(0, 0, cw, ch);
 
     const baseDim = Math.min(cw, ch);
-    const allOps = draftOp ? [...safeFog.ops, draftOp] : safeFog.ops;
+    const combinedOps = draftOp ? [...safeFog.ops, draftOp] : safeFog.ops;
+    const allOps = filterFogOpsForViewer(combinedOps, effectiveViewerUid);
 
     // 1. Preenche a máscara binária de áreas cobertas usando compositing nativo (source-over / destination-out)
     ctx.globalCompositeOperation = 'source-over';
@@ -126,7 +130,7 @@ export function MapFogOfWarOverlay({
     }
 
     ctx.globalCompositeOperation = 'source-over';
-  }, [safeFog, effectivePlayerView, mapWidth, mapHeight, draftOp]);
+  }, [safeFog, effectivePlayerView, effectiveViewerUid, mapWidth, mapHeight, draftOp]);
 
   if (!safeFog.enabled) return null;
 

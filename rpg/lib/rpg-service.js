@@ -23,6 +23,12 @@ import {
   getRarityFromItem,
   rollGachaRarity,
 } from './constants';
+import {
+  MAX_FOG_OPS,
+  buildPlayerSpawnFogOp,
+  normalizeFogOfWar,
+  normalizeFogOp,
+} from './map-fog';
 
 function requireDb() {
   if (!db) {
@@ -1383,6 +1389,43 @@ export async function updateMap(mapId, updates) {
   await updateDoc(mapRef, sanitized);
 }
 
+/**
+ * Adiciona operações à Névoa de Guerra Manual de forma atômica (runTransaction),
+ * evitando sobrescrita quando múltiplos jogadores exploram o mapa simultaneamente.
+ */
+export async function appendMapFogOpsTx(mapId, newOps = [], { requireEnabled = true } = {}) {
+  if (!mapId || !Array.isArray(newOps) || newOps.length === 0) return false;
+  const firestore = requireDb();
+  const mapRef = doc(firestore, 'maps', String(mapId));
+
+  let updated = false;
+  await runTransaction(firestore, async (tx) => {
+    const snap = await tx.get(mapRef);
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
+    const currentFog = normalizeFogOfWar(data.fog_of_war);
+    if (requireEnabled && !currentFog.enabled) return;
+
+    const existingIds = new Set(currentFog.ops.map((o) => o.id));
+    const validNew = newOps
+      .map((raw, i) => normalizeFogOp(raw, currentFog.ops.length + i))
+      .filter((op) => op && !existingIds.has(op.id));
+    if (validNew.length === 0) return;
+
+    const mergedOps = [...currentFog.ops, ...validNew].slice(-MAX_FOG_OPS);
+    tx.update(mapRef, {
+      fog_of_war: {
+        ...currentFog,
+        ops: mergedOps,
+      },
+      updatedAt: serverTimestamp(),
+    });
+    updated = true;
+  });
+
+  return updated;
+}
+
 export async function setActiveMapTx(activeMapId) {
   const firestore = requireDb();
   const mapsSnap = await getDocs(collection(firestore, 'maps'));
@@ -1532,6 +1575,15 @@ export async function createMapToken(data) {
     move_used: 0,
     updatedAt: serverTimestamp(),
   });
+
+  // Assim que um jogador é inserido no mapa, descobre um pequeno círculo em volta dele (apenas p/ ele)
+  if (type === 'player') {
+    const playerUid = data.owner_id || data.character_id;
+    const spawnOp = buildPlayerSpawnFogOp(playerUid, finalX, finalY);
+    if (spawnOp) {
+      appendMapFogOpsTx(String(data.map_id), [spawnOp], { requireEnabled: true }).catch(() => {});
+    }
+  }
 
   return tokenRef.id;
 }
@@ -1714,6 +1766,7 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
     });
 
   const existingCountOffset = existingMapTokens.filter((t) => t.map_id === targetMapId).length;
+  const playerSpawnFogOps = [];
 
   selectedItems.forEach((item, idx) => {
     const syncGroupId = String(item.sync_group_id || '').trim().slice(0, 128);
@@ -1731,6 +1784,8 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
     const hp = Math.max(0, Math.floor(Number(item.hp ?? maxHp)));
     const maxMana = Math.max(0, Math.floor(Number(item.max_mana ?? 10)));
     const mana = Math.max(0, Math.floor(Number(item.mana ?? maxMana)));
+    const spawnX = 12 + ((slotIdx * 8) % 76);
+    const spawnY = Math.max(12, 84 - Math.floor(slotIdx / 10) * 9);
 
     batch.set(tokenRef, {
       map_id: targetMapId,
@@ -1741,8 +1796,8 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
       sync_group_id: syncGroupId,
       color: item.color || (type === 'player' ? '#60a5fa' : type === 'npc' ? '#10b981' : '#ef4444'),
       avatar: item.avatar || null,
-      x: 12 + ((slotIdx * 8) % 76),
-      y: Math.max(12, 84 - Math.floor(slotIdx / 10) * 9),
+      x: spawnX,
+      y: spawnY,
       size,
       hp,
       max_hp: maxHp,
@@ -1768,6 +1823,12 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
       updatedAt: serverTimestamp(),
     });
 
+    if (type === 'player') {
+      const playerUid = item.owner_id || item.character_id;
+      const spawnOp = buildPlayerSpawnFogOp(playerUid, spawnX, spawnY);
+      if (spawnOp) playerSpawnFogOps.push(spawnOp);
+    }
+
     // Vincula também os tokens de origem legados (que ainda não tinham sync_group_id) para manter a vida sincronizada entre os mapas
     if (Array.isArray(item.sourceTokenIdsToLink) && item.sourceTokenIdsToLink.length > 0) {
       item.sourceTokenIdsToLink.forEach((srcId) => {
@@ -1788,6 +1849,10 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
 
   if (addedCount > 0 || updatedLinksCount > 0) {
     await batch.commit();
+  }
+  // Assim que jogadores são inseridos no mapa com névoa ativa, descobrem um pequeno círculo ao redor de si
+  if (playerSpawnFogOps.length > 0) {
+    await appendMapFogOpsTx(targetMapId, playerSpawnFogOps, { requireEnabled: true }).catch(() => {});
   }
   return addedCount;
 }

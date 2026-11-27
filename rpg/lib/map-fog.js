@@ -11,7 +11,9 @@ export const DEFAULT_FOG_OF_WAR = {
   ops: [],              // [{ id, action: 'reveal'|'hide', shape: 'rect'|'brush', x, y, w, h, r, points }]
 };
 
-export const MAX_FOG_OPS = 120;
+export const MAX_FOG_OPS = 300;
+export const PLAYER_FOG_EXPLORE_RADIUS = 6; // Pincel de 6% ao jogador mover seu próprio token
+export const PLAYER_FOG_SPAWN_RADIUS = 6;   // Pequeno círculo inicial ao jogador ser inserido no mapa
 
 export const DRAWING_COLORS = [
   { id: 'sky', label: 'Azul Tático', hex: '#38bdf8' },
@@ -39,13 +41,26 @@ export function normalizeFogOp(raw, idx = 0) {
   const action = raw.action === 'hide' ? 'hide' : 'reveal';
   const shape = raw.shape === 'brush' ? 'brush' : 'rect';
   const id = String(raw.id || `fog_${idx}`).slice(0, 64);
+  const viewerUid =
+    typeof raw.viewerUid === 'string' && raw.viewerUid.trim()
+      ? raw.viewerUid.trim().slice(0, 128)
+      : null;
 
   if (shape === 'rect') {
     const x = clampPct(raw.x);
     const y = clampPct(raw.y);
     const w = Math.max(0.2, Math.min(100 - x, Math.round((Number(raw.w) || 0) * 100) / 100));
     const h = Math.max(0.2, Math.min(100 - y, Math.round((Number(raw.h) || 0) * 100) / 100));
-    return { id, action, shape: 'rect', x, y, w, h };
+    return {
+      id,
+      action,
+      shape: 'rect',
+      x,
+      y,
+      w,
+      h,
+      ...(viewerUid ? { viewerUid } : {}),
+    };
   }
 
   const rawPoints = Array.isArray(raw.points) ? raw.points : [];
@@ -64,7 +79,52 @@ export function normalizeFogOp(raw, idx = 0) {
 
   if (points.length === 0) return null;
   const r = Math.max(1, Math.min(30, Math.round((Number(raw.r) || 6) * 10) / 10));
-  return { id, action, shape: 'brush', r, points };
+  return {
+    id,
+    action,
+    shape: 'brush',
+    r,
+    points,
+    ...(viewerUid ? { viewerUid } : {}),
+  };
+}
+
+/**
+ * Cria uma operação de revelação em pequeno círculo ao inserir um token de jogador no mapa.
+ * Aplicada apenas ao jogador dono do token (viewerUid).
+ */
+export function buildPlayerSpawnFogOp(playerUid, x, y, radius = PLAYER_FOG_SPAWN_RADIUS) {
+  const uid =
+    typeof playerUid === 'string' && playerUid.trim()
+      ? playerUid.trim().slice(0, 128)
+      : null;
+  if (!uid) return null;
+  return {
+    id: `pspawn_${uid.slice(0, 8)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    action: 'reveal',
+    shape: 'brush',
+    r: Math.max(1, Math.min(30, Number(radius) || PLAYER_FOG_SPAWN_RADIUS)),
+    points: [{ x: clampPct(x), y: clampPct(y) }],
+    viewerUid: uid,
+  };
+}
+
+/**
+ * Filtra as operações da Névoa de Guerra de acordo com quem está olhando o mapa:
+ * - viewerUid === '*' (visão do Mestre): exibe operações globais + todas as explorações individuais.
+ * - viewerUid === '<uid>' (jogador específico ou prévia de herói): exibe operações globais (!op.viewerUid)
+ *   + operações descobertas por aquele jogador, preservando a ordem cronológica (ex: Mestre escondendo depois).
+ * - viewerUid === null/undefined: exibe apenas operações globais (!op.viewerUid).
+ */
+export function filterFogOpsForViewer(ops, viewerUid = null) {
+  if (!Array.isArray(ops)) return [];
+  if (viewerUid === '*') return ops;
+  const uid =
+    typeof viewerUid === 'string' && viewerUid.trim() ? viewerUid.trim() : null;
+  if (!uid) {
+    return ops.filter((op) => !op?.viewerUid);
+  }
+  return ops.filter((op) => !op?.viewerUid || op.viewerUid === uid);
 }
 
 export function normalizeFogOfWar(raw) {
@@ -104,7 +164,14 @@ export function distancePointToSegment(px, py, x1, y1, x2, y2) {
  * Avalia matematicamente se o ponto (x%, y%) do mapa está coberto pela Névoa de Guerra Manual.
  * Usado para esconder tokens de monstros/NPCs em salas ainda não reveladas e filtrá-los da Ordem de Combate dos jogadores.
  */
-export function isPointCoveredByFogOfWar(x, y, rawFog, mapAspectRatio = 1400 / 900) {
+export function isPointCoveredByFogOfWar(
+  x,
+  y,
+  rawFog,
+  mapAspectRatio = 1400 / 900,
+  viewerUid = null,
+  extraOps = null
+) {
   const fog = normalizeFogOfWar(rawFog);
   if (!fog.enabled) return false;
 
@@ -112,9 +179,17 @@ export function isPointCoveredByFogOfWar(x, y, rawFog, mapAspectRatio = 1400 / 9
   const py = clampPct(y);
   const ratio = Number.isFinite(mapAspectRatio) && mapAspectRatio > 0 ? mapAspectRatio : 1.5;
 
+  const extraNormalized = Array.isArray(extraOps)
+    ? extraOps.map((op, i) => normalizeFogOp(op, fog.ops.length + i)).filter(Boolean)
+    : [];
+  const activeOps = filterFogOpsForViewer(
+    extraNormalized.length > 0 ? [...fog.ops, ...extraNormalized] : fog.ops,
+    viewerUid
+  );
+
   let covered = fog.defaultCovered;
 
-  for (const op of fog.ops) {
+  for (const op of activeOps) {
     if (op.shape === 'rect') {
       if (px >= op.x && px <= op.x + op.w && py >= op.y && py <= op.y + op.h) {
         covered = op.action === 'hide';

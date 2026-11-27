@@ -92,6 +92,8 @@ import {
   DRAWING_COLORS,
   DRAWING_WIDTHS,
   MAX_FOG_OPS,
+  PLAYER_FOG_EXPLORE_RADIUS,
+  buildPlayerSpawnFogOp,
   buildSmoothSvgPath,
   isPointCoveredByFogOfWar,
   isPointNearStroke,
@@ -100,6 +102,7 @@ import {
 } from '../../lib/map-fog';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import {
+  appendMapFogOpsTx,
   clearMapDrawings,
   computeAutoGridSize,
   createMapDrawing,
@@ -796,14 +799,19 @@ export function TacticalMapCanvas({
   const [fogShape, setFogShape] = useState('rect'); // 'rect' | 'brush'
   const [fogBrushRadius, setFogBrushRadius] = useState(7);
   const [draftFogOp, setDraftFogOp] = useState(null);
+  const [playerFogDraftOp, setPlayerFogDraftOp] = useState(null);
   const fogAnchorRef = useRef(null);
   const fogSaveTimerRef = useRef(null);
 
   useEffect(() => {
     setLocalFogOfWar(normalizeFogOfWar(map?.fog_of_war));
-    setDraftFogOp(null);
-    fogAnchorRef.current = null;
   }, [map?.id, map?.fog_of_war]);
+
+  useEffect(() => {
+    setDraftFogOp(null);
+    setPlayerFogDraftOp(null);
+    fogAnchorRef.current = null;
+  }, [map?.id]);
 
   useEffect(() => {
     return () => {
@@ -2085,6 +2093,11 @@ export function TacticalMapCanvas({
       inFlight: false,
       trailingTimer: null,
       cancelled: false,
+      // Trilha de exploração 6% SOMENTE quando o próprio jogador arrasta (nunca quando o Mestre move o token)
+      fogTrail:
+        !isMaster && localFogOfWar.enabled && currentUserId
+          ? [{ x: curX, y: curY }]
+          : null,
     };
 
     if (enforceMoveLimit) {
@@ -2193,6 +2206,22 @@ export function TacticalMapCanvas({
     dragState.latestX = newPctX;
     dragState.latestY = newPctY;
 
+    // Exploração individual da Névoa de Guerra (pincel 6% ao vivo apenas quando o próprio jogador se move)
+    if (!isMaster && dragState.fogTrail && dragState.hasMoved && currentUserId) {
+      const lastFogPt = dragState.fogTrail[dragState.fogTrail.length - 1];
+      if (!lastFogPt || Math.hypot(newPctX - lastFogPt.x, newPctY - lastFogPt.y) >= 0.35) {
+        dragState.fogTrail.push({ x: newPctX, y: newPctY });
+        setPlayerFogDraftOp({
+          id: 'live_player_fog',
+          action: 'reveal',
+          shape: 'brush',
+          r: PLAYER_FOG_EXPLORE_RADIUS,
+          points: [...dragState.fogTrail],
+          viewerUid: currentUserId,
+        });
+      }
+    }
+
     setLocalTokenPositions((prev) => ({
       ...prev,
       [token.id]: { x: newPctX, y: newPctY },
@@ -2236,6 +2265,9 @@ export function TacticalMapCanvas({
         )
       : undefined;
 
+    const rawFogTrail = !isMaster ? dragState.fogTrail : null;
+    setPlayerFogDraftOp(null);
+
     const needsFinalSync =
       (dragState.enforceMoveLimit && movedMeters > 0.005) ||
       Math.abs(exactX - dragState.lastSentX) > 0.0001 ||
@@ -2243,6 +2275,41 @@ export function TacticalMapCanvas({
       dragState.inFlight ||
       dragState.lastSentAt === 0;
     draggingTokenRef.current = null;
+
+    // Persiste a descoberta da Névoa de Guerra (pincel 6% exclusivo para este jogador) ao concluir o movimento
+    if (
+      hasMoved &&
+      !isMaster &&
+      Array.isArray(rawFogTrail) &&
+      rawFogTrail.length > 0 &&
+      map?.id &&
+      currentUserId
+    ) {
+      const fullTrail = [...rawFogTrail];
+      const lastPt = fullTrail[fullTrail.length - 1];
+      if (!lastPt || Math.hypot(exactX - lastPt.x, exactY - lastPt.y) > 0.05) {
+        fullTrail.push({ x: exactX, y: exactY });
+      }
+      const simplifiedTrail = simplifyPolyline(fullTrail, 0.35, 90);
+      if (simplifiedTrail.length > 0) {
+        const exploreOp = {
+          id: `pfog_${String(currentUserId).slice(0, 8)}_${Date.now()}_${Math.random()
+            .toString(36)
+            .slice(2, 5)}`,
+          action: 'reveal',
+          shape: 'brush',
+          r: PLAYER_FOG_EXPLORE_RADIUS,
+          points: simplifiedTrail,
+          viewerUid: currentUserId,
+        };
+        setLocalFogOfWar((prev) =>
+          prev.enabled
+            ? { ...prev, ops: [...prev.ops, exploreOp].slice(-MAX_FOG_OPS) }
+            : prev
+        );
+        appendMapFogOpsTx(map.id, [exploreOp], { requireEnabled: true }).catch(() => {});
+      }
+    }
 
     if (hasMoved && onUpdateTokenPosition) {
       justDraggedRef.current = true;
@@ -2484,7 +2551,19 @@ export function TacticalMapCanvas({
     [mapDisplaySize.width, mapDisplaySize.height]
   );
 
-  // Verifica se um token está sob área ainda não revelada da Névoa de Guerra Manual
+  const effectiveFogViewerUid = useMemo(() => {
+    if (!isMaster) return currentUserId || null;
+    if (previewEffectsAsPlayer) {
+      const previewTok =
+        heroTokensOnMap.find((t) => t.id === activeViewerTokenId) || heroTokensOnMap[0];
+      return previewTok?.owner_id || previewTok?.character_id || null;
+    }
+    return '*';
+  }, [isMaster, currentUserId, previewEffectsAsPlayer, heroTokensOnMap, activeViewerTokenId]);
+
+  const activeFogDraftOp = isMaster ? draftFogOp : playerFogDraftOp;
+
+  // Verifica se um token está sob área ainda não revelada da Névoa de Guerra Manual (para este espectador)
   const isTokenCoveredByManualFog = useCallback(
     (token) => {
       if (!localFogOfWar.enabled || !token) return false;
@@ -2500,9 +2579,25 @@ export function TacticalMapCanvas({
       const rawPos = localTokenPositions[token.id] || { x: token.x, y: token.y };
       const px = Number.isFinite(Number(rawPos.x)) ? Number(rawPos.x) : 50;
       const py = Number.isFinite(Number(rawPos.y)) ? Number(rawPos.y) : 50;
-      return isPointCoveredByFogOfWar(px, py, localFogOfWar, mapAspectRatio);
+      return isPointCoveredByFogOfWar(
+        px,
+        py,
+        localFogOfWar,
+        mapAspectRatio,
+        effectiveFogViewerUid,
+        activeFogDraftOp ? [activeFogDraftOp] : null
+      );
     },
-    [localFogOfWar, activeViewerTokenId, isMaster, currentUserId, localTokenPositions, mapAspectRatio]
+    [
+      localFogOfWar,
+      activeViewerTokenId,
+      isMaster,
+      currentUserId,
+      localTokenPositions,
+      mapAspectRatio,
+      effectiveFogViewerUid,
+      activeFogDraftOp,
+    ]
   );
 
   // Ordem de combate visível: Mestre vê todos (incluindo ocultos); Jogadores NUNCA veem ocultos nem monstros fora do seu campo de visão ou sob Névoa de Guerra
@@ -4418,7 +4513,29 @@ export function TacticalMapCanvas({
                         type="button"
                         onClick={() => {
                           const nextEnabled = !localFogOfWar.enabled;
-                          commitFogOfWar({ ...localFogOfWar, enabled: nextEnabled });
+                          let nextOps = localFogOfWar.ops;
+                          // Ao ativar névoa pela primeira vez em um mapa que já tem jogadores posicionados,
+                          // revela um pequeno círculo inicial ao redor de cada jogador (individualmente).
+                          if (
+                            nextEnabled &&
+                            localFogOfWar.defaultCovered &&
+                            localFogOfWar.ops.length === 0 &&
+                            heroTokensOnMap.length > 0
+                          ) {
+                            const seeded = heroTokensOnMap
+                              .map((tok) => {
+                                const uid = tok.owner_id || tok.character_id;
+                                const pos = localTokenPositions[tok.id] || { x: tok.x, y: tok.y };
+                                return buildPlayerSpawnFogOp(uid, pos.x, pos.y);
+                              })
+                              .filter(Boolean);
+                            if (seeded.length > 0) nextOps = seeded;
+                          }
+                          commitFogOfWar({
+                            ...localFogOfWar,
+                            enabled: nextEnabled,
+                            ops: nextOps,
+                          });
                           setActiveTool(nextEnabled ? 'fog' : 'select');
                         }}
                         aria-pressed={localFogOfWar.enabled}
@@ -4624,8 +4741,8 @@ export function TacticalMapCanvas({
                         }}
                         className="w-full accent-slate-200 cursor-pointer"
                       />
-                      <p className="text-[10px] text-slate-400">
-                        Para os jogadores, áreas cobertas são sempre 100% opacas e ocultam monstros/NPCs.
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Jogadores descobrem automaticamente um pincel de 6% ao mover o próprio herói (e um pequeno círculo ao entrar no mapa), visível apenas para cada jogador. Mover tokens como Mestre nunca revela o mapa.
                       </p>
                     </div>
 
@@ -4647,6 +4764,34 @@ export function TacticalMapCanvas({
                         {previewEffectsAsPlayer ? 'ON' : 'OFF'}
                       </span>
                     </button>
+
+                    {previewEffectsAsPlayer && heroTokensOnMap.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Visão do Herói:
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {heroTokensOnMap.map((h) => {
+                            const selected = h.id === activeViewerTokenId;
+                            return (
+                              <button
+                                key={h.id}
+                                type="button"
+                                onClick={() => setPreviewHeroTokenId(h.id)}
+                                className={cn(
+                                  'px-2 py-1 rounded-lg border text-[10px] font-bold transition-colors truncate max-w-[115px]',
+                                  selected
+                                    ? 'bg-white/15 border-white/30 text-white'
+                                    : 'bg-white/[0.04] border-white/10 text-slate-300 hover:bg-white/10'
+                                )}
+                              >
+                                {h.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -5681,14 +5826,15 @@ export function TacticalMapCanvas({
             onRevealForMaster={() => commitMapEffects({ ...localEffects, blackout: false })}
           />
 
-          {/* CAMADA DE NÉVOA DE GUERRA MANUAL POR SALAS (RETÂNGULO / PINCEL — ANTI-SPOILER EM MAPAS ILUMINADOS) */}
+          {/* CAMADA DE NÉVOA DE GUERRA MANUAL POR SALAS (RETÂNGULO / PINCEL — ANTI-SPOILER + EXPLORAÇÃO INDIVIDUAL 6%) */}
           <MapFogOfWarOverlay
             fogOfWar={localFogOfWar}
             isMaster={isMaster}
             previewAsPlayer={previewEffectsAsPlayer}
+            viewerUid={effectiveFogViewerUid}
             mapWidth={mapDisplaySize.width}
             mapHeight={mapDisplaySize.height}
-            draftOp={draftFogOp}
+            draftOp={activeFogDraftOp}
           />
         </div>
       </div>
