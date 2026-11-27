@@ -96,18 +96,20 @@ import {
   buildSmoothSvgPath,
   isPointCoveredByFogOfWar,
   isPointNearStroke,
+  mergeFogWithPlayerDocs,
   normalizeFogOfWar,
   simplifyPolyline,
 } from '../../lib/map-fog';
 import { TOKEN_CONDITIONS, TOKEN_SIZES } from '../../lib/map-presets';
 import {
-  appendMapFogOpsTx,
+  appendPlayerFogOpsTx,
   clearMapDrawings,
   computeAutoGridSize,
   createMapDrawing,
   deleteMapDrawing,
   loadMapHdImageUrl,
   subscribeMapDrawings,
+  subscribePlayerFog,
 } from '../../lib/rpg-service';
 import {
   buildSheetCutoutClipPath,
@@ -794,6 +796,7 @@ export function TacticalMapCanvas({
   // NÉVOA DE GUERRA MANUAL POR SALAS (FOG OF WAR — Retângulo & Pincel)
   // =========================================================================
   const [localFogOfWar, setLocalFogOfWar] = useState(() => normalizeFogOfWar(map?.fog_of_war));
+  const [playerFogDocs, setPlayerFogDocs] = useState([]);
   const [fogMode, setFogMode] = useState('reveal'); // 'reveal' | 'hide'
   const [fogShape, setFogShape] = useState('rect'); // 'rect' | 'brush'
   const [fogBrushRadius, setFogBrushRadius] = useState(7);
@@ -811,6 +814,41 @@ export function TacticalMapCanvas({
     setPlayerFogDraftOp(null);
     fogAnchorRef.current = null;
   }, [map?.id]);
+
+  // Assina a subcoleção escalável `maps/{mapId}/player_fog` (zero contenção em `maps/{mapId}`)
+  useEffect(() => {
+    if (!map?.id) {
+      setPlayerFogDocs([]);
+      return undefined;
+    }
+    const unsub = subscribePlayerFog(map.id, isMaster, currentUserId, setPlayerFogDocs, () => {});
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [map?.id, isMaster, currentUserId]);
+
+  // Mescla operações globais do Mestre + explorações individuais por jogador em ordem cronológica
+  const mergedFogOfWar = useMemo(
+    () => mergeFogWithPlayerDocs(localFogOfWar, playerFogDocs),
+    [localFogOfWar, playerFogDocs]
+  );
+
+  // Atalho de teclado Escape: retorna rapidamente ao modo Mover Tokens sem atrapalhar inputs
+  useEffect(() => {
+    if (activeTool === 'select') return undefined;
+    const handleKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      setActiveTool('select');
+      setRulerStart(null);
+      setRulerCurrent(null);
+      setDraftFogOp(null);
+      setDraftStroke(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTool]);
 
   useEffect(() => {
     return () => {
@@ -1810,26 +1848,29 @@ export function TacticalMapCanvas({
       } catch {}
       if (draftFogOp && isMaster) {
         let finalOp = null;
+        const nowMs = Date.now();
         if (draftFogOp.shape === 'rect') {
           if (draftFogOp.w >= 0.4 && draftFogOp.h >= 0.4) {
             finalOp = {
-              id: `fog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              id: `fog_${nowMs}_${Math.random().toString(36).slice(2, 6)}`,
               action: draftFogOp.action,
               shape: 'rect',
               x: Math.round(draftFogOp.x * 100) / 100,
               y: Math.round(draftFogOp.y * 100) / 100,
               w: Math.round(draftFogOp.w * 100) / 100,
               h: Math.round(draftFogOp.h * 100) / 100,
+              ts: nowMs,
             };
           }
         } else if (draftFogOp.shape === 'brush' && Array.isArray(draftFogOp.points) && draftFogOp.points.length > 0) {
           const simplified = simplifyPolyline(draftFogOp.points, 0.35, 110);
           finalOp = {
-            id: `fog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            id: `fog_${nowMs}_${Math.random().toString(36).slice(2, 6)}`,
             action: draftFogOp.action,
             shape: 'brush',
             r: draftFogOp.r,
             points: simplified,
+            ts: nowMs,
           };
         }
 
@@ -2319,22 +2360,52 @@ export function TacticalMapCanvas({
       }
       const simplifiedTrail = simplifyPolyline(fullTrail, 0.35, 90);
       if (simplifiedTrail.length > 0) {
+        const nowMs = Date.now();
         const exploreOp = {
-          id: `pfog_${String(currentUserId).slice(0, 8)}_${Date.now()}_${Math.random()
+          id: `pfog_${String(currentUserId).slice(0, 8)}_${nowMs}_${Math.random()
             .toString(36)
             .slice(2, 5)}`,
           action: 'reveal',
           shape: 'brush',
           r: PLAYER_FOG_EXPLORE_RADIUS,
           points: simplifiedTrail,
+          ts: nowMs,
           viewerUid: currentUserId,
         };
-        setLocalFogOfWar((prev) =>
-          prev.enabled
-            ? { ...prev, ops: [...prev.ops, exploreOp].slice(-MAX_FOG_OPS) }
-            : prev
-        );
-        appendMapFogOpsTx(map.id, [exploreOp], { requireEnabled: true }).catch(() => {});
+        const currentResetVer = localFogOfWar.resetVersion || 0;
+        // Atualização otimista local no documento individual de névoa do jogador (zero flicker)
+        setPlayerFogDocs((prev) => {
+          const idx = prev.findIndex((d) => d.uid === currentUserId);
+          if (idx === -1) {
+            return [
+              ...prev,
+              {
+                id: currentUserId,
+                uid: currentUserId,
+                map_id: map.id,
+                resetVersion: currentResetVer,
+                ops: [exploreOp],
+              },
+            ];
+          }
+          const copy = [...prev];
+          const existing = copy[idx];
+          const baseOps =
+            Math.floor(Number(existing.resetVersion) || 0) === currentResetVer &&
+            Array.isArray(existing.ops)
+              ? existing.ops
+              : [];
+          copy[idx] = {
+            ...existing,
+            resetVersion: currentResetVer,
+            ops: [...baseOps, exploreOp].slice(-220),
+          };
+          return copy;
+        });
+        appendPlayerFogOpsTx(map.id, currentUserId, [exploreOp], {
+          requireEnabled: true,
+          resetVersion: currentResetVer,
+        }).catch(() => {});
       }
     }
 
@@ -2593,7 +2664,7 @@ export function TacticalMapCanvas({
   // Verifica se um token está sob área ainda não revelada da Névoa de Guerra Manual (para este espectador)
   const isTokenCoveredByManualFog = useCallback(
     (token) => {
-      if (!localFogOfWar.enabled || !token) return false;
+      if (!mergedFogOfWar.enabled || !token) return false;
       // O jogador sempre vê o próprio token de herói
       if (token.id === activeViewerTokenId) return false;
       if (
@@ -2609,14 +2680,14 @@ export function TacticalMapCanvas({
       return isPointCoveredByFogOfWar(
         px,
         py,
-        localFogOfWar,
+        mergedFogOfWar,
         mapAspectRatio,
         effectiveFogViewerUid,
         activeFogDraftOp ? [activeFogDraftOp] : null
       );
     },
     [
-      localFogOfWar,
+      mergedFogOfWar,
       activeViewerTokenId,
       isMaster,
       currentUserId,
@@ -4567,29 +4638,32 @@ export function TacticalMapCanvas({
                         type="button"
                         onClick={() => {
                           const nextEnabled = !localFogOfWar.enabled;
-                          let nextOps = localFogOfWar.ops;
+                          const curResetVer = localFogOfWar.resetVersion || 0;
+                          commitFogOfWar({
+                            ...localFogOfWar,
+                            enabled: nextEnabled,
+                          });
                           // Ao ativar névoa pela primeira vez em um mapa que já tem jogadores posicionados,
-                          // revela um pequeno círculo inicial ao redor de cada jogador (individualmente).
+                          // revela um pequeno círculo inicial ao redor de cada jogador na subcoleção player_fog.
                           if (
                             nextEnabled &&
                             localFogOfWar.defaultCovered &&
                             localFogOfWar.ops.length === 0 &&
-                            heroTokensOnMap.length > 0
+                            heroTokensOnMap.length > 0 &&
+                            map?.id
                           ) {
-                            const seeded = heroTokensOnMap
-                              .map((tok) => {
-                                const uid = tok.owner_id || tok.character_id;
-                                const pos = localTokenPositions[tok.id] || { x: tok.x, y: tok.y };
-                                return buildPlayerSpawnFogOp(uid, pos.x, pos.y);
-                              })
-                              .filter(Boolean);
-                            if (seeded.length > 0) nextOps = seeded;
+                            heroTokensOnMap.forEach((tok) => {
+                              const uid = tok.owner_id || tok.character_id;
+                              const pos = localTokenPositions[tok.id] || { x: tok.x, y: tok.y };
+                              const spawnOp = buildPlayerSpawnFogOp(uid, pos.x, pos.y);
+                              if (spawnOp && uid) {
+                                appendPlayerFogOpsTx(map.id, uid, [spawnOp], {
+                                  requireEnabled: false,
+                                  resetVersion: curResetVer,
+                                }).catch(() => {});
+                              }
+                            });
                           }
-                          commitFogOfWar({
-                            ...localFogOfWar,
-                            enabled: nextEnabled,
-                            ops: nextOps,
-                          });
                           setActiveTool(nextEnabled ? 'fog' : 'select');
                         }}
                         aria-pressed={localFogOfWar.enabled}
@@ -4735,6 +4809,7 @@ export function TacticalMapCanvas({
                             ...localFogOfWar,
                             enabled: true,
                             defaultCovered: true,
+                            resetVersion: (localFogOfWar.resetVersion || 0) + 1,
                             ops: [],
                           });
                           setActiveTool('fog');
@@ -4749,6 +4824,7 @@ export function TacticalMapCanvas({
                           commitFogOfWar({
                             ...localFogOfWar,
                             defaultCovered: false,
+                            resetVersion: (localFogOfWar.resetVersion || 0) + 1,
                             ops: [],
                           });
                         }}
@@ -5093,7 +5169,10 @@ export function TacticalMapCanvas({
       {activeTool === 'draw' && (
         <div
           data-map-overlay-scroll="true"
-          className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 rounded-2xl bg-[#0c101b]/95 border border-white/20 text-xs text-slate-100 backdrop-blur-2xl shadow-[0_14px_38px_rgba(0,0,0,0.85)] max-w-[calc(100%-1rem)]"
+          className={cn(
+            'pointer-events-auto absolute left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 rounded-2xl bg-[#0c101b]/95 border border-white/20 text-xs text-slate-100 backdrop-blur-2xl shadow-[0_14px_38px_rgba(0,0,0,0.85)] max-w-[calc(100%-1rem)]',
+            !isMaster && ownPlayerMoveHud ? 'bottom-16 sm:bottom-3' : 'bottom-3'
+          )}
         >
           {/* Lápis vs Borracha */}
           <div className="flex items-center gap-1 pr-1.5 border-r border-white/10">
@@ -5899,7 +5978,7 @@ export function TacticalMapCanvas({
 
           {/* CAMADA DE NÉVOA DE GUERRA MANUAL POR SALAS (RETÂNGULO / PINCEL — ANTI-SPOILER + EXPLORAÇÃO INDIVIDUAL 6%) */}
           <MapFogOfWarOverlay
-            fogOfWar={localFogOfWar}
+            fogOfWar={mergedFogOfWar}
             isMaster={isMaster}
             previewAsPlayer={previewEffectsAsPlayer}
             viewerUid={effectiveFogViewerUid}

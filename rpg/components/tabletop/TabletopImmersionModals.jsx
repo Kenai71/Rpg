@@ -146,25 +146,25 @@ function getLootTypeIcon(type) {
   }
 }
 
-// Comprime imagem do Handout para WebP HD (<= 620 KB) mantendo nitidez para mapas do tesouro e cartas
-function compressHandoutImage(file) {
+// Comprime imagem do Handout para WebP HD (<= 620 KB) com validação contra Zip Bomb, SVG/XSS e Pixel Flood
+async function compressHandoutImage(file) {
+  const { MAX_AVATAR_UPLOAD_BYTES, validateSafeImageDimensions, validateSafeImageFile } = await import(
+    '../../lib/upload-security'
+  );
+  await validateSafeImageFile(file, { maxBytes: MAX_AVATAR_UPLOAD_BYTES });
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('image/')) {
-      reject(new Error('Selecione uma imagem válida (PNG, JPG ou WebP).'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const originalUrl = ev.target?.result;
-      if (typeof originalUrl === 'string' && originalUrl.length <= 620000) {
-        resolve(originalUrl);
-        return;
-      }
-      const img = new Image();
-      img.onload = () => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
         const maxSide = 1600;
         let w = img.naturalWidth || img.width;
         let h = img.naturalHeight || img.height;
+        const dimCheck = validateSafeImageDimensions(w, h, file.size);
+        if (!dimCheck.ok) {
+          reject(new Error(dimCheck.reason));
+          return;
+        }
         if (w > maxSide || h > maxSide) {
           const ratio = Math.min(maxSide / w, maxSide / h);
           w = Math.round(w * ratio);
@@ -187,13 +187,20 @@ function compressHandoutImage(file) {
             ? canvas.toDataURL('image/webp', quality)
             : canvas.toDataURL('image/jpeg', quality);
         }
+        canvas.width = 0;
+        canvas.height = 0;
         resolve(dataUrl);
-      };
-      img.onerror = () => reject(new Error('Não foi possível processar esta imagem.'));
-      img.src = originalUrl;
+      } catch {
+        reject(new Error('Não foi possível processar esta imagem.'));
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-    reader.onerror = () => reject(new Error('Erro ao ler o arquivo.'));
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Não foi possível processar esta imagem.'));
+    };
+    img.src = objectUrl;
   });
 }
 

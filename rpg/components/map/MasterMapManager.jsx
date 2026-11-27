@@ -232,6 +232,33 @@ export function MasterMapManager({
       finalUrl = selectedPreset.imageUrl;
       naturalWidth = 1200;
       naturalHeight = 800;
+      // Rasteriza presets SVG internos para WebP/PNG seguro (evita armazenar data:image/svg+xml no Firestore)
+      if (finalUrl.startsWith('data:image/svg+xml')) {
+        try {
+          finalUrl = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = naturalWidth;
+              canvas.height = naturalHeight;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, naturalWidth, naturalHeight);
+              let out = canvas.toDataURL('image/webp', 0.9);
+              if (!out.startsWith('data:image/webp')) {
+                out = canvas.toDataURL('image/png');
+              }
+              canvas.width = 0;
+              canvas.height = 0;
+              resolve(out);
+            };
+            img.onerror = () => reject(new Error('Falha ao rasterizar mapa pré-pronto.'));
+            img.src = selectedPreset.imageUrl;
+          });
+        } catch (presetErr) {
+          toast.error(presetErr?.message || 'Erro ao preparar mapa da biblioteca.');
+          return;
+        }
+      }
     } else if (uploadedAsset) {
       finalUrl = uploadedAsset.imageUrl;
       hdBlob = uploadedAsset.hdBlob || null;
@@ -253,6 +280,14 @@ export function MasterMapManager({
       toast.error('Selecione uma imagem ou envie um arquivo para o mapa.');
       return;
     }
+
+    const { sanitizeMediaUrl } = await import('../../lib/upload-security');
+    const safeMapUrl = sanitizeMediaUrl(finalUrl);
+    if (!safeMapUrl) {
+      toast.error('URL da imagem do mapa inválida ou bloqueada por segurança. Use HTTPS ou envie um arquivo.');
+      return;
+    }
+    finalUrl = safeMapUrl;
 
     setCreating(true);
     setUploadProgress({

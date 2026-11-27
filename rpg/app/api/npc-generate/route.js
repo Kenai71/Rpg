@@ -1,6 +1,13 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
-import { getFirebaseAdmin } from '../../../lib/firebase-admin';
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitErrorResponse,
+  readSafeJsonBody,
+  sanitizePromptInput,
+  verifyApiBearerAuth,
+} from '../../../lib/api-security';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -94,44 +101,6 @@ const FALLBACK_NPCS = [
   },
 ];
 
-async function verifyBearerToken(authHeader) {
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) return null;
-
-  try {
-    const admin = await getFirebaseAdmin();
-    if (admin) {
-      try {
-        const decoded = await admin.adminAuth.verifyIdToken(idToken);
-        const profileSnap = await admin.adminDb.collection('profiles').doc(decoded.uid).get();
-        const role = profileSnap.exists ? profileSnap.data()?.role : 'player';
-        return { uid: decoded.uid, isMaster: role === 'master' };
-      } catch {}
-    }
-  } catch {}
-
-  const webApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-  if (!webApiKey) return null;
-  try {
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(webApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const user = data?.users?.[0];
-    if (!user?.localId) return null;
-    return { uid: user.localId, isMaster: true };
-  } catch {
-    return null;
-  }
-}
-
 function parseModelJson(rawText) {
   const cleaned = String(rawText || '')
     .trim()
@@ -200,44 +169,48 @@ function buildFallbackNpc({ storyContext, profession, attitude, race, existingNp
 }
 
 export async function POST(request) {
+  const ip = getClientIp(request);
+  const ipRl = checkRateLimit(`npc:ip:${ip}`, { limit: 30, windowMs: 5 * 60_000 });
+  if (!ipRl.allowed) return rateLimitErrorResponse(ipRl);
+
   const authHeader = request.headers.get('authorization');
-  const verified = await verifyBearerToken(authHeader);
+  const verified = await verifyApiBearerAuth(authHeader);
   if (!verified) {
     return NextResponse.json(
       { success: false, error: 'Autenticação necessária para gerar NPC.' },
       { status: 401 }
     );
   }
-  const admin = await getFirebaseAdmin();
-  if (admin && !verified.isMaster) {
+  if (!verified.isMaster) {
     return NextResponse.json(
       { success: false, error: 'Apenas o Mestre pode gerar NPCs.' },
       { status: 403 }
     );
   }
 
-  let storyContext = '';
-  let profession = '';
-  let attitude = '';
-  let race = '';
-  let activeMapTitle = '';
-  let missionHints = [];
-  let existingNpcNames = [];
+  const uidRl = checkRateLimit(`npc:uid:${verified.uid}`, { limit: 20, windowMs: 5 * 60_000 });
+  if (!uidRl.allowed) return rateLimitErrorResponse(uidRl);
 
-  try {
-    const body = await request.json();
-    storyContext = String(body?.storyContext || '').trim().slice(0, 1000);
-    profession = String(body?.profession || '').trim().slice(0, 100);
-    attitude = String(body?.attitude || '').trim().slice(0, 40);
-    race = String(body?.race || '').trim().slice(0, 60);
-    activeMapTitle = String(body?.activeMapTitle || '').trim().slice(0, 120);
-    if (Array.isArray(body?.missionHints)) {
-      missionHints = body.missionHints.slice(0, 8).map((m) => String(m || '').slice(0, 100));
-    }
-    if (Array.isArray(body?.existingNpcNames)) {
-      existingNpcNames = body.existingNpcNames.slice(0, 30).map((n) => String(n || '').slice(0, 80));
-    }
-  } catch {}
+  const parsedBody = await readSafeJsonBody(request, 24 * 1024);
+  if (!parsedBody.ok) {
+    return NextResponse.json(
+      { success: false, error: parsedBody.error },
+      { status: parsedBody.status }
+    );
+  }
+  const body = parsedBody.data;
+
+  const storyContext = sanitizePromptInput(body?.storyContext, 1000);
+  const profession = sanitizePromptInput(body?.profession, 100);
+  const attitude = sanitizePromptInput(body?.attitude, 40);
+  const race = sanitizePromptInput(body?.race, 60);
+  const activeMapTitle = sanitizePromptInput(body?.activeMapTitle, 120);
+  const missionHints = Array.isArray(body?.missionHints)
+    ? body.missionHints.slice(0, 8).map((m) => sanitizePromptInput(m, 100)).filter(Boolean)
+    : [];
+  const existingNpcNames = Array.isArray(body?.existingNpcNames)
+    ? body.existingNpcNames.slice(0, 30).map((n) => sanitizePromptInput(n, 80)).filter(Boolean)
+    : [];
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {

@@ -2,6 +2,14 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '../../../lib/firebase-admin';
 import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitErrorResponse,
+  readSafeJsonBody,
+  sanitizePromptInput,
+  verifyApiBearerAuth,
+} from '../../../lib/api-security';
+import {
   DND_ENCOUNTERS_BY_TIER,
   DND_EXPANDED_WEAPONS,
   enforceBatchItemUniqueness,
@@ -22,52 +30,6 @@ const MODELS_TO_TRY = [
   { name: 'gemini-2.5-flash', thinkingBudget: 0 },
   { name: 'gemini-3.5-flash', thinkingBudget: undefined },
 ];
-
-async function verifyBearerToken(authHeader) {
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) return null;
-
-  if (process.env.CRON_SECRET && idToken === process.env.CRON_SECRET) {
-    return { isCron: true, uid: 'cron' };
-  }
-
-  try {
-    const admin = await getFirebaseAdmin();
-    if (admin) {
-      try {
-        const decoded = await admin.adminAuth.verifyIdToken(idToken);
-        const profileSnap = await admin.adminDb.collection('profiles').doc(decoded.uid).get();
-        const role = profileSnap.exists ? profileSnap.data()?.role : 'player';
-        return { uid: decoded.uid, isMaster: role === 'master', isCron: false };
-      } catch (adminErr) {
-        console.warn('verifyIdToken no admin falhou:', adminErr?.message);
-      }
-    }
-  } catch (err) {
-    console.warn('Erro ao obter admin no verifyBearerToken:', err?.message);
-  }
-
-  const webApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-  if (!webApiKey) return null;
-  try {
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(webApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const user = data?.users?.[0];
-    if (!user?.localId) return null;
-    return { uid: user.localId, isMaster: true, isCron: false };
-  } catch {
-    return null;
-  }
-}
 
 function parseModelJson(rawText) {
   const cleaned = String(rawText || '')
@@ -299,20 +261,23 @@ async function generateMissionsWithGemini(apiKey, count, existingMissionTitles =
 }
 
 async function handleGenerate(request, isPost) {
+  const ip = getClientIp(request);
+  const ipRl = checkRateLimit(`daily:ip:${ip}`, { limit: 24, windowMs: 5 * 60_000 });
+  if (!ipRl.allowed) return rateLimitErrorResponse(ipRl);
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
       {
         success: false,
-        error:
-          'A variável de ambiente GEMINI_API_KEY não foi encontrada na Vercel ou no arquivo .env. No painel da Vercel vá em Settings > Environment Variables, adicione GEMINI_API_KEY com sua chave e faça um novo Deploy.',
+        error: 'Serviço de geração com IA temporariamente indisponível.',
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 
   const authHeader = request.headers.get('authorization');
-  const verified = await verifyBearerToken(authHeader);
+  const verified = await verifyApiBearerAuth(authHeader, { allowCron: true });
   const admin = await getFirebaseAdmin();
 
   if (isPost) {
@@ -322,22 +287,23 @@ async function handleGenerate(request, isPost) {
         { status: 401 }
       );
     }
-    if (admin && !verified.isMaster && !verified.isCron) {
+    if (!verified.isMaster && !verified.isCron) {
       return NextResponse.json(
         { success: false, error: 'Apenas usuários com perfil de Mestre podem gerar conteúdo diário.' },
         { status: 403 }
       );
     }
+    const uidRl = checkRateLimit(`daily:uid:${verified.uid}`, { limit: 15, windowMs: 5 * 60_000 });
+    if (!uidRl.allowed) return rateLimitErrorResponse(uidRl);
   } else {
-    if (process.env.CRON_SECRET && !verified?.isCron && !verified?.isMaster) {
-      return NextResponse.json({ success: false, error: 'Não autorizado para execução de cron.' }, { status: 401 });
+    if (!verified?.isCron && !verified?.isMaster) {
+      return NextResponse.json({ success: false, error: 'Não autorizado para execução de rotina.' }, { status: 401 });
     }
-    if (!admin && !verified) {
+    if (!admin && !verified?.isMaster) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            'FIREBASE_SERVICE_ACCOUNT_KEY não configurada para execução automática do Cron. Use o botão "Gerar Diária" logado no painel do Mestre.',
+          error: 'Rotina automática indisponível no momento. Utilize a geração pelo Painel do Mestre.',
         },
         { status: 501 }
       );
@@ -351,25 +317,29 @@ async function handleGenerate(request, isPost) {
     let existingMissionTitles = [];
 
     if (isPost) {
-      try {
-        const bodyJson = await request.clone().json();
-        if (['shop', 'missions', 'both'].includes(bodyJson?.mode)) {
-          mode = bodyJson.mode;
-        }
-        if (bodyJson?.count !== undefined) {
-          count = Math.floor(Number(bodyJson.count) || 0);
-        }
-        if (Array.isArray(bodyJson?.existingDescriptions)) {
-          existingDescriptions = bodyJson.existingDescriptions
-            .map((d) => String(d || ''))
-            .filter(Boolean);
-        }
-        if (Array.isArray(bodyJson?.existingMissionTitles)) {
-          existingMissionTitles = bodyJson.existingMissionTitles
-            .map((t) => String(t || ''))
-            .filter(Boolean);
-        }
-      } catch {}
+      const parsedBody = await readSafeJsonBody(request, 32 * 1024);
+      if (!parsedBody.ok) {
+        return NextResponse.json({ success: false, error: parsedBody.error }, { status: parsedBody.status });
+      }
+      const bodyJson = parsedBody.data;
+      if (['shop', 'missions', 'both'].includes(bodyJson?.mode)) {
+        mode = bodyJson.mode;
+      }
+      if (bodyJson?.count !== undefined) {
+        count = Math.floor(Number(bodyJson.count) || 0);
+      }
+      if (Array.isArray(bodyJson?.existingDescriptions)) {
+        existingDescriptions = bodyJson.existingDescriptions
+          .slice(0, 30)
+          .map((d) => sanitizePromptInput(d, 180))
+          .filter(Boolean);
+      }
+      if (Array.isArray(bodyJson?.existingMissionTitles)) {
+        existingMissionTitles = bodyJson.existingMissionTitles
+          .slice(0, 30)
+          .map((t) => sanitizePromptInput(t, 160))
+          .filter(Boolean);
+      }
     }
 
     if (admin && (mode === 'shop' || mode === 'both') && existingDescriptions.length === 0) {

@@ -548,15 +548,15 @@ export function TabletopMusicPanel() {
   const visual = getCategoryVisual(currentTrack?.category);
   const CategoryIcon = visual.Icon;
 
-  const handleSelectAudioFile = (e) => {
+  const handleSelectAudioFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('audio/')) {
-      toast.error('Selecione um arquivo de áudio válido (MP3, OGG, WAV, WebM, M4A).');
-      return;
-    }
-    if (file.size > 8.2 * 1024 * 1024) {
-      toast.error('Arquivo excede 8 MB. Para trilhas longas, cole o link do YouTube ou URL direta.');
+    try {
+      const { MAX_AUDIO_UPLOAD_BYTES, validateSafeAudioFile } = await import('../../lib/upload-security');
+      await validateSafeAudioFile(file, { maxBytes: MAX_AUDIO_UPLOAD_BYTES });
+    } catch (secErr) {
+      toast.error(secErr?.message || 'Arquivo de áudio inválido ou bloqueado por segurança.');
+      if (audioFileInputRef.current) audioFileInputRef.current.value = '';
       return;
     }
 

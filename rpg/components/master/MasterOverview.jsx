@@ -51,6 +51,8 @@ export function MasterOverview({
   players,
   shopItems,
   requests,
+  npcs = [],
+  maps = [],
   onResolveContract,
   onResolveRequest,
   onNavigate,
@@ -147,14 +149,21 @@ export function MasterOverview({
       </section>
 
       {/* Atalhos Rápidos da Mesa Narrativa */}
-      <section aria-label="Ações rápidas da sessão" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <section aria-label="Ações rápidas da sessão" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {[
           {
             label: 'Abrir Mesa Tática',
-            desc: 'Mapas, clima, tochas e combate',
+            desc: maps.length > 0 ? `${maps.length} mapa(s) prontos na mesa` : 'Mapas, névoa, clima e combate',
             Icon: GiTreasureMap,
             color: '#38bdf8',
             onClick: () => onNavigate('maps'),
+          },
+          {
+            label: 'Gerador de NPCs',
+            desc: npcs.length > 0 ? `${npcs.length} NPC(s) na história` : 'Criar personagens e notas da campanha',
+            Icon: GiHoodedFigure,
+            color: '#f472b6',
+            onClick: () => onNavigate('npcs'),
           },
           {
             label: 'Projetar Handout',

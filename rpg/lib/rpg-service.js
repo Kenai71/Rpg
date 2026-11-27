@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -29,6 +30,7 @@ import {
   normalizeFogOfWar,
   normalizeFogOp,
 } from './map-fog';
+import { sanitizeMediaUrl } from './upload-security';
 
 function requireDb() {
   if (!db) {
@@ -183,7 +185,11 @@ export async function updateHeroProfile(uid, { username, photoURL } = {}) {
     if (!photoURL || !String(photoURL).trim()) {
       cleanPhoto = null;
     } else {
-      cleanPhoto = String(photoURL).trim();
+      const sanitized = sanitizeMediaUrl(String(photoURL).trim());
+      if (!sanitized) {
+        throw new Error('URL de foto de perfil inválida ou bloqueada por segurança.');
+      }
+      cleanPhoto = sanitized;
       if (cleanPhoto.length > 95000) {
         throw new Error('A imagem escolhida é muito grande. Tente uma imagem menor.');
       }
@@ -1119,6 +1125,32 @@ function decodeBase64ChunksToBlobUrl(chunkStrings, mimeType = 'image/webp') {
   return URL.createObjectURL(blob);
 }
 
+/**
+ * Converte uma string Base64 única (ex: trilha de áudio em chunks) em Blob URL segura em memória.
+ */
+function base64ToBlobUrl(base64Body, mimeType = 'audio/mpeg') {
+  if (typeof base64Body !== 'string' || base64Body.length === 0) return null;
+  return decodeBase64ChunksToBlobUrl([base64Body], mimeType);
+}
+
+/**
+ * Executa qualquer volume de operações em lotes seguros de no máximo 400 escritas
+ * (respeitando o limite rígido de 500 operações/batch do Cloud Firestore).
+ */
+async function commitChunkedBatchOps(firestore, ops = [], chunkSize = 400) {
+  if (!Array.isArray(ops) || ops.length === 0) return;
+  for (let i = 0; i < ops.length; i += chunkSize) {
+    const batch = writeBatch(firestore);
+    const slice = ops.slice(i, i + chunkSize);
+    slice.forEach((op) => {
+      if (op.type === 'delete') batch.delete(op.ref);
+      else if (op.type === 'set') batch.set(op.ref, op.data, op.options || undefined);
+      else if (op.type === 'update') batch.update(op.ref, op.data);
+    });
+    await batch.commit();
+  }
+}
+
 async function writeChunkWithRetry(chunkRef, payload, maxAttempts = 3) {
   let lastErr = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1392,6 +1424,139 @@ export async function updateMap(mapId, updates) {
 /**
  * Adiciona operações à Névoa de Guerra Manual de forma atômica (runTransaction),
  * evitando sobrescrita quando múltiplos jogadores exploram o mapa simultaneamente.
+/**
+ * Assina os documentos de exploração individual de Névoa de Guerra (`maps/{mapId}/player_fog/{uid}`).
+ * - Mestre ouve todos os jogadores do mapa.
+ * - Jogador ouve EXCLUSIVAMENTE o próprio documento `{uid}` (privacidade total + mínimo de leituras).
+ */
+export function subscribePlayerFog(mapId, isMaster, currentUserId, onData, onError) {
+  if (!mapId) {
+    onData?.([]);
+    return () => {};
+  }
+  const firestore = requireDb();
+
+  if (isMaster) {
+    const colRef = collection(firestore, 'maps', String(mapId), 'player_fog');
+    return onSnapshot(
+      colRef,
+      (snap) => {
+        const docs = snap.docs.map((d) => ({ id: d.id, uid: d.id, ...d.data() }));
+        onData?.(docs);
+      },
+      (err) => {
+        if (isPermissionDeniedError(err)) {
+          onData?.([]);
+          return;
+        }
+        onError?.(err);
+      }
+    );
+  }
+
+  if (!currentUserId) {
+    onData?.([]);
+    return () => {};
+  }
+
+  const docRef = doc(firestore, 'maps', String(mapId), 'player_fog', String(currentUserId));
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (!snap.exists()) {
+        onData?.([]);
+        return;
+      }
+      onData?.([{ id: snap.id, uid: snap.id, ...snap.data() }]);
+    },
+    (err) => {
+      if (isPermissionDeniedError(err)) {
+        onData?.([]);
+        return;
+      }
+      onError?.(err);
+    }
+  );
+}
+
+/**
+ * Grava operações de descoberta de Névoa de Guerra no documento dedicado do jogador
+ * (`maps/{mapId}/player_fog/{uid}`) via transação isolada — zero contenção em `maps/{mapId}`
+ * mesmo com dezenas de jogadores explorando simultaneamente e zero risco de estourar 1 MiB.
+ */
+export async function appendPlayerFogOpsTx(
+  mapId,
+  playerUid,
+  newOps = [],
+  { requireEnabled = true, resetVersion = null } = {}
+) {
+  if (!mapId || !playerUid || !Array.isArray(newOps) || newOps.length === 0) return false;
+  const firestore = requireDb();
+  const safeMapId = String(mapId).slice(0, 128);
+  const safeUid = String(playerUid).slice(0, 128);
+  const mapRef = doc(firestore, 'maps', safeMapId);
+  const playerFogRef = doc(firestore, 'maps', safeMapId, 'player_fog', safeUid);
+
+  let targetVersion =
+    typeof resetVersion === 'number' && Number.isFinite(resetVersion)
+      ? Math.max(0, Math.floor(resetVersion))
+      : null;
+
+  if (requireEnabled || targetVersion === null) {
+    try {
+      const mapSnap = await getDoc(mapRef);
+      if (!mapSnap.exists()) return false;
+      const mapFog = normalizeFogOfWar(mapSnap.data()?.fog_of_war);
+      if (requireEnabled && !mapFog.enabled) return false;
+      targetVersion = mapFog.resetVersion;
+    } catch {
+      return false;
+    }
+  }
+
+  const PLAYER_FOG_MAX_OPS = 220;
+  let updated = false;
+
+  try {
+    await runTransaction(firestore, async (tx) => {
+      const snap = await tx.get(playerFogRef);
+      const existingData = snap.exists() ? snap.data() : null;
+      const sameVersion =
+        existingData && Math.floor(Number(existingData.resetVersion) || 0) === targetVersion;
+      const baseOps = sameVersion && Array.isArray(existingData.ops) ? existingData.ops : [];
+      const existingIds = new Set(baseOps.map((o) => o?.id).filter(Boolean));
+
+      const nowMs = Date.now();
+      const validNew = newOps
+        .map((raw, i) =>
+          normalizeFogOp({ ...raw, viewerUid: safeUid, ts: raw?.ts || nowMs }, baseOps.length + i)
+        )
+        .filter((op) => op && !existingIds.has(op.id));
+      if (validNew.length === 0) return;
+
+      const mergedOps = [...baseOps, ...validNew].slice(-PLAYER_FOG_MAX_OPS);
+      tx.set(playerFogRef, {
+        uid: safeUid,
+        map_id: safeMapId,
+        resetVersion: targetVersion,
+        ops: mergedOps,
+        updatedAt: serverTimestamp(),
+      });
+      updated = true;
+    });
+  } catch (err) {
+    // Fallback compatível caso firestore.rules antigas ainda não tenham `player_fog` publicado
+    if (isPermissionDeniedError(err)) {
+      return appendMapFogOpsTx(safeMapId, newOps, { requireEnabled });
+    }
+    throw err;
+  }
+
+  return updated;
+}
+
+/**
+ * Adiciona operações à Névoa de Guerra Manual de forma atômica (runTransaction).
  */
 export async function appendMapFogOpsTx(mapId, newOps = [], { requireEnabled = true } = {}) {
   if (!mapId || !Array.isArray(newOps) || newOps.length === 0) return false;
@@ -1407,8 +1572,9 @@ export async function appendMapFogOpsTx(mapId, newOps = [], { requireEnabled = t
     if (requireEnabled && !currentFog.enabled) return;
 
     const existingIds = new Set(currentFog.ops.map((o) => o.id));
+    const nowMs = Date.now();
     const validNew = newOps
-      .map((raw, i) => normalizeFogOp(raw, currentFog.ops.length + i))
+      .map((raw, i) => normalizeFogOp({ ...raw, ts: raw?.ts || nowMs }, currentFog.ops.length + i))
       .filter((op) => op && !existingIds.has(op.id));
     if (validNew.length === 0) return;
 
@@ -1429,17 +1595,15 @@ export async function appendMapFogOpsTx(mapId, newOps = [], { requireEnabled = t
 export async function setActiveMapTx(activeMapId) {
   const firestore = requireDb();
   const mapsSnap = await getDocs(collection(firestore, 'maps'));
-  const batch = writeBatch(firestore);
-
-  mapsSnap.forEach((d) => {
-    const isTarget = d.id === activeMapId;
-    batch.update(d.ref, {
-      is_active: isTarget,
+  const ops = mapsSnap.docs.map((d) => ({
+    type: 'update',
+    ref: d.ref,
+    data: {
+      is_active: d.id === activeMapId,
       updatedAt: serverTimestamp(),
-    });
-  });
-
-  await batch.commit();
+    },
+  }));
+  await commitChunkedBatchOps(firestore, ops);
 }
 
 export async function deleteMapWithTokens(mapId) {
@@ -1455,6 +1619,17 @@ export async function deleteMapWithTokens(mapId) {
         const slice = docs.slice(i, i + 5);
         await Promise.all(slice.map((c) => deleteDoc(c.ref).catch(() => {})));
       }
+    }
+  } catch {}
+
+  // Remove documentos de exploração individual de névoa associados ao mapa
+  try {
+    const fogSnap = await getDocs(collection(firestore, 'maps', mapId, 'player_fog'));
+    if (!fogSnap.empty) {
+      await commitChunkedBatchOps(
+        firestore,
+        fogSnap.docs.map((d) => ({ type: 'delete', ref: d.ref }))
+      );
     }
   } catch {}
 
@@ -1475,16 +1650,16 @@ export async function deleteMapWithTokens(mapId) {
     await clearMapDrawings(mapId);
   } catch {}
 
-  const batch = writeBatch(firestore);
+  const ops = [];
 
   // Deleta tokens associados
   const tokensSnap = await getDocs(
     query(collection(firestore, 'map_tokens'), where('map_id', '==', mapId))
   );
-  tokensSnap.forEach((t) => batch.delete(t.ref));
+  tokensSnap.forEach((t) => ops.push({ type: 'delete', ref: t.ref }));
 
   // Deleta o mapa
-  batch.delete(doc(firestore, 'maps', mapId));
+  ops.push({ type: 'delete', ref: doc(firestore, 'maps', mapId) });
 
   // Se o mapa era ativo, checa se há outro mapa para promover a ativo
   const allMapsSnap = await getDocs(collection(firestore, 'maps'));
@@ -1492,10 +1667,14 @@ export async function deleteMapWithTokens(mapId) {
   const deletedWasActive = allMapsSnap.docs.some((d) => d.id === mapId && d.data()?.is_active);
 
   if (deletedWasActive && otherMaps.length > 0) {
-    batch.update(otherMaps[0].ref, { is_active: true, updatedAt: serverTimestamp() });
+    ops.push({
+      type: 'update',
+      ref: otherMaps[0].ref,
+      data: { is_active: true, updatedAt: serverTimestamp() },
+    });
   }
 
-  await batch.commit();
+  await commitChunkedBatchOps(firestore, ops);
 }
 
 export function getTokenSyncGroupId(token) {
@@ -1580,8 +1759,10 @@ export async function createMapToken(data) {
   if (type === 'player') {
     const playerUid = data.owner_id || data.character_id;
     const spawnOp = buildPlayerSpawnFogOp(playerUid, finalX, finalY);
-    if (spawnOp) {
-      appendMapFogOpsTx(String(data.map_id), [spawnOp], { requireEnabled: true }).catch(() => {});
+    if (spawnOp && playerUid) {
+      appendPlayerFogOpsTx(String(data.map_id), playerUid, [spawnOp], { requireEnabled: true }).catch(
+        () => {}
+      );
     }
   }
 
@@ -1852,7 +2033,15 @@ export async function syncTokensToMap(targetMapId, selectedItems = [], existingM
   }
   // Assim que jogadores são inseridos no mapa com névoa ativa, descobrem um pequeno círculo ao redor de si
   if (playerSpawnFogOps.length > 0) {
-    await appendMapFogOpsTx(targetMapId, playerSpawnFogOps, { requireEnabled: true }).catch(() => {});
+    await Promise.all(
+      playerSpawnFogOps.map((op) =>
+        op?.viewerUid
+          ? appendPlayerFogOpsTx(targetMapId, op.viewerUid, [op], { requireEnabled: true }).catch(
+              () => {}
+            )
+          : Promise.resolve()
+      )
+    );
   }
   return addedCount;
 }
@@ -1996,9 +2185,11 @@ export async function broadcastMapDiceRoll({
   // Usa map_pings (coleção já autorizada no Firestore em produção para Mestre e Jogadores)
   const docRef = await addDoc(collection(firestore, 'map_pings'), rollPayload);
 
-  // Limite estrito das últimas 15 rolagens de dados: apaga a 15ª mais antiga ao entrar uma nova
+  // Limite estrito das últimas 15 rolagens de dados: consulta limitada (60 docs) e deleção tolerante a permissões
   try {
-    const snap = await getDocs(collection(firestore, 'map_pings'));
+    const snap = await getDocs(
+      query(collection(firestore, 'map_pings'), orderBy('createdAt', 'desc'), limit(60))
+    );
     const getDocTime = (d) => {
       const data = d.data();
       if (data?.createdAt?.toMillis) return data.createdAt.toMillis();
@@ -2007,19 +2198,25 @@ export async function broadcastMapDiceRoll({
       return nowMs;
     };
 
+    const isMasterActor = user_role === 'master';
+    const canDeleteDoc = (d) => isMasterActor || d.data()?.user_id === String(user_id || '');
+
     const rollDocs = snap.docs.filter(
       (d) => d.data()?.event_type === 'dice_roll' || d.data()?.roll !== undefined
     );
     if (rollDocs.length > 15) {
       const sortedRolls = [...rollDocs].sort((a, b) => getDocTime(b) - getDocTime(a));
-      const excessRolls = sortedRolls.slice(15);
+      const excessRolls = sortedRolls.slice(15).filter(canDeleteDoc);
       await Promise.all(
-        excessRolls.map((oldDoc) => deleteDoc(doc(firestore, 'map_pings', oldDoc.id)))
+        excessRolls.map((oldDoc) =>
+          deleteDoc(doc(firestore, 'map_pings', oldDoc.id)).catch(() => {})
+        )
       );
     }
 
     // Limpa também pings de radar expirados (> 30s) para manter a coleção enxuta
     const expiredPings = snap.docs.filter((d) => {
+      if (!canDeleteDoc(d)) return false;
       const data = d.data();
       if (data?.event_type === 'dice_roll' || data?.roll !== undefined) return false;
       const t = getDocTime(d);
@@ -2027,7 +2224,9 @@ export async function broadcastMapDiceRoll({
     });
     if (expiredPings.length > 0) {
       await Promise.all(
-        expiredPings.map((oldPing) => deleteDoc(doc(firestore, 'map_pings', oldPing.id)))
+        expiredPings.map((oldPing) =>
+          deleteDoc(doc(firestore, 'map_pings', oldPing.id)).catch(() => {})
+        )
       );
     }
   } catch (cleanupErr) {
@@ -3619,7 +3818,11 @@ export function subscribeMapDrawings(mapId, onData, onError) {
     return () => {};
   }
   const firestore = requireDb();
-  const q = query(collection(firestore, 'map_drawings'), where('map_id', '==', String(mapId)));
+  const q = query(
+    collection(firestore, 'map_drawings'),
+    where('map_id', '==', String(mapId)),
+    limit(250)
+  );
 
   return onSnapshot(
     q,
@@ -3775,9 +3978,9 @@ function sanitizeNpcPayload(data = {}, isCreate = false) {
 
 export function subscribeNpcs(onData, onError) {
   const firestore = requireDb();
-  const colRef = collection(firestore, 'npcs');
+  const q = query(collection(firestore, 'npcs'), limit(250));
   return onSnapshot(
-    colRef,
+    q,
     (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       list.sort((a, b) => {
@@ -3829,8 +4032,9 @@ export async function removeNpcTokensFromMap(npcId, mapId = null) {
     : snap.docs;
   if (targets.length === 0) return 0;
 
-  const batch = writeBatch(firestore);
-  targets.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
+  await commitChunkedBatchOps(
+    firestore,
+    targets.map((d) => ({ type: 'delete', ref: d.ref }))
+  );
   return targets.length;
 }

@@ -1,5 +1,11 @@
 'use client';
 
+import {
+  MAX_MAP_UPLOAD_BYTES,
+  validateSafeImageDimensions,
+  validateSafeImageFile,
+} from './upload-security';
+
 /**
  * Processador Resiliente de Imagens de Mapas Táticos (Suporte a Mapas Gigantes: 4K, 8K, 16K+ e 50MB+)
  *
@@ -419,6 +425,9 @@ export async function processHugeMapImage(file, onProgress = null) {
     throw new Error('Selecione um arquivo de imagem válido (PNG, JPG, WebP ou AVIF).');
   }
 
+  // Validação de assinatura binária (bloqueia Zip Bombs, SVG/XSS, HTML e executáveis disfarçados)
+  await validateSafeImageFile(file, { maxBytes: MAX_MAP_UPLOAD_BYTES });
+
   const baseName = (file.name || 'Mapa Tático').replace(/\.[^/.]+$/, '');
   const bestMime = detectWebPSupport() ? 'image/webp' : 'image/jpeg';
   const mobile = isLikelyMobileDevice();
@@ -432,13 +441,22 @@ export async function processHugeMapImage(file, onProgress = null) {
   let origW = 0;
   let origH = 0;
 
-  // 1. Tenta ler dimensões direto do cabeçalho binário (0 MB de RAM decodificada — ideal para mapas de 16K–30K+ px!)
+  // 1. Tenta ler dimensões direto do cabeçalho binário (0 MB de RAM decodificada — bloqueia Pixel Flood / Image Bomb ANTES de decodificar!)
   const headerDims = await readImageDimensionsFromHeader(file);
   if (headerDims) {
+    const dimCheck = validateSafeImageDimensions(headerDims.width, headerDims.height, file.size);
+    if (!dimCheck.ok) {
+      throw new Error(dimCheck.reason);
+    }
     origW = headerDims.width;
     origH = headerDims.height;
   } else {
     const probed = await probeFileDimensions(file);
+    const dimCheck = validateSafeImageDimensions(probed.width, probed.height, file.size);
+    if (!dimCheck.ok) {
+      URL.revokeObjectURL(probed.objectUrl);
+      throw new Error(dimCheck.reason);
+    }
     img = probed.img;
     objectUrl = probed.objectUrl;
     origW = probed.width;

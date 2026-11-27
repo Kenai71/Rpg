@@ -1,0 +1,61 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "map_tokens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "map_id", "order": "ASCENDING" },
+        { "fieldPath": "initiative", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "map_drawings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "map_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "missions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trade_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "receiver_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trade_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sender_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "table_whispers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "target_uid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "audio_chunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "track_id", "order": "ASCENDING" },
+        { "fieldPath": "index", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

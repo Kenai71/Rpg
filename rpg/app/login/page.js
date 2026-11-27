@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   updateProfile,
@@ -116,6 +117,7 @@ export default function LoginPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [authError, setAuthError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [helpModalOpen, setHelpModalOpen] = useState(false);
 
   const isLogin = mode === 'login';
@@ -123,6 +125,7 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
+    getValues,
     reset,
     formState: { errors, isSubmitting },
   } = useForm({
@@ -175,6 +178,25 @@ export default function LoginPage() {
       toast.error(message);
     } finally {
       setGoogleLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!isFirebaseConfigured || !auth) return;
+    const emailVal = String(getValues('email') || '').trim();
+    if (!emailVal || !emailVal.includes('@')) {
+      setAuthError('Informe seu e-mail no campo acima para receber o link de redefinição de senha.');
+      return;
+    }
+    setAuthError('');
+    setResettingPassword(true);
+    try {
+      await sendPasswordResetEmail(auth, emailVal);
+      toast.success('Se existir uma conta com este e-mail, enviamos o link para redefinir sua senha.');
+    } catch (err) {
+      setAuthError(mapFirebaseAuthError(err));
+    } finally {
+      setResettingPassword(false);
     }
   };
 
@@ -238,7 +260,7 @@ export default function LoginPage() {
       <div className="relative z-10 flex min-h-screen flex-col md:landscape:flex-row">
         {/* LADO VISUAL: Cena Interativa 3D do Dado de 20 Lados (D20) */}
         <section
-          className="w-full md:landscape:w-[50%] lg:w-[54%] xl:w-[58%] flex items-center justify-center p-3 lg:p-6 xl:p-8 relative min-h-[320px] md:landscape:min-h-screen"
+          className="w-full md:landscape:w-[50%] lg:w-[54%] xl:w-[58%] flex items-center justify-center p-2 sm:p-4 lg:p-6 xl:p-8 relative min-h-[210px] sm:min-h-[250px] md:landscape:min-h-screen"
           aria-label="Cena Interativa do Vallen RPG"
         >
           <InteractiveD20Scene className="w-full h-full max-w-2xl mx-auto" />
@@ -246,7 +268,7 @@ export default function LoginPage() {
 
         {/* LADO DE AUTENTICAÇÃO: Posicionado um pouco mais para a esquerda na coluna */}
         <section
-          className="relative flex min-h-screen w-full flex-col justify-between p-4 sm:p-6 xl:p-10 md:landscape:w-[50%] lg:w-[46%] xl:w-[42%] overflow-y-auto"
+          className="relative flex flex-1 md:landscape:min-h-screen w-full flex-col justify-between p-4 sm:p-6 xl:p-10 md:landscape:w-[50%] lg:w-[46%] xl:w-[42%] overflow-y-auto"
           aria-label="Formulário de Entrada"
         >
           {/* Top Header: Logo do Dado de 20 Lados (Branco Meio Cinza) */}
@@ -416,6 +438,19 @@ export default function LoginPage() {
                       </button>
                     </div>
                   </FormField>
+
+                  {isLogin && (
+                    <div className="flex justify-end -mt-1">
+                      <button
+                        type="button"
+                        disabled={resettingPassword}
+                        onClick={handleForgotPassword}
+                        className="text-[11px] font-medium text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+                      >
+                        {resettingPassword ? 'Enviando link...' : 'Esqueci minha senha'}
+                      </button>
+                    </div>
+                  )}
 
                   {!isLogin && (
                     <FormField

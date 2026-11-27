@@ -25,6 +25,12 @@ import { toast } from 'sonner';
 import Logo from '../../app/components/Logo';
 import { getRankMeta, getXpProgress } from '../../lib/constants';
 import { updateHeroProfile } from '../../lib/rpg-service';
+import {
+  MAX_AVATAR_UPLOAD_BYTES,
+  sanitizeMediaUrl,
+  validateSafeImageDimensions,
+  validateSafeImageFile,
+} from '../../lib/upload-security';
 import { cn, formatNumber } from '../../lib/utils';
 import { Badge, RankBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -36,19 +42,22 @@ import { TabletopMusicTriggerButton } from '../music/TabletopMusicWidget';
 import { PlayerImmersionBar } from '../tabletop/TabletopImmersionModals';
 
 // Comprime e recorta (quadrado central) a imagem de perfil em formato circular-ready (< 75 KB)
-function compressAvatarFile(file) {
+// com proteção contra Zip Bomb, SVG/XSS e Image Decompression Bomb.
+async function compressAvatarFile(file) {
+  await validateSafeImageFile(file, { maxBytes: MAX_AVATAR_UPLOAD_BYTES });
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('image/')) {
-      reject(new Error('Selecione um arquivo de imagem válido (PNG, JPG ou WebP).'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        const size = 256;
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
         const srcW = img.naturalWidth || img.width;
         const srcH = img.naturalHeight || img.height;
+        const dimCheck = validateSafeImageDimensions(srcW, srcH, file.size);
+        if (!dimCheck.ok) {
+          reject(new Error(dimCheck.reason));
+          return;
+        }
+        const size = 256;
         const minSide = Math.min(srcW, srcH);
         const sx = Math.floor((srcW - minSide) / 2);
         const sy = Math.floor((srcH - minSide) / 2);
@@ -70,13 +79,20 @@ function compressAvatarFile(file) {
             ? canvas.toDataURL('image/webp', quality)
             : canvas.toDataURL('image/jpeg', quality);
         }
+        canvas.width = 0;
+        canvas.height = 0;
         resolve(dataUrl);
-      };
-      img.onerror = () => reject(new Error('Falha ao processar a imagem selecionada.'));
-      img.src = ev.target.result;
+      } catch {
+        reject(new Error('Falha ao processar a imagem selecionada.'));
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-    reader.onerror = () => reject(new Error('Não foi possível ler o arquivo de imagem.'));
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Falha ao processar a imagem selecionada.'));
+    };
+    img.src = objectUrl;
   });
 }
 
@@ -148,9 +164,16 @@ export function PlayerShell({
     }
     setRenaming(true);
     try {
+      const trimmedPhoto = newPhotoURL ? newPhotoURL.trim() : '';
+      const safePhoto = trimmedPhoto ? sanitizeMediaUrl(trimmedPhoto) : null;
+      if (trimmedPhoto && !safePhoto) {
+        toast.error('URL de imagem inválida ou bloqueada por segurança. Use HTTPS ou envie uma imagem.');
+        setRenaming(false);
+        return;
+      }
       await updateHeroProfile(profile.uid, {
         username: newName,
-        photoURL: newPhotoURL ? newPhotoURL.trim() : null,
+        photoURL: safePhoto,
       });
       toast.success('Perfil do personagem atualizado!');
       setRenameOpen(false);
@@ -374,7 +397,7 @@ export function PlayerShell({
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navegação Mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--border-subtle)] bg-[var(--surface-1)]/95 backdrop-blur-xl px-1.5 py-1.5 grid grid-cols-5 gap-1"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--border-subtle)] bg-[var(--surface-1)]/95 backdrop-blur-xl px-1.5 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] grid grid-cols-5 gap-1"
       >
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -387,17 +410,17 @@ export function PlayerShell({
               onClick={() => onSelectTab(t.id)}
               aria-current={active ? 'page' : undefined}
               className={cn(
-                'flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-semibold transition-colors relative',
-                active ? 'text-white bg-white/10' : 'text-slate-400'
+                'flex flex-col items-center justify-center gap-0.5 py-1.5 min-h-[44px] rounded-xl text-[10px] sm:text-[11px] font-semibold transition-colors relative touch-manipulation',
+                active ? 'text-white bg-white/10' : 'text-slate-400 hover:text-slate-200'
               )}
             >
               <Icon
-                className="h-4 w-4 text-slate-300"
+                className="h-4 w-4 text-slate-300 shrink-0"
                 aria-hidden="true"
               />
-              <span>{t.label}</span>
+              <span className="truncate max-w-full px-0.5">{t.label}</span>
               {showBadge && (
-                <span className="absolute top-1 right-4 h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="absolute top-1 right-3 h-2 w-2 rounded-full bg-emerald-400" />
               )}
             </button>
           );

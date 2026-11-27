@@ -8,7 +8,8 @@ export const DEFAULT_FOG_OF_WAR = {
   enabled: false,
   defaultCovered: true, // true = mapa começa coberto e Mestre revela sala por sala
   masterOpacity: 0.52,  // Translucidez vista pelo Mestre (jogadores veem 100% opaco)
-  ops: [],              // [{ id, action: 'reveal'|'hide', shape: 'rect'|'brush', x, y, w, h, r, points }]
+  resetVersion: 0,      // Incrementado ao clicar "Cobrir Tudo" / "Revelar Tudo" para invalidar explorações antigas
+  ops: [],              // [{ id, action: 'reveal'|'hide', shape: 'rect'|'brush', x, y, w, h, r, points, ts }]
 };
 
 export const MAX_FOG_OPS = 300;
@@ -45,6 +46,8 @@ export function normalizeFogOp(raw, idx = 0) {
     typeof raw.viewerUid === 'string' && raw.viewerUid.trim()
       ? raw.viewerUid.trim().slice(0, 128)
       : null;
+  const tsRaw = Number(raw.ts);
+  const ts = Number.isFinite(tsRaw) && tsRaw > 0 ? Math.floor(tsRaw) : 0;
 
   if (shape === 'rect') {
     const x = clampPct(raw.x);
@@ -59,6 +62,7 @@ export function normalizeFogOp(raw, idx = 0) {
       y,
       w,
       h,
+      ...(ts ? { ts } : {}),
       ...(viewerUid ? { viewerUid } : {}),
     };
   }
@@ -85,6 +89,7 @@ export function normalizeFogOp(raw, idx = 0) {
     shape: 'brush',
     r,
     points,
+    ...(ts ? { ts } : {}),
     ...(viewerUid ? { viewerUid } : {}),
   };
 }
@@ -99,13 +104,75 @@ export function buildPlayerSpawnFogOp(playerUid, x, y, radius = PLAYER_FOG_SPAWN
       ? playerUid.trim().slice(0, 128)
       : null;
   if (!uid) return null;
+  const nowMs = Date.now();
   return {
-    id: `pspawn_${uid.slice(0, 8)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `pspawn_${uid.slice(0, 8)}_${nowMs}_${Math.random().toString(36).slice(2, 6)}`,
     action: 'reveal',
     shape: 'brush',
     r: Math.max(1, Math.min(30, Number(radius) || PLAYER_FOG_SPAWN_RADIUS)),
     points: [{ x: clampPct(x), y: clampPct(y) }],
+    ts: nowMs,
     viewerUid: uid,
+  };
+}
+
+/**
+ * Mescla a Névoa de Guerra global do Mestre (`maps/{id}.fog_of_war`) com os documentos
+ * individuais escaláveis de exploração dos jogadores (`maps/{id}/player_fog/{uid}`),
+ * preservando a ordem cronológica exata via timestamp `ts` e respeitando `resetVersion`.
+ */
+export function mergeFogWithPlayerDocs(rawMapFog, playerFogDocs = []) {
+  const baseFog = normalizeFogOfWar(rawMapFog);
+  if (!Array.isArray(playerFogDocs) || playerFogDocs.length === 0) {
+    return baseFog;
+  }
+
+  const expectedVersion = baseFog.resetVersion;
+  const seenIds = new Set(baseFog.ops.map((o) => o.id));
+  const tagged = baseFog.ops.map((op, order) => ({
+    op,
+    ts: Number(op.ts) || 0,
+    order,
+  }));
+
+  let seq = tagged.length;
+  playerFogDocs.forEach((docData) => {
+    if (!docData || typeof docData !== 'object') return;
+    const docVersion = Math.max(0, Math.floor(Number(docData.resetVersion) || 0));
+    if (docVersion !== expectedVersion) return;
+
+    const uid =
+      typeof docData.uid === 'string' && docData.uid.trim()
+        ? docData.uid.trim().slice(0, 128)
+        : typeof docData.id === 'string' && docData.id.trim()
+        ? docData.id.trim().slice(0, 128)
+        : null;
+    if (!uid || !Array.isArray(docData.ops)) return;
+
+    docData.ops.forEach((rawOp, idx) => {
+      const normalized = normalizeFogOp({ ...rawOp, viewerUid: uid }, idx);
+      if (!normalized || seenIds.has(normalized.id)) return;
+      seenIds.add(normalized.id);
+      tagged.push({
+        op: normalized,
+        ts: Number(normalized.ts) || 0,
+        order: seq,
+      });
+      seq += 1;
+    });
+  });
+
+  // Ordenação estável por timestamp (se ambos têm ts > 0) preservando ordem relativa quando ts = 0
+  tagged.sort((a, b) => {
+    if (a.ts > 0 && b.ts > 0 && a.ts !== b.ts) {
+      return a.ts - b.ts;
+    }
+    return a.order - b.order;
+  });
+
+  return {
+    ...baseFog,
+    ops: tagged.map((entry) => entry.op),
   };
 }
 
@@ -143,10 +210,17 @@ export function normalizeFogOfWar(raw) {
     ? Math.max(0.18, Math.min(0.85, Math.round(masterOpacityRaw * 100) / 100))
     : DEFAULT_FOG_OF_WAR.masterOpacity;
 
+  const resetVersionRaw = Number(raw.resetVersion);
+  const resetVersion =
+    Number.isFinite(resetVersionRaw) && resetVersionRaw >= 0
+      ? Math.min(2_000_000_000, Math.floor(resetVersionRaw))
+      : 0;
+
   return {
     enabled: Boolean(raw.enabled),
     defaultCovered: raw.defaultCovered === undefined ? true : Boolean(raw.defaultCovered),
     masterOpacity,
+    resetVersion,
     ops,
   };
 }

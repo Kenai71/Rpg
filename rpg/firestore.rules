@@ -95,20 +95,20 @@ service cloud.firestore {
     // Document ID: {mapId} (auto-generated)
     // Fields:
     //   - title: string (1..150 chars)
-    //   - imageUrl: string (<= 950000 chars)
+    //   - imageUrl: string (<= 950000 chars, safe media URL - rejects executable/XSS schemes)
     //   - naturalWidth: number (optional, 1..32768)
     //   - naturalHeight: number (optional, 1..32768)
     //   - hd_chunk_count: int (optional, 0..32 - number of HD image chunks in subcollection)
     //   - hd_mime_type: string | null (optional, 0..64 chars - MIME type for HD chunk reassembly)
     //   - gridType: string ('square' | 'hex' | 'none')
-    //   - gridSize: number (10..300)
+    //   - gridSize: number (10..500)
     //   - autoGrid: bool (optional)
     //   - gridOpacity: number (0..1)
     //   - scale: number (0.1..5.0)
     //   - is_active: bool
     //   - is_locked: bool
     //   - fog_enabled: bool (optional)
-    //   - fog_of_war: map | null (optional, size <= 20 - manual room-by-room Fog of War state: enabled, defaultCovered, masterOpacity, ops)
+    //   - fog_of_war: map | null (optional, size <= 20 - manual room-by-room Fog of War state: enabled, defaultCovered, masterOpacity, resetVersion, ops)
     //   - combat_active: bool (optional)
     //   - current_turn_token_id: string | null (optional, 0..128 chars)
     //   - turn_seq: int | null (optional, 0..2000000000 - monotonic turn-advance counter for reliable alerts)
@@ -124,6 +124,16 @@ service cloud.firestore {
     //   - index: int (0..32)
     //   - data: string (1..850000 chars - base64 HD image chunk payload)
     //   - createdAt: timestamp (optional)
+    //
+    // Subcollection: maps/{mapId}/player_fog
+    // Document ID: {uid} (Firebase Auth UID of the exploring player)
+    // Fields:
+    //   - uid: string (required, 1..128 chars, matches document ID {uid}, immutable)
+    //   - map_id: string (required, 1..128 chars, matches parent {mapId}, immutable)
+    //   - resetVersion: int | null (optional, 0..2000000000 - synced with map fog_of_war.resetVersion)
+    //   - ops: list (required, size <= 250 - zero-contention per-player Fog of War exploration reveal operations)
+    //   - createdAt: timestamp | null (optional)
+    //   - updatedAt: timestamp | null (optional)
     //
     // Collection: map_tokens
     // Document ID: {tokenId} (auto-generated)
@@ -161,14 +171,29 @@ service cloud.firestore {
     //   - updatedAt: timestamp (optional)
     //
     // Collection: map_pings
-    // Document ID: {pingId} (auto-generated)
+    // Document ID: {pingId} (auto-generated - real-time radar pings AND 3D dice roll broadcasts)
     // Fields:
     //   - map_id: string (1..128 chars)
-    //   - user_id: string (1..128 chars)
+    //   - user_id: string (1..128 chars, matches creator UID on create)
     //   - user_name: string | null (optional, 0..60 chars)
-    //   - x: number (0..100)
-    //   - y: number (0..100)
+    //   - x: number (optional, 0..100)
+    //   - y: number (optional, 0..100)
     //   - color: string | null (optional, 0..50 chars)
+    //   - event_type: string | null (optional, 0..32 chars, e.g. 'dice_roll')
+    //   - user_role: string | null (optional, 0..30 chars)
+    //   - sides: int | null (optional, 2..1000)
+    //   - count: int | null (optional, 1..20)
+    //   - results: list | null (optional, size <= 20)
+    //   - roll: int | null (optional, 1..20000)
+    //   - total: int | null (optional, 1..20000)
+    //   - formula: string | null (optional, 0..30 chars)
+    //   - max_hits: int | null (optional, 0..20)
+    //   - fumble_hits: int | null (optional, 0..20)
+    //   - all_max: bool | null (optional)
+    //   - seed: number | string | null (optional, string <= 128 chars)
+    //   - is_max: bool | null (optional)
+    //   - is_fumble: bool | null (optional)
+    //   - createdAtMs: number | null (optional, 0..9999999999999)
     //   - createdAt: timestamp (optional)
     //
     // Collection: map_rolls
@@ -324,6 +349,16 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
     // Check if the user is a Master (Admin).
     // Derives authority from Auth custom claims or the stored profiles/{uid} doc.
     function isMaster() {
@@ -343,6 +378,26 @@ service cloud.firestore {
     function isSafeOptionalString(data, field, minLen, maxLen) {
       return !(field in data) || data[field] == null ||
         (data[field] is string && data[field].size() >= minLen && data[field].size() <= maxLen);
+    }
+
+    // Rejects dangerous executable/XSS URL protocols (javascript:, vbscript:, file:,
+    // data:text/html, data:image/svg+xml, data:application/xhtml+xml, data:text/javascript).
+    // Evaluates an 80-char prefix for O(1) cost even on large base64 raster Data URLs.
+    function isSafeMediaUrlPrefix(head) {
+      return !head.matches('(?is)^\\s{16}.*') &&
+        !head.replace('[\\t\\r\\n]', '').matches(
+          '(?is)^\\s*(javascript:|vbscript:|file:|data:text/html|data:image/svg\\+xml|data:application/xhtml\\+xml|data:text/javascript).*'
+        );
+    }
+
+    function isSafeMediaUrl(val) {
+      return val is string &&
+        isSafeMediaUrlPrefix(val.size() > 80 ? val[0:80] : val);
+    }
+
+    function isSafeOptionalMediaUrl(data, field, maxLen) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is string && data[field].size() <= maxLen && (data[field].size() == 0 || isSafeMediaUrl(data[field])));
     }
 
     function isSafeInt(val, minVal, maxVal) {
@@ -386,18 +441,18 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidProfile(data, uid) {
-      return data.uid is string && data.uid == uid &&
-        isSafeString(data.username, 1, 60) &&
-        data.role in ['player', 'master'] &&
-        data.rank is string &&
-        isSafeInt(data.level, 1, 100) &&
-        isSafeInt(data.xp, 0, 2000000000) &&
-        isSafeInt(data.gold, 0, 2000000000) &&
-        isSafeInt(data.slots, 1, 200) &&
-        data.inventory is list && data.inventory.size() <= 200 &&
-        data.equipment is map &&
-        isSafeOptionalString(data, 'photoURL', 0, 120000) &&
-        isSafeOptionalString(data, 'avatar_data', 0, 120000) &&
+      return 'uid' in data && data.uid is string && data.uid == uid &&
+        'username' in data && isSafeString(data.username, 1, 60) &&
+        'role' in data && data.role in ['player', 'master'] &&
+        'rank' in data && isSafeString(data.rank, 1, 20) &&
+        'level' in data && isSafeInt(data.level, 1, 100) &&
+        'xp' in data && isSafeInt(data.xp, 0, 2000000000) &&
+        'gold' in data && isSafeInt(data.gold, 0, 2000000000) &&
+        'slots' in data && isSafeInt(data.slots, 1, 200) &&
+        'inventory' in data && data.inventory is list && data.inventory.size() <= 200 &&
+        'equipment' in data && data.equipment is map && data.equipment.size() <= 30 &&
+        isSafeOptionalMediaUrl(data, 'photoURL', 120000) &&
+        isSafeOptionalMediaUrl(data, 'avatar_data', 120000) &&
         isSafeOptionalString(data, 'party_id', 0, 128) &&
         isSafeOptionalTimestamp(data, 'createdAt') &&
         isSafeOptionalTimestamp(data, 'updatedAt');
@@ -464,14 +519,15 @@ service cloud.firestore {
     }
 
     function isValidMap(data) {
-      return data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
-        data.imageUrl is string && data.imageUrl.size() <= 950000 &&
-        data.is_active is bool &&
-        data.is_locked is bool &&
+      return 'title' in data && isSafeString(data.title, 1, 150) &&
+        'imageUrl' in data && data.imageUrl is string && data.imageUrl.size() <= 950000 &&
+        (data.imageUrl.size() == 0 || isSafeMediaUrl(data.imageUrl)) &&
+        'is_active' in data && data.is_active is bool &&
+        'is_locked' in data && data.is_locked is bool &&
         (!('gridType' in data) || data.gridType in ['square', 'hex', 'none']) &&
-        (!('gridSize' in data) || data.gridSize is int || data.gridSize is float) &&
-        (!('gridOpacity' in data) || data.gridOpacity is int || data.gridOpacity is float) &&
-        (!('scale' in data) || data.scale is int || data.scale is float) &&
+        isSafeOptionalNumber(data, 'gridSize', 10, 500) &&
+        isSafeOptionalNumber(data, 'gridOpacity', 0, 1) &&
+        isSafeOptionalNumber(data, 'scale', 0.1, 5.0) &&
         isSafeOptionalNumber(data, 'naturalWidth', 1, 32768) &&
         isSafeOptionalNumber(data, 'naturalHeight', 1, 32768) &&
         isSafeOptionalInt(data, 'hd_chunk_count', 0, 32) &&
@@ -485,6 +541,7 @@ service cloud.firestore {
             isSafeOptionalBool(data.fog_of_war, 'enabled') &&
             isSafeOptionalBool(data.fog_of_war, 'defaultCovered') &&
             isSafeOptionalNumber(data.fog_of_war, 'masterOpacity', 0, 100) &&
+            isSafeOptionalInt(data.fog_of_war, 'resetVersion', 0, 2000000000) &&
             isSafeOptionalList(data.fog_of_war, 'ops', 1000)
           )
         ) &&
@@ -504,20 +561,29 @@ service cloud.firestore {
         isSafeOptionalTimestamp(data, 'createdAt');
     }
 
+    function isValidPlayerFog(data, uid, mapId) {
+      return 'uid' in data && isSafeString(data.uid, 1, 128) && data.uid == uid &&
+        'map_id' in data && isSafeString(data.map_id, 1, 128) && data.map_id == mapId &&
+        isSafeOptionalInt(data, 'resetVersion', 0, 2000000000) &&
+        'ops' in data && data.ops is list && data.ops.size() <= 250 &&
+        isSafeOptionalTimestamp(data, 'createdAt') &&
+        isSafeOptionalTimestamp(data, 'updatedAt');
+    }
+
     function isValidMapToken(data) {
-      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
-        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
-        data.type in ['player', 'npc', 'monster'] &&
-        data.size in ['S', 'M', 'L', 'H', 'G'] &&
-        data.hp is int &&
-        data.max_hp is int &&
-        data.ac is int &&
-        (!('x' in data) || data.x is int || data.x is float) &&
-        (!('y' in data) || data.y is int || data.y is float) &&
+      return 'map_id' in data && isSafeString(data.map_id, 1, 128) &&
+        'name' in data && isSafeString(data.name, 1, 100) &&
+        'type' in data && data.type in ['player', 'npc', 'monster'] &&
+        'size' in data && data.size in ['S', 'M', 'L', 'H', 'G'] &&
+        'hp' in data && isSafeInt(data.hp, 0, 1000000) &&
+        'max_hp' in data && isSafeInt(data.max_hp, 1, 1000000) &&
+        'ac' in data && isSafeInt(data.ac, 0, 1000) &&
+        isSafeOptionalNumber(data, 'x', 0, 100) &&
+        isSafeOptionalNumber(data, 'y', 0, 100) &&
         isSafeOptionalString(data, 'character_id', 0, 128) &&
         isSafeOptionalString(data, 'owner_id', 0, 128) &&
         isSafeOptionalString(data, 'color', 0, 50) &&
-        isSafeOptionalString(data, 'avatar', 0, 100000) &&
+        isSafeOptionalMediaUrl(data, 'avatar', 100000) &&
         isSafeOptionalInt(data, 'mana', 0, 100000) &&
         isSafeOptionalInt(data, 'max_mana', 0, 100000) &&
         isSafeOptionalList(data, 'conditions', 20) &&
@@ -539,22 +605,37 @@ service cloud.firestore {
     }
 
     function isValidMapPing(data) {
-      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
-        data.user_id is string && data.user_id.size() >= 1 && data.user_id.size() <= 128 &&
-        (!('x' in data) || data.x is int || data.x is float) &&
-        (!('y' in data) || data.y is int || data.y is float) &&
+      return 'map_id' in data && isSafeString(data.map_id, 1, 128) &&
+        'user_id' in data && isSafeString(data.user_id, 1, 128) &&
+        isSafeOptionalNumber(data, 'x', 0, 100) &&
+        isSafeOptionalNumber(data, 'y', 0, 100) &&
         isSafeOptionalString(data, 'user_name', 0, 60) &&
         isSafeOptionalString(data, 'color', 0, 50) &&
+        isSafeOptionalString(data, 'event_type', 0, 32) &&
+        isSafeOptionalString(data, 'user_role', 0, 30) &&
+        isSafeOptionalInt(data, 'sides', 2, 1000) &&
+        isSafeOptionalInt(data, 'count', 1, 20) &&
+        isSafeOptionalList(data, 'results', 20) &&
+        isSafeOptionalInt(data, 'roll', 1, 20000) &&
+        isSafeOptionalInt(data, 'total', 1, 20000) &&
+        isSafeOptionalString(data, 'formula', 0, 30) &&
+        isSafeOptionalInt(data, 'max_hits', 0, 20) &&
+        isSafeOptionalInt(data, 'fumble_hits', 0, 20) &&
+        isSafeOptionalBool(data, 'all_max') &&
+        (!('seed' in data) || data.seed == null || data.seed is int || data.seed is float || isSafeString(data.seed, 0, 128)) &&
+        isSafeOptionalBool(data, 'is_max') &&
+        isSafeOptionalBool(data, 'is_fumble') &&
+        isSafeOptionalNumber(data, 'createdAtMs', 0, 9999999999999) &&
         isSafeOptionalTimestamp(data, 'createdAt');
     }
 
     function isValidMapRoll(data) {
-      return data.map_id is string && data.map_id.size() >= 1 && data.map_id.size() <= 128 &&
-        data.user_id is string && data.user_id.size() >= 1 && data.user_id.size() <= 128 &&
+      return 'map_id' in data && isSafeString(data.map_id, 1, 128) &&
+        'user_id' in data && isSafeString(data.user_id, 1, 128) &&
         isSafeOptionalString(data, 'user_name', 0, 60) &&
         isSafeOptionalString(data, 'user_role', 0, 30) &&
-        (!('sides' in data) || data.sides is int) &&
-        (!('roll' in data) || data.roll is int) &&
+        isSafeOptionalInt(data, 'sides', 2, 1000) &&
+        isSafeOptionalInt(data, 'roll', 1, 20000) &&
         isSafeOptionalInt(data, 'count', 1, 20) &&
         isSafeOptionalList(data, 'results', 20) &&
         isSafeOptionalInt(data, 'total', 1, 20000) &&
@@ -562,7 +643,7 @@ service cloud.firestore {
         isSafeOptionalInt(data, 'max_hits', 0, 20) &&
         isSafeOptionalInt(data, 'fumble_hits', 0, 20) &&
         isSafeOptionalBool(data, 'all_max') &&
-        (!('seed' in data) || data.seed == null || data.seed is int || data.seed is float || data.seed is string) &&
+        (!('seed' in data) || data.seed == null || data.seed is int || data.seed is float || isSafeString(data.seed, 0, 128)) &&
         isSafeOptionalBool(data, 'is_max') &&
         isSafeOptionalBool(data, 'is_fumble') &&
         isSafeOptionalTimestamp(data, 'createdAt');
@@ -606,7 +687,7 @@ service cloud.firestore {
       return 'title' in data && isSafeString(data.title, 1, 150) &&
         isSafeOptionalString(data, 'subtitle', 0, 120) &&
         isSafeOptionalString(data, 'content', 0, 8000) &&
-        isSafeOptionalString(data, 'imageUrl', 0, 850000) &&
+        isSafeOptionalMediaUrl(data, 'imageUrl', 850000) &&
         (!('style' in data) || data.style == null || data.style in ['parchment', 'image', 'combined']) &&
         isSafeOptionalBool(data, 'is_active') &&
         isSafeOptionalList(data, 'visible_to', 60) &&
@@ -865,39 +946,87 @@ service cloud.firestore {
     match /maps/{mapId} {
       allow read: if isAuthenticated();
 
-      allow create, update: if isAuthenticated() && isValidMap(request.resource.data);
+      allow create, update: if isMaster() && isValidMap(request.resource.data);
 
-      allow delete: if isAuthenticated();
+      allow delete: if isMaster();
 
       // HD Map Image Chunks (> 1 MiB original-resolution maps stored in ~720KB chunks)
       match /image_chunks/{chunkId} {
         allow read: if isAuthenticated();
 
-        allow create, update: if isAuthenticated() &&
+        allow create, update: if isMaster() &&
           isValidMapImageChunk(request.resource.data) &&
           request.resource.data.map_id == mapId;
 
-        allow delete: if isAuthenticated();
+        allow delete: if isMaster();
+      }
+
+      // Per-Player Fog of War Exploration State (zero-contention scalable per-player ops)
+      match /player_fog/{uid} {
+        allow read: if isOwner(uid) || isMaster();
+
+        allow create, update: if (isOwner(uid) || isMaster()) &&
+          isValidPlayerFog(request.resource.data, uid, mapId);
+
+        allow delete: if isMaster() || isOwner(uid);
       }
     }
 
     // Map Tokens (Heroes, Monsters, NPCs)
+    // Master has full CRUD; players may only update movement/profile sync fields on their own token
     match /map_tokens/{tokenId} {
       allow read: if isAuthenticated();
 
-      allow create, update: if isAuthenticated() && isValidMapToken(request.resource.data);
+      allow create: if isMaster() && isValidMapToken(request.resource.data);
 
-      allow delete: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+        isValidMapToken(request.resource.data) &&
+        (
+          isMaster() ||
+          (
+            (
+              ('owner_id' in resource.data && resource.data.owner_id == request.auth.uid) ||
+              ('character_id' in resource.data && resource.data.character_id == request.auth.uid)
+            ) &&
+            request.resource.data.map_id == resource.data.map_id &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['x', 'y', 'move_used', 'name', 'avatar', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isMaster();
     }
 
-    // Interactive Map Pings (Player/Master real-time markers)
+    // Interactive Map Pings & Real-time 3D Dice Rolls (Player/Master markers & rolls)
     match /map_pings/{pingId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+        isValidMapPing(request.resource.data) &&
+        request.resource.data.user_id == request.auth.uid &&
+        (!('user_role' in request.resource.data) || request.resource.data.user_role == null || request.resource.data.user_role == 'player' || isMaster());
+
+      allow update: if isMaster() && isValidMapPing(request.resource.data);
+
+      allow delete: if isMaster() ||
+        (isAuthenticated() && 'user_id' in resource.data && resource.data.user_id == request.auth.uid);
     }
 
-    // Real-time Tactical 3D Map Dice Rolls (Player/Master rolls)
+    // Real-time Tactical 3D Map Dice Rolls (also hosts legacy Master-only fallback docs)
     match /map_rolls/{rollId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated();
+
+      allow create: if isMaster() ||
+        (
+          isAuthenticated() &&
+          isValidMapRoll(request.resource.data) &&
+          request.resource.data.user_id == request.auth.uid &&
+          (!('user_role' in request.resource.data) || request.resource.data.user_role == null || request.resource.data.user_role == 'player')
+        );
+
+      allow update: if isMaster();
+
+      allow delete: if isMaster() ||
+        (isAuthenticated() && 'user_id' in resource.data && resource.data.user_id == request.auth.uid);
     }
 
     // Editable D&D 2024 Character Sheets (Ficha.pdf real-time sync between Hero and Master)

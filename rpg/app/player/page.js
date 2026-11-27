@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { orderBy, where } from 'firebase/firestore';
+import { limit, orderBy, where } from 'firebase/firestore';
 import { Award, Backpack, Compass, Scroll, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { isFirebaseConfigured } from '../../lib/firebase';
@@ -58,37 +58,37 @@ export default function PlayerPage() {
     if (!isFirebaseConfigured || !user) return undefined;
 
     const unsubs = [
-      subscribeCollection('missions', [orderBy('createdAt', 'desc')], setMissions, (err) =>
+      subscribeCollection('missions', [orderBy('createdAt', 'desc'), limit(150)], setMissions, (err) =>
         console.error('Erro ao ouvir missões:', err)
       ),
-      subscribeCollection('shop_items', [orderBy('item_name', 'asc')], setShopItems, (err) =>
+      subscribeCollection('shop_items', [orderBy('item_name', 'asc'), limit(250)], setShopItems, (err) =>
         console.error('Erro ao ouvir loja:', err)
       ),
-      subscribeCollection('profiles', [orderBy('username', 'asc')], setAllProfiles, (err) =>
+      subscribeCollection('profiles', [orderBy('username', 'asc'), limit(200)], setAllProfiles, (err) =>
         console.error('Erro ao ouvir aventureiros:', err)
       ),
-      subscribeCollection('parties', [orderBy('name', 'asc')], setParties, (err) =>
+      subscribeCollection('parties', [orderBy('name', 'asc'), limit(100)], setParties, (err) =>
         console.error('Erro ao ouvir grupos:', err)
       ),
-      subscribeCollection('maps', [], setMaps, (err) =>
+      subscribeCollection('maps', [limit(60)], setMaps, (err) =>
         console.error('Erro ao ouvir mapas:', err)
       ),
-      subscribeCollection('map_tokens', [], setTokens, (err) =>
+      subscribeCollection('map_tokens', [limit(300)], setTokens, (err) =>
         console.error('Erro ao ouvir tokens:', err)
       ),
-      subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
+      subscribeCollection('map_pings', [orderBy('createdAt', 'desc'), limit(40)], setPings, (err) =>
         console.error('Erro ao ouvir pings:', err)
       ),
-      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, () => {}),
+      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc'), limit(35)], setDiceRolls, () => {}),
       subscribeCollection(
         'trade_requests',
-        [where('receiver_id', '==', user.uid)],
+        [where('receiver_id', '==', user.uid), limit(100)],
         setIncomingTrades,
         (err) => console.error('Erro ao ouvir ofertas recebidas:', err)
       ),
       subscribeCollection(
         'trade_requests',
-        [where('sender_id', '==', user.uid)],
+        [where('sender_id', '==', user.uid), limit(100)],
         setOutgoingTrades,
         (err) => console.error('Erro ao ouvir ofertas enviadas:', err)
       ),

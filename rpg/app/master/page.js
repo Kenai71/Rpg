@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { orderBy } from 'firebase/firestore';
+import { limit, orderBy } from 'firebase/firestore';
 import { BookOpen, Compass, Inbox, LayoutDashboard, Scroll, ShieldCheck, ShoppingBag, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { auth, isFirebaseConfigured } from '../../lib/firebase';
@@ -50,31 +50,31 @@ export default function MasterPage() {
     if (!isFirebaseConfigured || !user || profile?.role !== 'master') return undefined;
 
     const unsubs = [
-      subscribeCollection('missions', [orderBy('createdAt', 'desc')], setMissions, (err) =>
+      subscribeCollection('missions', [orderBy('createdAt', 'desc'), limit(150)], setMissions, (err) =>
         console.error('Erro ao ouvir missões:', err)
       ),
-      subscribeCollection('profiles', [orderBy('username', 'asc')], setAllProfiles, (err) =>
+      subscribeCollection('profiles', [orderBy('username', 'asc'), limit(200)], setAllProfiles, (err) =>
         console.error('Erro ao ouvir perfis:', err)
       ),
-      subscribeCollection('parties', [orderBy('name', 'asc')], setParties, (err) =>
+      subscribeCollection('parties', [orderBy('name', 'asc'), limit(100)], setParties, (err) =>
         console.error('Erro ao ouvir grupos:', err)
       ),
-      subscribeCollection('item_requests', [orderBy('createdAt', 'asc')], setRequests, (err) =>
+      subscribeCollection('item_requests', [orderBy('createdAt', 'desc'), limit(150)], setRequests, (err) =>
         console.error('Erro ao ouvir pedidos:', err)
       ),
-      subscribeCollection('shop_items', [orderBy('item_name', 'asc')], setShopItems, (err) =>
+      subscribeCollection('shop_items', [orderBy('item_name', 'asc'), limit(250)], setShopItems, (err) =>
         console.error('Erro ao ouvir loja:', err)
       ),
-      subscribeCollection('maps', [], setMaps, (err) =>
+      subscribeCollection('maps', [limit(60)], setMaps, (err) =>
         console.error('Erro ao ouvir mapas:', err)
       ),
-      subscribeCollection('map_tokens', [], setTokens, (err) =>
+      subscribeCollection('map_tokens', [limit(300)], setTokens, (err) =>
         console.error('Erro ao ouvir tokens:', err)
       ),
-      subscribeCollection('map_pings', [orderBy('createdAt', 'desc')], setPings, (err) =>
+      subscribeCollection('map_pings', [orderBy('createdAt', 'desc'), limit(40)], setPings, (err) =>
         console.error('Erro ao ouvir pings:', err)
       ),
-      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc')], setDiceRolls, () => {}),
+      subscribeCollection('map_rolls', [orderBy('createdAt', 'desc'), limit(35)], setDiceRolls, () => {}),
       subscribeNpcs(setNpcs, (err) => console.error('Erro ao ouvir NPCs:', err)),
     ];
 
@@ -353,6 +353,8 @@ export default function MasterPage() {
           players={players}
           shopItems={shopItems}
           requests={requests}
+          npcs={npcs}
+          maps={maps}
           onResolveContract={(mission, status) => setContractConfirm({ mission, status })}
           onResolveRequest={handleResolveRequest}
           onNavigate={setActiveSection}

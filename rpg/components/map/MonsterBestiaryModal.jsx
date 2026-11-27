@@ -117,19 +117,24 @@ function getTokenColorForType(creatureType) {
   return '#ef4444';
 }
 
-function compressCustomTokenImage(file) {
+async function compressCustomTokenImage(file) {
+  const { MAX_AVATAR_UPLOAD_BYTES, validateSafeImageDimensions, validateSafeImageFile } = await import(
+    '../../lib/upload-security'
+  );
+  await validateSafeImageFile(file, { maxBytes: MAX_AVATAR_UPLOAD_BYTES });
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('image/')) {
-      reject(new Error('Selecione uma imagem válida (PNG, JPG ou WebP).'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        const size = 224;
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
         const srcW = img.naturalWidth || img.width;
         const srcH = img.naturalHeight || img.height;
+        const dimCheck = validateSafeImageDimensions(srcW, srcH, file.size);
+        if (!dimCheck.ok) {
+          reject(new Error(dimCheck.reason));
+          return;
+        }
+        const size = 224;
         const minSide = Math.min(srcW, srcH);
         const sx = Math.floor((srcW - minSide) / 2);
         const sy = Math.floor((srcH - minSide) / 2);
@@ -146,13 +151,20 @@ function compressCustomTokenImage(file) {
             ? canvas.toDataURL('image/webp', q)
             : canvas.toDataURL('image/jpeg', q);
         }
+        canvas.width = 0;
+        canvas.height = 0;
         resolve(out);
-      };
-      img.onerror = () => reject(new Error('Falha ao processar imagem.'));
-      img.src = ev.target.result;
+      } catch {
+        reject(new Error('Falha ao processar imagem.'));
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-    reader.onerror = () => reject(new Error('Falha ao ler arquivo.'));
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Falha ao processar imagem.'));
+    };
+    img.src = objectUrl;
   });
 }
 

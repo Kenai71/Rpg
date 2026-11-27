@@ -1,6 +1,13 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
-import { getFirebaseAdmin } from '../../../lib/firebase-admin';
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitErrorResponse,
+  readSafeJsonBody,
+  sanitizePromptInput,
+  verifyApiBearerAuth,
+} from '../../../lib/api-security';
 import { DND_EXPANDED_WEAPONS, rollShopItemRarity } from '../../../lib/dnd-rules.js';
 
 export const dynamic = 'force-dynamic';
@@ -183,44 +190,6 @@ function buildFallbackLoot({ count, tier, includeJunk, theme }) {
   return { gold, items };
 }
 
-async function verifyBearerToken(authHeader) {
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) return null;
-
-  try {
-    const admin = await getFirebaseAdmin();
-    if (admin) {
-      try {
-        const decoded = await admin.adminAuth.verifyIdToken(idToken);
-        const profileSnap = await admin.adminDb.collection('profiles').doc(decoded.uid).get();
-        const role = profileSnap.exists ? profileSnap.data()?.role : 'player';
-        return { uid: decoded.uid, isMaster: role === 'master' };
-      } catch {}
-    }
-  } catch {}
-
-  const webApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-  if (!webApiKey) return null;
-  try {
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(webApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const user = data?.users?.[0];
-    if (!user?.localId) return null;
-    return { uid: user.localId, isMaster: true };
-  } catch {
-    return null;
-  }
-}
-
 function parseModelJson(rawText) {
   const cleaned = String(rawText || '')
     .trim()
@@ -231,42 +200,51 @@ function parseModelJson(rawText) {
 }
 
 export async function POST(request) {
+  const ip = getClientIp(request);
+  const ipRl = checkRateLimit(`loot:ip:${ip}`, { limit: 30, windowMs: 5 * 60_000 });
+  if (!ipRl.allowed) return rateLimitErrorResponse(ipRl);
+
   const authHeader = request.headers.get('authorization');
-  const verified = await verifyBearerToken(authHeader);
+  const verified = await verifyApiBearerAuth(authHeader);
   if (!verified) {
     return NextResponse.json(
       { success: false, error: 'Autenticação necessária para gerar baú de saque.' },
       { status: 401 }
     );
   }
-  const admin = await getFirebaseAdmin();
-  if (admin && !verified.isMaster) {
+  if (!verified.isMaster) {
     return NextResponse.json(
       { success: false, error: 'Apenas o Mestre pode gerar baús de saque.' },
       { status: 403 }
     );
   }
 
+  const uidRl = checkRateLimit(`loot:uid:${verified.uid}`, { limit: 20, windowMs: 5 * 60_000 });
+  if (!uidRl.allowed) return rateLimitErrorResponse(uidRl);
+
+  const parsedBody = await readSafeJsonBody(request, 16 * 1024);
+  if (!parsedBody.ok) {
+    return NextResponse.json({ success: false, error: parsedBody.error }, { status: parsedBody.status });
+  }
+  const body = parsedBody.data;
+
   let theme = 'Baú de Masmorra Pós-Combate';
   let count = 6;
   let rarityTier = 'mixed';
   let includeJunk = true;
 
-  try {
-    const body = await request.json();
-    if (typeof body?.theme === 'string' && body.theme.trim()) {
-      theme = body.theme.trim().slice(0, 120);
-    }
-    if (body?.count !== undefined) {
-      count = Math.max(2, Math.min(12, Math.floor(Number(body.count) || 6)));
-    }
-    if (['mixed', 'low', 'mid', 'high'].includes(body?.rarityTier)) {
-      rarityTier = body.rarityTier;
-    }
-    if (body?.includeJunk !== undefined) {
-      includeJunk = Boolean(body.includeJunk);
-    }
-  } catch {}
+  if (typeof body?.theme === 'string' && body.theme.trim()) {
+    theme = sanitizePromptInput(body.theme, 120) || theme;
+  }
+  if (body?.count !== undefined) {
+    count = Math.max(2, Math.min(12, Math.floor(Number(body.count) || 6)));
+  }
+  if (['mixed', 'low', 'mid', 'high'].includes(body?.rarityTier)) {
+    rarityTier = body.rarityTier;
+  }
+  if (body?.includeJunk !== undefined) {
+    includeJunk = Boolean(body.includeJunk);
+  }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
