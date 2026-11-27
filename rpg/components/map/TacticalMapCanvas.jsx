@@ -31,7 +31,6 @@ import {
   Maximize2,
   Minus,
   Move,
-  Music,
   Paintbrush,
   PanelLeftClose,
   PanelLeftOpen,
@@ -1890,6 +1889,10 @@ export function TacticalMapCanvas({
     }
   };
 
+  // Modo Combate vs Fora de Combate (Em Combate restringe movimento; Fora de Combate libera movimento livre)
+  const isCombatActive = Boolean(map?.combat_active);
+  const [togglingCombatMode, setTogglingCombatMode] = useState(false);
+
   // Limite de movimentação dos jogadores (padrão 9m, ajustável pelo Mestre em tempo real)
   const mapMoveLimitMeters = useMemo(() => {
     const raw = Number(map?.player_move_limit);
@@ -1904,6 +1907,28 @@ export function TacticalMapCanvas({
   const [resettingMovement, setResettingMovement] = useState(false);
   const [masterFreeMove, setMasterFreeMove] = useState(false);
   const lastMoveBlockedToastRef = useRef(0);
+
+  const handleToggleCombatMode = useCallback(async () => {
+    if (!isMaster || !onUpdateMap || !map?.id || togglingCombatMode) return;
+    const nextCombat = !isCombatActive;
+    setTogglingCombatMode(true);
+    try {
+      await onUpdateMap(map.id, { combat_active: nextCombat });
+      // Ao entrar em combate, zera qualquer movimento residual gasto anteriormente para começar limpo
+      if (nextCombat && onUpdateTokenStats) {
+        const spent = tokens.filter((t) => Number(t.move_used) > 0);
+        if (spent.length > 0) {
+          await Promise.all(
+            spent.map((t) => onUpdateTokenStats(t.id, { move_used: 0 }).catch(() => {}))
+          );
+        }
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao alternar modo de combate.');
+    } finally {
+      setTogglingCombatMode(false);
+    }
+  }, [isMaster, onUpdateMap, map?.id, togglingCombatMode, isCombatActive, onUpdateTokenStats, tokens]);
 
   useEffect(() => {
     setMoveLimitInput(String(mapMoveLimitMeters));
@@ -2033,9 +2058,11 @@ export function TacticalMapCanvas({
     const rect = mapImageRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
-    // Jogadores sempre seguem o limite; Monstros/NPCs também seguem seu limite (padrão 9m) ao mover no turno (Shift ou modo Setup libera livremente p/ o Mestre)
+    // Restrição de movimento só vale EM COMBATE (map.combat_active === true).
+    // Fora de combate, jogadores e monstros se movem livremente sem limite de distância.
     const enforceMoveLimit =
-      !isMaster || (token.type !== 'player' && !masterFreeMove && !e.shiftKey);
+      isCombatActive &&
+      (!isMaster || (token.type !== 'player' && !masterFreeMove && !e.shiftKey));
     const moveState = getTokenMoveState(token);
 
     if (enforceMoveLimit && moveState.remainingMeters <= 0.02) {
@@ -3032,12 +3059,21 @@ export function TacticalMapCanvas({
                   )}
                 >
                   <Footprints className="h-4 w-4 text-slate-300" />
-                  <span className="absolute -bottom-0.5 -right-1 px-1 h-4 rounded-full bg-[#0c101b] border border-white/20 text-[8px] font-mono font-bold text-slate-200 flex items-center justify-center leading-none">
-                    {formatMeters(mapMoveLimitMeters)}m
+                  <span
+                    className={cn(
+                      'absolute -bottom-0.5 -right-1 px-1 h-4 rounded-full border text-[8px] font-mono font-bold flex items-center justify-center leading-none',
+                      isCombatActive
+                        ? 'bg-rose-950/95 border-rose-400/45 text-rose-200'
+                        : 'bg-[#0c101b] border-emerald-400/40 text-emerald-300'
+                    )}
+                  >
+                    {isCombatActive ? `${formatMeters(mapMoveLimitMeters)}m` : 'Livre'}
                   </span>
                 </button>
                 <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
-                  Movimento dos Jogadores ({formatMeters(mapMoveLimitMeters)}m)
+                  {isCombatActive
+                    ? `Em Combate (${formatMeters(mapMoveLimitMeters)}m)`
+                    : 'Fora de Combate (Movimento Livre)'}
                 </span>
               </div>
             )}
@@ -3121,39 +3157,6 @@ export function TacticalMapCanvas({
                 </button>
                 <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
                   {sheetOpen ? 'Ocultar Ficha' : 'Abrir Ficha'}
-                </span>
-              </div>
-            )}
-
-            {tabletopMusic && (
-              <div className="relative group flex justify-center w-full">
-                <button
-                  type="button"
-                  onClick={tabletopMusic.togglePanel}
-                  aria-label={isMaster ? 'Abrir estúdio musical da mesa' : 'Abrir volume da música'}
-                  aria-expanded={tabletopMusic.panelOpen}
-                  title={isMaster ? 'Música & Playlist da Mesa' : 'Música & Volume'}
-                  className={cn(
-                    'relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center transition-all border',
-                    tabletopMusic.panelOpen
-                      ? 'bg-white/15 text-white border-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
-                      : 'text-slate-300 hover:text-white hover:bg-white/10 border-transparent'
-                  )}
-                >
-                  <Music className="h-4 w-4 text-slate-300" />
-                  {tabletopMusic.isPlaying && (
-                    <span
-                      className={cn(
-                        'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0a0d16]',
-                        tabletopMusic.needsUnlock
-                          ? 'bg-amber-400 animate-pulse'
-                          : 'bg-emerald-400 animate-pulse'
-                      )}
-                    />
-                  )}
-                </button>
-                <span className="hidden md:block pointer-events-none opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all absolute left-full ml-2.5 top-1/2 -translate-y-1/2 z-50 px-2.5 py-1 rounded-lg bg-[#0c101b]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap shadow-xl backdrop-blur-xl">
-                  {isMaster ? 'Música & Playlist' : 'Música & Volume'}
                 </span>
               </div>
             )}
@@ -4210,6 +4213,57 @@ export function TacticalMapCanvas({
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
+                  {/* Botão único de alternância: Fora de Combate (Livre) vs Em Combate (Restrito) */}
+                  <button
+                    type="button"
+                    disabled={togglingCombatMode}
+                    onClick={handleToggleCombatMode}
+                    aria-pressed={isCombatActive}
+                    className={cn(
+                      'w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between gap-2.5 disabled:opacity-60',
+                      isCombatActive
+                        ? 'bg-rose-500/15 border-rose-400/45 text-white shadow-[0_0_20px_rgba(244,63,94,0.15)]'
+                        : 'bg-emerald-500/12 border-emerald-400/35 text-white shadow-[0_0_20px_rgba(16,185,129,0.12)]'
+                    )}
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <span
+                        className={cn(
+                          'h-8 w-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5',
+                          isCombatActive
+                            ? 'bg-rose-500/20 border-rose-400/40 text-rose-200'
+                            : 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200'
+                        )}
+                      >
+                        {isCombatActive ? (
+                          <Swords className="h-4 w-4" />
+                        ) : (
+                          <Compass className="h-4 w-4" />
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold leading-tight">
+                          {isCombatActive ? 'Em Combate' : 'Fora de Combate'}
+                        </div>
+                        <div className="text-[10px] text-slate-300 leading-snug mt-0.5">
+                          {isCombatActive
+                            ? `Movimento restrito (${formatMeters(mapMoveLimitMeters)}m). Clique para liberar.`
+                            : 'Jogadores se movem livremente. Clique para ativar combate.'}
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        'px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border shrink-0',
+                        isCombatActive
+                          ? 'bg-rose-500/25 border-rose-400/50 text-rose-100'
+                          : 'bg-emerald-500/20 border-emerald-400/40 text-emerald-100'
+                      )}
+                    >
+                      {isCombatActive ? 'Restrito' : 'Livre'}
+                    </span>
+                  </button>
+
                   {/* Limite Global do Mapa */}
                   <div className="p-3 rounded-xl bg-white/[0.04] border border-white/12 space-y-3">
                     <div className="flex items-center justify-between gap-2">
@@ -4931,62 +4985,71 @@ export function TacticalMapCanvas({
         );
       })()}
 
-      {/* HUD COMPACTO DE DESLOCAMENTO RESTANTE PARA O JOGADOR */}
+      {/* HUD COMPACTO DE DESLOCAMENTO RESTANTE (EM COMBATE) OU MOVIMENTO LIVRE (FORA DE COMBATE) PARA O JOGADOR */}
       {!isMaster && ownPlayerMoveHud && (
-        <div
-          className={cn(
-            'pointer-events-none absolute bottom-3 left-3 z-30 flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-xl shadow-lg transition-all',
-            ownPlayerMoveHud.hitLimit
-              ? 'bg-rose-950/90 border-rose-400/45 text-rose-100'
-              : ownPlayerMoveHud.dragging
-              ? 'bg-[#0c101b]/95 border-sky-400/50 text-white'
-              : 'bg-[#0c101b]/88 border-white/15 text-slate-200'
-          )}
-        >
-          <Footprints
+        isCombatActive ? (
+          <div
             className={cn(
-              'h-3.5 w-3.5 shrink-0',
-              ownPlayerMoveHud.hitLimit ? 'text-rose-300' : 'text-sky-300'
+              'pointer-events-none absolute bottom-3 left-3 z-30 flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-xl shadow-lg transition-all',
+              ownPlayerMoveHud.hitLimit
+                ? 'bg-rose-950/90 border-rose-400/45 text-rose-100'
+                : ownPlayerMoveHud.dragging
+                ? 'bg-[#0c101b]/95 border-sky-400/50 text-white'
+                : 'bg-[#0c101b]/88 border-white/15 text-slate-200'
             )}
-          />
-          <div className="space-y-0.5">
-            <div className="text-[11px] font-mono font-bold leading-none flex items-center gap-1.5">
-              <span>
-                Movimento: {formatMeters(ownPlayerMoveHud.remainingMeters)}m /{' '}
-                {formatMeters(ownPlayerMoveHud.maxMeters)}m
-              </span>
-              {ownPlayerMoveHud.hitLimit && (
-                <span className="px-1.5 py-0.5 rounded bg-rose-500/25 border border-rose-400/40 text-[9px] font-extrabold uppercase text-rose-200">
-                  Limite
-                </span>
+          >
+            <Footprints
+              className={cn(
+                'h-3.5 w-3.5 shrink-0',
+                ownPlayerMoveHud.hitLimit ? 'text-rose-300' : 'text-sky-300'
               )}
-            </div>
-            <div className="w-32 h-1 rounded-full bg-white/15 overflow-hidden">
-              <div
-                className={cn(
-                  'h-full transition-all duration-100',
-                  ownPlayerMoveHud.hitLimit
-                    ? 'bg-rose-400'
-                    : ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters) <= 0.3
-                    ? 'bg-amber-400'
-                    : 'bg-sky-400'
+            />
+            <div className="space-y-0.5">
+              <div className="text-[11px] font-mono font-bold leading-none flex items-center gap-1.5">
+                <span>
+                  Em Combate: {formatMeters(ownPlayerMoveHud.remainingMeters)}m /{' '}
+                  {formatMeters(ownPlayerMoveHud.maxMeters)}m
+                </span>
+                {ownPlayerMoveHud.hitLimit && (
+                  <span className="px-1.5 py-0.5 rounded bg-rose-500/25 border border-rose-400/40 text-[9px] font-extrabold uppercase text-rose-200">
+                    Limite
+                  </span>
                 )}
-                style={{
-                  width: `${Math.max(
-                    0,
-                    Math.min(
-                      100,
-                      Math.round(
-                        (ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters)) *
-                          100
+              </div>
+              <div className="w-32 h-1 rounded-full bg-white/15 overflow-hidden">
+                <div
+                  className={cn(
+                    'h-full transition-all duration-100',
+                    ownPlayerMoveHud.hitLimit
+                      ? 'bg-rose-400'
+                      : ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters) <= 0.3
+                      ? 'bg-amber-400'
+                      : 'bg-sky-400'
+                  )}
+                  style={{
+                    width: `${Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        Math.round(
+                          (ownPlayerMoveHud.remainingMeters / Math.max(0.5, ownPlayerMoveHud.maxMeters)) *
+                            100
+                        )
                       )
-                    )
-                  )}%`,
-                }}
-              />
+                    )}%`,
+                  }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-30 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0c101b]/88 border border-emerald-400/30 text-slate-200 backdrop-blur-xl shadow-lg">
+            <Compass className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
+            <span className="text-[11px] font-mono font-bold text-emerald-200">
+              Fora de Combate • Movimento Livre
+            </span>
+          </div>
+        )
       )}
 
       {/* Indicador discreto durante upgrade progressivo de textura HD */}
@@ -5627,6 +5690,14 @@ export function TacticalMapCanvas({
             );
 
             const isRemoteMoving = Boolean(remoteMovingTokens[token.id]) && localDraggingId !== token.id;
+            // O próprio token do jogador fica acima da Névoa de Guerra (z-[31]) e da névoa atmosférica (z-[25]),
+            // mas abaixo da cortina de Blackout total (z-[35]), garantindo que ele sempre se enxergue sob névoa.
+            const isOwnViewerToken =
+              Boolean(visMeta.isOwn) ||
+              token.id === activeViewerTokenId ||
+              (!isMaster &&
+                Boolean(currentUserId) &&
+                (token.owner_id === currentUserId || token.character_id === currentUserId));
 
             return (
               <div
@@ -5650,7 +5721,7 @@ export function TacticalMapCanvas({
                 }}
                 className={cn(
                   'absolute -translate-x-1/2 -translate-y-1/2 select-none group',
-                  visMeta.isOwn ? 'z-[24]' : 'z-[22]',
+                  isOwnViewerToken ? 'z-[33]' : 'z-[22]',
                   activeTool !== 'select'
                     ? 'pointer-events-none'
                     : isMovable
